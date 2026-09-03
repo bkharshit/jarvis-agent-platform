@@ -58,6 +58,10 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "W"]
 
+[tool.ruff.lint.per-file-ignores]
+# Typer requires Option/Argument calls in parameter defaults (B008).
+"src/jarvis/cli/*" = ["B008"]
+
 [tool.mypy]
 python_version = "3.12"
 mypy_path = "src"
