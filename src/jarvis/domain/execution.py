@@ -86,6 +86,7 @@ class ExecutionContext:
     iteration: int = 0
     usage: Usage = field(default_factory=Usage)
     variables: dict[str, Any] = field(default_factory=dict)
+    temperature: float | None = None  # from the agent definition
 
     def check_limits(self) -> None:
         """Raise if cancelled or past the deadline."""

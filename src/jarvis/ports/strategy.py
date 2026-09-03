@@ -20,7 +20,10 @@ from jarvis.ports.model import ModelClient
 
 
 class StepOutcome(BaseModel):
-    """What one strategy step produced: pending tool calls, or a finish."""
+    """What one strategy step produced: pending tool calls, or a finish.
+
+    `messages` carries strategy-requested appends (e.g. a ReAct format
+    correction); the orchestrator appends them after the assistant message."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -28,6 +31,7 @@ class StepOutcome(BaseModel):
     assistant_message: Message
     tool_calls: list[ToolCall] = Field(default_factory=list)
     finish_reason: str | None = None
+    messages: list[Message] = Field(default_factory=list)
 
 
 class ToolCallsStep(StepOutcome):
