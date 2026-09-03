@@ -384,6 +384,25 @@ class SqlExecutionRepo:
             for row in rows:
                 yield _EVENT_ADAPTER.validate_python(row.payload)
 
+    async def replay_with_cursor(
+        self, run_id: str, after: int | None = None
+    ) -> AsyncIterator[tuple[int, ExecutionEvent]]:
+        """Cursor-space replay: yields (durable global cursor, event) pairs
+        after the given cursor — the SSE Last-Event-ID resume path for
+        finished runs (ADR 0003; `list_events` above is per-run-sequence
+        order for transcript replays)."""
+        query = (
+            select(ExecutionEventRow)
+            .where(ExecutionEventRow.execution_id == run_id)
+            .order_by(ExecutionEventRow.cursor)
+        )
+        if after is not None:
+            query = query.where(ExecutionEventRow.cursor > after)
+        async with self._sessionmaker() as session:
+            rows = (await session.execute(query)).scalars()
+            for row in rows:
+                yield row.cursor, _EVENT_ADAPTER.validate_python(row.payload)
+
     # --- helpers -----------------------------------------------------------
 
     @staticmethod
