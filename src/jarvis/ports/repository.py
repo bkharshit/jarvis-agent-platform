@@ -26,7 +26,9 @@ class AgentRepo(Protocol):
 
     async def get_by_name(self, name: str) -> AgentDefinition | None: ...
 
-    async def list(self, limit: int = 50, offset: int = 0) -> list[AgentDefinition]: ...
+    async def list_agents(
+        self, limit: int = 50, offset: int = 0
+    ) -> list[AgentDefinition]: ...
 
     async def update_and_publish(
         self, definition: AgentDefinition, label: str = ""
@@ -54,7 +56,7 @@ class ExecutionRepo(Protocol):
 
     async def get(self, run_id: str) -> RunResult | None: ...
 
-    async def list(
+    async def list_runs(
         self,
         agent_id: str | None = None,
         status: ExecutionStatus | None = None,
@@ -67,7 +69,9 @@ class ExecutionRepo(Protocol):
 
     async def list_messages(self, run_id: str) -> list[Message]: ...
 
-    async def save_tool_execution(self, run_id: str, result: ToolResult, arguments: dict) -> None: ...
+    async def save_tool_execution(
+        self, run_id: str, result: ToolResult, arguments: dict[str, object]
+    ) -> None: ...
 
     async def list_tool_executions(self, run_id: str) -> list[ToolResult]: ...
 
@@ -84,7 +88,9 @@ class ExecutionRepo(Protocol):
 class ConversationRepo(Protocol):
     async def get_or_create(self, agent_id: str, session_id: str) -> str: ...
 
-    async def append_message(self, conversation_id: str, message: Message, run_id: str | None = None) -> int:
+    async def append_message(
+        self, conversation_id: str, message: Message, run_id: str | None = None
+    ) -> int:
         """Returns the message's conversation sequence."""
         ...
 

@@ -9,7 +9,7 @@ unit-tested against the helpers in this module.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Literal, Union
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -127,27 +127,25 @@ class RunCancelled(_Event):
 
 
 ExecutionEvent = Annotated[
-    Union[
-        RunStarted,
-        IterationStarted,
-        ModelInvocationStarted,
-        TextDelta,
-        ModelInvocationCompleted,
-        ToolCallRequested,
-        ToolCallStarted,
-        ToolCallCompleted,
-        ToolCallFailed,
-        IterationCompleted,
-        RunCompleted,
-        RunFailed,
-        RunCancelled,
-    ],
+    RunStarted
+    | IterationStarted
+    | ModelInvocationStarted
+    | TextDelta
+    | ModelInvocationCompleted
+    | ToolCallRequested
+    | ToolCallStarted
+    | ToolCallCompleted
+    | ToolCallFailed
+    | IterationCompleted
+    | RunCompleted
+    | RunFailed
+    | RunCancelled,
     Field(discriminator="type"),
 ]
 
 TERMINAL_EVENT_TYPES = frozenset({"run.completed", "run.failed", "run.cancelled"})
 
-TerminalEvent = Union[RunCompleted, RunFailed, RunCancelled]
+TerminalEvent = RunCompleted | RunFailed | RunCancelled
 
 
 def is_terminal(event: BaseModel) -> bool:
@@ -168,10 +166,14 @@ def validate_event_sequence(events: list[BaseModel]) -> None:
     terminal_index: int | None = None
     for index, event in enumerate(events):
         if event.run_id != run_id:  # type: ignore[attr-defined]
-            raise EventSequenceError(f"event {index} has run_id {event.run_id!r}, expected {run_id!r}")  # type: ignore[attr-defined]
+            raise EventSequenceError(
+                f"event {index} has run_id {event.run_id!r}, expected {run_id!r}"  # type: ignore[attr-defined]
+            )
         sequence = event.sequence  # type: ignore[attr-defined]
         if sequence != index:
-            raise EventSequenceError(f"sequence not gapless: position {index} has sequence {sequence!r}")
+            raise EventSequenceError(
+                f"sequence not gapless: position {index} has sequence {sequence!r}"
+            )
         if is_terminal(event):
             if terminal_index is not None:
                 raise EventSequenceError("more than one terminal event")

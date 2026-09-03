@@ -9,11 +9,11 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Protocol, runtime_checkable
 
+from jarvis.domain.agent import ModelRef
+from jarvis.domain.execution import CancellationToken
 from jarvis.models.capabilities import ModelCapabilities
 from jarvis.models.errors import ModelError
 from jarvis.models.types import ModelRequest, ModelResponse, StreamDelta
-from jarvis.domain.agent import ModelRef
-from jarvis.domain.execution import CancellationToken
 
 
 @runtime_checkable

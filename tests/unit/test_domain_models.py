@@ -6,7 +6,6 @@ from pydantic import ValidationError
 from jarvis.domain.agent import (
     AgentDefinition,
     AgentVersion,
-    MemoryConfig,
     ModelRef,
     StrategyConfig,
     ToolBinding,
@@ -17,7 +16,7 @@ from jarvis.domain.execution import (
     ExecutionContext,
     RunResult,
 )
-from jarvis.domain.message import Message, TextPart, ToolCall, Usage, assistant, tool_result
+from jarvis.domain.message import Message, TextPart, Usage, assistant, tool_result
 
 
 class TestUsage:
@@ -156,7 +155,6 @@ class TestExecutionContext:
 
     def test_check_limits_raises_past_deadline(self):
         from datetime import UTC, timedelta
-
         from datetime import datetime as dt
 
         ctx = ExecutionContext(

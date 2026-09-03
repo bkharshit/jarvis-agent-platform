@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal, Union
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -27,7 +27,7 @@ class ImagePart(_Model):
     url: str
 
 
-ContentPart = Union[TextPart, ImagePart]
+ContentPart = TextPart | ImagePart
 
 
 class ToolCall(_Model):

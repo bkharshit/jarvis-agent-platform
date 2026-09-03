@@ -13,8 +13,8 @@ from jarvis.domain.events import (
     RunStarted,
     TextDelta,
     ToolCallCompleted,
-    validate_event_sequence,
     is_terminal,
+    validate_event_sequence,
 )
 from jarvis.domain.message import Usage
 
