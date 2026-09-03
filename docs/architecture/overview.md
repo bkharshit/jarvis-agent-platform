@@ -1,0 +1,72 @@
+# Architecture Overview
+
+JARVIS is a modular monolith built **agent-runtime-first**. Everything else
+in the roadmap — tools platform, MCP, workflows, RAG, frontend, plugins,
+multi-agent — rides on interfaces the runtime establishes now.
+
+## Layers (dependency rule, lint-enforced)
+
+```
+            ┌─────────────────────────────────────────────┐
+ api/ cli/  │  delivery: FastAPI routes, SSE framing,     │
+            │  Typer commands (thin; no logic)            │
+            ├─────────────────────────────────────────────┤
+ runtime/   │  orchestration: AgentRuntime (loop, limits, │
+ events/    │  cancellation, terminal emission)           │
+ strategies │  one model call per step                    │
+ models/    │  provider adapters (openai-compatible, mock)│
+ tools/     │  tool base/registry/runtime, builtins        │
+ prompt/    │  PromptEngine                               │
+ persistence│ repositories (SQLAlchemy → Postgres JSONB)  │
+            ├─────────────────────────────────────────────┤
+ ports/     │  Protocols ONLY — the seams                 │
+ domain/    │  pure Pydantic models, no IO                │
+            └─────────────────────────────────────────────┘
+```
+
+**Rule**: `domain/` and `ports/` import only pydantic/stdlib. Everything
+else depends inward. Delivery layers are swappable by construction (CLI and
+HTTP already share `AppContainer`).
+
+## Stable interfaces (Phase 1 contracts)
+
+| Interface | Port | Notes |
+|---|---|---|
+| Model access | `ports/model.py` — `ModelProvider`, `ModelClient`, `ModelProviderFactory` | generate/stream separated; capabilities flags (ADR 0005) |
+| Tools | `ports/tools.py` — `Tool`, `ToolRegistry`, `ToolRuntime` | template-method invoke; MCP later = another Tool family |
+| Strategies | `ports/strategy.py` — `AgentStrategy`, `StepOutcome`, `StrategyRegistry` | one step per call; orchestrator owns the loop (ADR 0004) |
+| Events | `ports/events.py` — `EventSink`, `EventStream` | cursor replay; exactly-one-terminal (ADR 0003) |
+| Persistence | `ports/repository.py` — `AgentRepo`, `ExecutionRepo`, `ConversationRepo` | Pydantic-over-JSONB (ADR 0002) |
+
+## What a run looks like
+
+`AgentRuntime.run(version, input, ctx)`:
+
+1. Load history (memory, if enabled) → `PromptEngine.build(PromptContext)`
+2. Emit `run.started`
+3. Loop while `iteration < max_iterations ∧ ¬cancelled ∧ within-budget ∧
+   within-deadline`:
+   - `strategy.step(...)` — one model invocation; may stream deltas via sink
+   - `FinishStep` → break; `ToolCallsStep` → execute each call via
+     `ToolRuntime` (sequential), append tool messages
+4. Classify terminal: `run.completed | run.failed | run.cancelled` →
+   `sink.finalize()` exactly once
+5. Persist `RunResult` + messages + tool executions
+
+Blocking `/run` and streaming `/stream` execute the **same** method; the SSE
+route subscribes to the sink while the run runs as an asyncio task.
+
+## Phase roadmap (summary)
+
+- **Phase 0-1 (this repo state)**: runtime, tools, strategies, persistence,
+  API + SSE, CLI — fully testable with the mock provider, no LLM needed.
+- **Phase 2**: frontend builder (React/Vite/React Flow; registry mirrors
+  backend).
+- **Phase 4**: MCP — just another Tool family behind `Tool`.
+- **Phase 5**: workflow engine — sibling executor reusing the event model,
+  persistence, and limits.
+- **Later**: RAG/knowledge, plugins/marketplace, multi-tenancy, multi-agent.
+
+Deliberately **not** in Phase 1: Redis (in-process event bus; the `EventSink`
+port anticipates queues), plugins, multi-tenancy, RAG, workflows,
+multi-agent.

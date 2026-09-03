@@ -7,7 +7,7 @@ name = "jarvis"
 version = "0.1.0"
 description = "JARVIS — an open-source, production-grade AI agent platform"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.15"
 license = "MIT"
 dependencies = [
     "fastapi>=0.115",
@@ -29,7 +29,6 @@ dev = [
     "respx>=0.21",
     "ruff>=0.8",
     "mypy>=1.13",
-    "types-httpx>=0.28",
 ]
 
 [project.scripts]
