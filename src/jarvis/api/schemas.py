@@ -100,6 +100,16 @@ class ExecutionDetail(_Model):
     tool_executions: list[ToolResult]
 
 
+class ExecutionList(_Model):
+    items: list[RunResult]
+
+
+class MessageList(_Model):
+    agent_id: str
+    session_id: str
+    messages: list[Message]
+
+
 class CancelResult(_Model):
     run_id: str
     cancelled: bool
@@ -114,6 +124,8 @@ __all__ = [
     "CursorEvent",
     "EventList",
     "ExecutionDetail",
+    "ExecutionList",
+    "MessageList",
     "RunRequest",
     "VersionSummary",
 ]

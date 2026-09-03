@@ -88,6 +88,10 @@ class ExecutionRepo(Protocol):
 class ConversationRepo(Protocol):
     async def get_or_create(self, agent_id: str, session_id: str) -> str: ...
 
+    async def find(self, agent_id: str, session_id: str) -> str | None:
+        """Look up without creating — the read-side pair of get_or_create."""
+        ...
+
     async def append_message(
         self, conversation_id: str, message: Message, run_id: str | None = None
     ) -> int:

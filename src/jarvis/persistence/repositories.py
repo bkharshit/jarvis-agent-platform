@@ -503,6 +503,18 @@ class SqlConversationRepo:
             await session.commit()
             return row.id
 
+    async def find(self, agent_id: str, session_id: str) -> str | None:
+        """Look up without creating — the read-side pair of get_or_create."""
+        async with self._sessionmaker() as session:
+            return (
+                await session.execute(
+                    select(ConversationRow.id).where(
+                        ConversationRow.agent_id == agent_id,
+                        ConversationRow.session_id == session_id,
+                    )
+                )
+            ).scalar_one_or_none()
+
     async def append_message(
         self, conversation_id: str, message: Message, run_id: str | None = None
     ) -> int:
