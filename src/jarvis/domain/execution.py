@@ -103,6 +103,10 @@ class RunResult(_Model):
     run_id: str
     agent_id: str
     status: ExecutionStatus
+    input: str = ""
+    agent_version_id: str = ""
+    session_id: str | None = None
+    trace_id: str = ""
     final_message: str | None = None
     total_usage: Usage = Field(default_factory=Usage)
     iterations: int = 0

@@ -118,9 +118,9 @@ class AgentRuntime:
         try:
             result = await self._execute(version, input, ctx, sink, client, agent, started_at)
         except ExecutionCancelled as exc:
-            result = await self._terminal_cancelled(ctx, sink, exc, started_at)
+            result = await self._terminal_cancelled(ctx, sink, exc, started_at, input)
         except ModelError as exc:
-            result = await self._terminal_failed(ctx, sink, str(exc), "model", started_at)
+            result = await self._terminal_failed(ctx, sink, str(exc), "model", started_at, input)
         except Exception as exc:  # noqa: BLE001 — the run never crashes callers
             result = await self._terminal_failed(
                 ctx,
@@ -128,6 +128,7 @@ class AgentRuntime:
                 f"internal error: {type(exc).__name__}: {exc}",
                 "model",
                 started_at,
+                input,
             )
         finally:
             self._live_tokens.pop(ctx.run_id, None)
@@ -203,6 +204,7 @@ class AgentRuntime:
                 outcome.iterations,
                 cursor,
                 started_at,
+                result_input=input,
             )
         return await self._terminal_failed(
             ctx,
@@ -210,6 +212,7 @@ class AgentRuntime:
             outcome.error or "unknown error",
             outcome.error_kind or "model",
             started_at,
+            input,
             iterations=outcome.iterations,
         )
 
@@ -415,6 +418,7 @@ class AgentRuntime:
         sink: InProcessEventSink,
         exc: ExecutionCancelled,
         started_at: datetime,
+        run_input: str = "",
     ) -> RunResult:
         reason = exc.reason or "cancelled"
         if reason == "deadline exceeded":
@@ -449,7 +453,9 @@ class AgentRuntime:
                 total_usage=ctx.usage,
             ),
         )
-        return self._result(ctx, "cancelled", None, ctx.iteration, cursor, started_at)
+        return self._result(
+            ctx, "cancelled", None, ctx.iteration, cursor, started_at, result_input=run_input
+        )
 
     async def _terminal_failed(
         self,
@@ -458,6 +464,7 @@ class AgentRuntime:
         error: str,
         error_kind: ErrorKind,
         started_at: datetime,
+        run_input: str = "",
         iterations: int = 0,
     ) -> RunResult:
         cursor = await self._finalize(
@@ -498,6 +505,7 @@ class AgentRuntime:
         iterations: int,
         cursor: int,
         started_at: datetime,
+        result_input: str = "",
         error: str | None = None,
         error_kind: str | None = None,
     ) -> RunResult:
@@ -505,6 +513,10 @@ class AgentRuntime:
             run_id=ctx.run_id,
             agent_id=ctx.agent_id,
             status=status,  # type: ignore[arg-type]
+            input=result_input,
+            agent_version_id=ctx.agent_version_id,
+            session_id=ctx.session_id,
+            trace_id=ctx.trace_id,
             final_message=final_message,
             total_usage=ctx.usage,
             iterations=iterations,
