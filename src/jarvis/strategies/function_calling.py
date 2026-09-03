@@ -67,12 +67,29 @@ class FunctionCallingStrategy:
             messages=messages,
             tools=tools or None,
             temperature=ctx.temperature,
+            response_format=self._response_format(ctx),
         )
         response = await self._invoke(ctx, request, client, sink)
         assistant = response.message
         if assistant.tool_calls:
             return ToolCallsStep(assistant_message=assistant, tool_calls=assistant.tool_calls)
         return FinishStep(assistant_message=assistant, finish_reason=response.finish_reason)
+
+    @staticmethod
+    def _response_format(ctx: ExecutionContext) -> dict[str, Any] | None:
+        """Native structured output for json_schema providers; json_object for
+        json_mode providers (schema is in the prompt); none otherwise."""
+        schema = ctx.output_schema
+        if schema is None:
+            return None
+        if ctx.structured_mode == "json_schema":
+            return {
+                "type": "json_schema",
+                "json_schema": {"name": "output", "schema": schema},
+            }
+        if ctx.structured_mode == "json_mode":
+            return {"type": "json_object"}
+        return None
 
     async def _invoke(
         self,
@@ -91,6 +108,7 @@ class FunctionCallingStrategy:
                     response = await self._invoke_streaming(ctx, request, client, sink)
                 else:
                     response = await client.generate(request, cancel=ctx.cancel)
+                ctx.usage = ctx.usage.plus(response.usage)
                 await sink.append(
                     ModelInvocationCompleted(
                         **_new_event_kwargs(ctx),

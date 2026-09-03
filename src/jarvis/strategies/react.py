@@ -124,6 +124,7 @@ class ReActStrategy:
             )
             try:
                 response = await client.generate(request, cancel=ctx.cancel)
+                ctx.usage = ctx.usage.plus(response.usage)
             except RETRYABLE_ERRORS as exc:
                 last_error = exc
                 if attempt < MAX_ATTEMPTS:

@@ -87,6 +87,10 @@ class ExecutionContext:
     usage: Usage = field(default_factory=Usage)
     variables: dict[str, Any] = field(default_factory=dict)
     temperature: float | None = None  # from the agent definition
+    # Structured-output context, set by the orchestrator from the agent
+    # definition + provider capabilities before the first step.
+    output_schema: dict[str, Any] | None = None
+    structured_mode: str = "json_schema"  # none | json_mode | json_schema
 
     def check_limits(self) -> None:
         """Raise if cancelled or past the deadline."""
