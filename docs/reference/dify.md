@@ -1,4 +1,4 @@
-# Dify — exploration summary and verdicts
+    # Dify — exploration summary and verdicts
 
 ## What Dify is, structurally
 
