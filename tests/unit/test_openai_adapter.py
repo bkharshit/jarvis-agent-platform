@@ -253,9 +253,7 @@ class TestStreaming:
         )
         provider = _provider()
         deltas = [delta async for delta in provider.stream(_request())]
-        fragments = "".join(
-            d.arguments_fragment for d in deltas if isinstance(d, ToolCallDelta)
-        )
+        fragments = "".join(d.arguments_fragment for d in deltas if isinstance(d, ToolCallDelta))
         assert fragments == '{"expr": "1+1"}'
         finish = [d for d in deltas if isinstance(d, FinishDelta)]
         assert finish[0].finish_reason == "tool_calls"

@@ -14,9 +14,7 @@ DESCRIPTOR = ToolDescriptor(
     description="Evaluate a basic arithmetic expression (numbers, + - * / ** % and parentheses).",
     parameters={
         "type": "object",
-        "properties": {
-            "expression": {"type": "string", "description": "e.g. '2 + 2 * (10 - 4)'"}
-        },
+        "properties": {"expression": {"type": "string", "description": "e.g. '2 + 2 * (10 - 4)'"}},
         "required": ["expression"],
     },
 )

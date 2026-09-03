@@ -43,6 +43,7 @@ from jarvis.ports.repository import ConversationRepo, ExecutionRepo
 from jarvis.ports.strategy import FinishStep, StepOutcome, StrategyRegistry, ToolCallsStep
 from jarvis.ports.tools import ToolRegistry
 from jarvis.prompt.engine import PromptContext, PromptEngine
+from jarvis.runtime.limits import RunLimits
 from jarvis.tools.runtime import ToolRuntime
 
 ErrorKind = Literal["max_iterations", "timeout", "model", "tool", "output_schema"]
@@ -69,6 +70,7 @@ class AgentRuntime:
         bus: InProcessEventBus | None = None,
         executions: ExecutionRepo | None = None,
         conversations: ConversationRepo | None = None,
+        limits: RunLimits | None = None,
     ) -> None:
         self._strategies = strategies
         self._tools = tools
@@ -78,6 +80,7 @@ class AgentRuntime:
         self._bus = bus or InProcessEventBus()
         self._executions = executions
         self._conversations = conversations
+        self._limits = limits
         self._live_tokens: dict[str, ExecutionContext] = {}
 
     @property
@@ -113,15 +116,11 @@ class AgentRuntime:
         client = self._models.resolve(agent.model)
 
         try:
-            result = await self._execute(
-                version, input, ctx, sink, client, agent, started_at
-            )
+            result = await self._execute(version, input, ctx, sink, client, agent, started_at)
         except ExecutionCancelled as exc:
             result = await self._terminal_cancelled(ctx, sink, exc, started_at)
         except ModelError as exc:
-            result = await self._terminal_failed(
-                ctx, sink, str(exc), "model", started_at
-            )
+            result = await self._terminal_failed(ctx, sink, str(exc), "model", started_at)
         except Exception as exc:  # noqa: BLE001 — the run never crashes callers
             result = await self._terminal_failed(
                 ctx,
@@ -169,9 +168,13 @@ class AgentRuntime:
 
         await sink.append(
             RunStarted(
-                event_id=_uuid(), run_id=ctx.run_id, created_at=_now(),
-                agent_id=agent.id, agent_version_id=version.id,
-                session_id=ctx.session_id, input=input,
+                event_id=_uuid(),
+                run_id=ctx.run_id,
+                created_at=_now(),
+                agent_id=agent.id,
+                agent_version_id=version.id,
+                session_id=ctx.session_id,
+                input=input,
             )
         )
         user_message = messages[-1]
@@ -185,19 +188,29 @@ class AgentRuntime:
             cursor = await self._finalize(
                 sink,
                 RunCompleted(
-                    event_id=_uuid(), run_id=ctx.run_id, created_at=_now(),
+                    event_id=_uuid(),
+                    run_id=ctx.run_id,
+                    created_at=_now(),
                     final_message=outcome.final_message or "",
                     total_usage=ctx.usage,
                     iterations=outcome.iterations,
                 ),
             )
             return self._result(
-                ctx, "succeeded", outcome.final_message, outcome.iterations,
-                cursor, started_at,
+                ctx,
+                "succeeded",
+                outcome.final_message,
+                outcome.iterations,
+                cursor,
+                started_at,
             )
         return await self._terminal_failed(
-            ctx, sink, outcome.error or "unknown error",
-            outcome.error_kind or "model", started_at, iterations=outcome.iterations,
+            ctx,
+            sink,
+            outcome.error or "unknown error",
+            outcome.error_kind or "model",
+            started_at,
+            iterations=outcome.iterations,
         )
 
     async def _loop(
@@ -218,9 +231,22 @@ class AgentRuntime:
         while True:
             ctx.iteration = iteration
             ctx.check_limits()  # deadline / cancellation -> ExecutionCancelled
+            if self._limits is not None:
+                # platform-level budget (ADR 0004): the orchestrator owns limits;
+                # the per-agent max_iterations cap is enforced at the loop bottom
+                reason = self._limits.exceeded(ctx)
+                if reason is not None:
+                    return LoopOutcome(
+                        kind="failed",
+                        error=f"run limit exceeded: {reason}",
+                        error_kind="max_iterations",
+                        iterations=iteration,
+                    )
             await sink.append(
                 IterationStarted(
-                    event_id=_uuid(), run_id=ctx.run_id, created_at=_now(),
+                    event_id=_uuid(),
+                    run_id=ctx.run_id,
+                    created_at=_now(),
                     iteration=iteration,
                 )
             )
@@ -272,15 +298,21 @@ class AgentRuntime:
             for call in step.tool_calls:
                 await sink.append(
                     ToolCallRequested(
-                        event_id=_uuid(), run_id=ctx.run_id, created_at=_now(),
-                        tool_call_id=call.id, name=call.name,
+                        event_id=_uuid(),
+                        run_id=ctx.run_id,
+                        created_at=_now(),
+                        tool_call_id=call.id,
+                        name=call.name,
                         arguments=dict(call.arguments),
                     )
                 )
                 await sink.append(
                     ToolCallStarted(
-                        event_id=_uuid(), run_id=ctx.run_id, created_at=_now(),
-                        tool_call_id=call.id, name=call.name,
+                        event_id=_uuid(),
+                        run_id=ctx.run_id,
+                        created_at=_now(),
+                        tool_call_id=call.id,
+                        name=call.name,
                     )
                 )
                 binding = bindings.get(call.name)
@@ -297,8 +329,10 @@ class AgentRuntime:
                     ),
                 )
                 tool_message = Message(
-                    role="tool", content=result.output,
-                    tool_call_id=call.id, name=call.name,
+                    role="tool",
+                    content=result.output,
+                    tool_call_id=call.id,
+                    name=call.name,
                 )
                 messages.append(tool_message)
                 await self._save_message(ctx, tool_message)
@@ -312,15 +346,22 @@ class AgentRuntime:
                     )
                 await sink.append(
                     ToolCallCompleted(
-                        event_id=_uuid(), run_id=ctx.run_id, created_at=_now(),
-                        tool_call_id=call.id, name=call.name,
-                        output=result.output[:2000], is_error=result.is_error,
+                        event_id=_uuid(),
+                        run_id=ctx.run_id,
+                        created_at=_now(),
+                        tool_call_id=call.id,
+                        name=call.name,
+                        output=result.output[:2000],
+                        is_error=result.is_error,
                         latency_ms=result.latency_ms,
                     )
                     if not result.is_error
                     else ToolCallFailed(
-                        event_id=_uuid(), run_id=ctx.run_id, created_at=_now(),
-                        tool_call_id=call.id, name=call.name,
+                        event_id=_uuid(),
+                        run_id=ctx.run_id,
+                        created_at=_now(),
+                        tool_call_id=call.id,
+                        name=call.name,
                         error=result.output,
                         kind=result.metadata.get("kind", "internal"),
                     )
@@ -358,8 +399,11 @@ class AgentRuntime:
     ) -> None:
         await sink.append(
             IterationCompleted(
-                event_id=_uuid(), run_id=ctx.run_id, created_at=_now(),
-                iteration=iteration, usage=ctx.usage,
+                event_id=_uuid(),
+                run_id=ctx.run_id,
+                created_at=_now(),
+                iteration=iteration,
+                usage=ctx.usage,
             )
         )
 
@@ -377,20 +421,32 @@ class AgentRuntime:
             cursor = await self._finalize(
                 sink,
                 RunFailed(
-                    event_id=_uuid(), run_id=ctx.run_id, created_at=_now(),
-                    error="run deadline exceeded", error_kind="timeout",
+                    event_id=_uuid(),
+                    run_id=ctx.run_id,
+                    created_at=_now(),
+                    error="run deadline exceeded",
+                    error_kind="timeout",
                     total_usage=ctx.usage,
                 ),
             )
             return self._result(
-                ctx, "timed_out", None, ctx.iteration, cursor, started_at,
-                error="run deadline exceeded", error_kind="timeout",
+                ctx,
+                "timed_out",
+                None,
+                ctx.iteration,
+                cursor,
+                started_at,
+                error="run deadline exceeded",
+                error_kind="timeout",
             )
         cursor = await self._finalize(
             sink,
             RunCancelled(
-                event_id=_uuid(), run_id=ctx.run_id, created_at=_now(),
-                reason=reason, total_usage=ctx.usage,
+                event_id=_uuid(),
+                run_id=ctx.run_id,
+                created_at=_now(),
+                reason=reason,
+                total_usage=ctx.usage,
             ),
         )
         return self._result(ctx, "cancelled", None, ctx.iteration, cursor, started_at)
@@ -407,13 +463,23 @@ class AgentRuntime:
         cursor = await self._finalize(
             sink,
             RunFailed(
-                event_id=_uuid(), run_id=ctx.run_id, created_at=_now(),
-                error=error, error_kind=error_kind, total_usage=ctx.usage,
+                event_id=_uuid(),
+                run_id=ctx.run_id,
+                created_at=_now(),
+                error=error,
+                error_kind=error_kind,
+                total_usage=ctx.usage,
             ),
         )
         return self._result(
-            ctx, "failed", None, iterations, cursor, started_at,
-            error=error, error_kind=error_kind,
+            ctx,
+            "failed",
+            None,
+            iterations,
+            cursor,
+            started_at,
+            error=error,
+            error_kind=error_kind,
         )
 
     async def _finalize(self, sink: InProcessEventSink, event: Any) -> int:

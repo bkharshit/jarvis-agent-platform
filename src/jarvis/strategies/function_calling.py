@@ -100,9 +100,7 @@ class FunctionCallingStrategy:
     ) -> ModelResponse:
         last_error: ModelError | None = None
         for attempt in range(1, MAX_ATTEMPTS + 1):
-            await sink.append(
-                ModelInvocationStarted(**_new_event_kwargs(ctx), attempt=attempt)
-            )
+            await sink.append(ModelInvocationStarted(**_new_event_kwargs(ctx), attempt=attempt))
             try:
                 if client.capabilities.streaming:
                     response = await self._invoke_streaming(ctx, request, client, sink)

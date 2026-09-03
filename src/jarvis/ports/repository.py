@@ -26,9 +26,7 @@ class AgentRepo(Protocol):
 
     async def get_by_name(self, name: str) -> AgentDefinition | None: ...
 
-    async def list_agents(
-        self, limit: int = 50, offset: int = 0
-    ) -> list[AgentDefinition]: ...
+    async def list_agents(self, limit: int = 50, offset: int = 0) -> list[AgentDefinition]: ...
 
     async def update_and_publish(
         self, definition: AgentDefinition, label: str = ""

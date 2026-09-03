@@ -53,9 +53,7 @@ class ToolRuntime:
                 tool.execute(dict(call.arguments), context), timeout=timeout
             )
         except TimeoutError:
-            return self._error_result(
-                call, "timeout", f"tool timed out after {timeout}s", started
-            )
+            return self._error_result(call, "timeout", f"tool timed out after {timeout}s", started)
         except ExecutionCancelled:
             raise
         except asyncio.CancelledError:
@@ -75,9 +73,7 @@ class ToolRuntime:
             latency_ms=int((time.monotonic() - started) * 1000),
         )
 
-    def _validate(
-        self, call: ToolCall, tool: Tool, context: ToolContext
-    ) -> tuple[str, str | None]:
+    def _validate(self, call: ToolCall, tool: Tool, context: ToolContext) -> tuple[str, str | None]:
         schema = tool.descriptor.parameters or {"type": "object", "properties": {}}
         if not isinstance(schema, dict) or schema.get("type", "object") != "object":
             return "internal", f"tool {call.name!r} has an invalid parameter schema"
@@ -87,9 +83,7 @@ class ToolRuntime:
             return "validation", f"invalid arguments for {call.name!r}: {exc.message}"
         return "validation", None
 
-    def _error_result(
-        self, call: ToolCall, kind: str, message: str, started: float
-    ) -> ToolResult:
+    def _error_result(self, call: ToolCall, kind: str, message: str, started: float) -> ToolResult:
         return ToolResult(
             tool_call_id=call.id,
             tool_name=call.name,

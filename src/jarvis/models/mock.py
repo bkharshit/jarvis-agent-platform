@@ -107,10 +107,12 @@ class MockModelProvider:
                 yield delta
             return
         if scripted.content:
-            for fragment in scripted.content.split(" "):
+            fragments = scripted.content.split(" ")
+            for index, fragment in enumerate(fragments):
                 if cancel is not None and cancel.triggered:
                     raise ModelAbortedError("cancelled mid-stream", provider=self.name)
-                yield TextDelta(text=fragment + " ")
+                # separator goes on the front so the reconstruction has no trailing space
+                yield TextDelta(text=fragment if index == 0 else " " + fragment)
         for index, call in enumerate(scripted.tool_calls):
             yield ToolCallDelta(index=index, id=call.id, name=call.name)
             yield ToolCallDelta(index=index, arguments_fragment=_json_arguments(call))

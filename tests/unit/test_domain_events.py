@@ -93,9 +93,7 @@ def test_empty_sequence_is_valid():
 def test_mixed_run_ids_raise():
     events = [
         _event(RunStarted, 0, agent_id="a1", agent_version_id="v1"),
-        RunCancelled(
-            event_id="x", run_id="other", sequence=1, reason="stop", total_usage=_usage()
-        ),
+        RunCancelled(event_id="x", run_id="other", sequence=1, reason="stop", total_usage=_usage()),
     ]
     with pytest.raises(EventSequenceError, match="run_id"):
         validate_event_sequence(events)
@@ -116,22 +114,22 @@ def test_is_terminal():
 
 def test_events_forbid_unknown_fields():
     with pytest.raises(ValidationError):
-        TextDelta(
-            event_id="e", run_id="r", sequence=0, text="x", surprise=True
-        )
+        TextDelta(event_id="e", run_id="r", sequence=0, text="x", surprise=True)
 
 
 def test_run_failed_rejects_unknown_error_kind():
     with pytest.raises(ValidationError):
         RunFailed(
-            event_id="e", run_id="r", sequence=0, error="x", error_kind="weird",
+            event_id="e",
+            run_id="r",
+            sequence=0,
+            error="x",
+            error_kind="weird",
             total_usage=Usage(),
         )
 
 
 def test_tool_call_completed_roundtrip():
-    event = _event(
-        ToolCallCompleted, 5, tool_call_id="tc1", name="calculator", output="42"
-    )
+    event = _event(ToolCallCompleted, 5, tool_call_id="tc1", name="calculator", output="42")
     assert event.sequence == 5
     assert event.type == "tool.call.completed"

@@ -83,9 +83,7 @@ class ReActStrategy:
                 ],
             )
 
-        return self._recovery_step(
-            assistant, "no 'Action:' or 'Final Answer:' found in the reply."
-        )
+        return self._recovery_step(assistant, "no 'Action:' or 'Final Answer:' found in the reply.")
 
     def _recovery_step(self, assistant: Message, problem: str) -> StepOutcome:
         """Malformed action recovery: no crash, no loop — ask the model to

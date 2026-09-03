@@ -15,9 +15,7 @@ DESCRIPTOR = ToolDescriptor(
     description="Fetch a URL over HTTPS/HTTP and return the response body as text.",
     parameters={
         "type": "object",
-        "properties": {
-            "url": {"type": "string", "description": "Absolute http(s) URL to fetch"}
-        },
+        "properties": {"url": {"type": "string", "description": "Absolute http(s) URL to fetch"}},
         "required": ["url"],
     },
 )
@@ -38,9 +36,7 @@ class HttpGetTool(BaseTool):
             raise ValueError(f"not an absolute http(s) URL: {url!r}")
         allowed = self.config.get("allowed_hosts") or context.config.get("allowed_hosts") or []
         if "*" not in allowed and parsed.hostname not in allowed:
-            raise ValueError(
-                f"host {parsed.hostname!r} is not in the allow-list {list(allowed)}"
-            )
+            raise ValueError(f"host {parsed.hostname!r} is not in the allow-list {list(allowed)}")
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             response = await client.get(url)
         body = response.text
