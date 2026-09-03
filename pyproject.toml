@@ -20,6 +20,7 @@ dependencies = [
     "typer>=0.13",
     "rich>=13.9",
     "httpx>=0.28",
+    "jsonschema>=4.26.0",
 ]
 
 [project.optional-dependencies]
@@ -29,6 +30,7 @@ dev = [
     "respx>=0.21",
     "ruff>=0.8",
     "mypy>=1.13",
+    "types-jsonschema>=4.26.0.20260518",
 ]
 
 [project.scripts]
