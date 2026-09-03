@@ -196,13 +196,15 @@ async def stream_agent(
         raise ApiError(400, "validation", f"invalid Last-Event-ID: {exc}") from None
 
     if req.run_id is not None:
-        run = await container.executions.get(req.run_id)
-        if run is None or run.agent_id != agent_id:
-            raise ApiError(404, "not_found", f"execution {req.run_id!r} not found")
+        # A live sink wins: a RUNNING execution row may not be readable yet,
+        # and the sink holds every event with its durable cursor.
         sink = container.bus.get(req.run_id)
         if sink is not None:
             generator = _live_stream(sink, last_cursor)
         else:
+            run = await container.executions.get(req.run_id)
+            if run is None or run.agent_id != agent_id:
+                raise ApiError(404, "not_found", f"execution {req.run_id!r} not found")
             generator = _replay_stream(container, req.run_id, last_cursor)
     else:
         definition = await _require_definition(container, agent_id)

@@ -115,6 +115,22 @@ class AgentRuntime:
         sink = sink or await self._bus.get_or_create(ctx.run_id)
         client = self._models.resolve(agent.model)
 
+        if self._executions is not None:
+            # A RUNNING row exists from the first event — /executions/{id}/cancel
+            # and list filters must see live runs, not only finished ones.
+            await self._executions.create_run(
+                RunResult(
+                    run_id=ctx.run_id,
+                    agent_id=ctx.agent_id,
+                    status="running",
+                    input=input,
+                    agent_version_id=ctx.agent_version_id,
+                    session_id=ctx.session_id,
+                    trace_id=ctx.trace_id,
+                    started_at=started_at,
+                )
+            )
+
         try:
             result = await self._execute(version, input, ctx, sink, client, agent, started_at)
         except ExecutionCancelled as exc:

@@ -48,11 +48,15 @@ class _RecordingRepo:
     def __init__(self):
         self.messages: dict[str, list[Message]] = {}
         self.tool_executions: list[tuple[str, object]] = []
+        self.started: list[RunResult] = []
         self.finished: list[RunResult] = []
         self.conversations: dict[str, list[Message]] = {}
         self.sequences: dict[str, list[int]] = {}
 
     # ExecutionRepo subset used by the runtime
+    async def create_run(self, result):
+        self.started.append(result)
+
     async def finish_run(self, result):
         self.finished.append(result)
 
