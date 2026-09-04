@@ -10,6 +10,11 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    environmentOptions: {
+      // Base URL so same-origin relative request paths (the Vite proxy seam)
+      // resolve — jsdom's default `about:blank` cannot.
+      jsdom: { url: "http://localhost" },
+    },
     setupFiles: "./src/test/setup.ts",
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
   },

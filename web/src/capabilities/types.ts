@@ -1,15 +1,7 @@
-// The GET /v1/capabilities payload. Hand-typed until commit 4 lands the
-// generated OpenAPI client; the backend is the schema authority (ADR 0002
-// principle), so these mirror src/jarvis/api/schemas.py exactly.
+import type { components } from "@/api/schema";
 
-export interface SectionCapability {
-  enabled: boolean;
-  mode?: string | null;
-  summary?: string | null;
-  stage?: string | null;
-  detail?: Record<string, unknown> | null;
-}
+// Re-derive the capabilities types from the generated schema — the backend
+// is the schema authority, so this layer never hand-writes payload shapes.
 
-export interface Capabilities {
-  sections: Record<string, SectionCapability>;
-}
+export type SectionCapability = components["schemas"]["SectionCapability"];
+export type Capabilities = components["schemas"]["CapabilitiesResponse"];

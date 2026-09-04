@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from "react-router";
 
+import { Toaster } from "@/components/Toaster";
 import { SECTION_KEYS, SECTION_REGISTRY } from "@/capabilities/sectionRegistry";
 import { useCapabilities } from "@/capabilities/useCapabilities";
 
@@ -58,6 +59,7 @@ export function Layout() {
           <Outlet />
         </main>
       </div>
+      <Toaster />
     </div>
   );
 }

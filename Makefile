@@ -1,8 +1,15 @@
 .PHONY: install test test-db test-all lint typecheck format clean \
-	web-install web web-test web-lint
+	gen-api web-install web web-test web-lint
 
 install:
 	uv sync --extra dev
+
+# Regenerate the committed OpenAPI snapshot + typed client schema whenever
+# src/jarvis/api/schemas.py or a route changes (plan: backend is the schema
+# authority).
+gen-api:
+	uv run python scripts/gen_openapi.py
+	cd web && npx openapi-typescript src/api/openapi.json -o src/api/schema.d.ts
 
 # --- frontend (web/, stage F1) ------------------------------------------
 

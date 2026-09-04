@@ -1,43 +1,33 @@
-# JARVIS web — product shell (stage F1)
+# JARVIS web (stage F1)
 
-React + TypeScript + Vite frontend. Spec: `../docs/architecture/frontend-architecture.md`;
-build plan: `../docs/implementation-plan-f1.md`.
+React 19 + Vite + TypeScript + Tailwind v4 + TanStack Query. The product
+shell renders from `GET /v1/capabilities` — unimplemented sections are
+coming-soon, never faked.
 
-## Running
-
-```bash
-make web-install          # npm install (once)
-make web                 # Vite dev server (http://localhost:5173)
-```
-
-The dev server proxies `/v1` and `/healthz` to the backend at
-`http://127.0.0.1:8000` — start it with `uv run jarvis serve` first. There is
-no CORS middleware on the backend; the proxy is the single seam. (A
-separately-deployed frontend later will need CORS added server-side.)
-
-## Gates (every commit)
+## Commands
 
 ```bash
-make web-test             # tsc --noEmit && eslint . && vitest run
-make web-lint             # tsc --noEmit && eslint . only
+make web-install    # npm install
+make web            # vite dev server (proxy /v1 + /healthz → 127.0.0.1:8000)
+make web-test       # tsc --noEmit && eslint && vitest
+make web-lint       # tsc --noEmit && eslint
 ```
 
-## Generated API client (commit 4+)
+## Regenerating the API client
 
-`src/api/schema.d.ts` is generated from the backend's OpenAPI and committed:
+The backend is the schema authority. After changing `src/jarvis/api/schemas.py`
+or any route:
 
 ```bash
-make gen-api              # regenerate after any backend schema/route change
+make gen-api   # dumps web/src/api/openapi.json → openapi-typescript → schema.d.ts
 ```
 
-The backend is the single schema authority — never hand-duplicate request or
-response types.
+Both generated files are committed; the client (`src/api/client.ts`) is typed
+against them via `openapi-fetch`. No hand-written response shapes in `src/api/`
+(enforced by eslint — `any` is banned there).
 
-## E2e (commit 11+)
+## Dev proxy
 
-```bash
-make web-e2e              # Playwright smoke; backend must be running already
-```
-
-Prerequisite: `uv run jarvis serve` against local Postgres (see
-`../docs/local-run-guide.md`).
+`vite.config.ts` proxies `/v1` and `/healthz` to `127.0.0.1:8000`. That proxy
+is the single seam to the backend — no CORS middleware on the FastAPI app.
+Start the backend with `uv run jarvis serve`.

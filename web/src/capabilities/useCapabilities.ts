@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
-import { fetchJson } from "@/api/http";
+import { client, unwrap } from "@/api/client";
 
 import type { Capabilities } from "./types";
 
@@ -11,7 +11,7 @@ export const capabilitiesQueryKey = ["capabilities"] as const;
 export function useCapabilities() {
   return useQuery<Capabilities>({
     queryKey: capabilitiesQueryKey,
-    queryFn: () => fetchJson<Capabilities>("/v1/capabilities"),
+    queryFn: () => unwrap(client.GET("/v1/capabilities")),
     staleTime: Infinity,
     gcTime: Infinity,
     retry: 1,
