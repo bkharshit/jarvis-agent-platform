@@ -1,13 +1,25 @@
+import { Navigate, Route, Routes } from "react-router";
+
+import { Layout } from "@/app/Layout";
+import { sectionRoutes } from "@/app/routes";
+
 export default function App() {
-  // Placeholder until commit 3 lands the capability-driven shell.
   return (
-    <div className="flex min-h-screen items-center justify-center bg-neutral-950 text-neutral-100">
-      <div className="text-center">
-        <h1 className="text-3xl font-semibold tracking-tight">JARVIS</h1>
-        <p className="mt-2 text-sm text-neutral-400">
-          Product shell — scaffolded; the capability-driven app lands next.
-        </p>
-      </div>
-    </div>
+    <Routes>
+      <Route element={<Layout />}>
+        {sectionRoutes().map((route) => (
+          <Route key={route.path} path={route.path} element={route.element} />
+        ))}
+        <Route path="/" element={<Navigate to="/agents" replace />} />
+        <Route
+          path="*"
+          element={
+            <div className="px-6 py-16 text-center text-neutral-400">
+              Not found.
+            </div>
+          }
+        />
+      </Route>
+    </Routes>
   );
 }
