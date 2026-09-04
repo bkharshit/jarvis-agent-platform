@@ -4,6 +4,8 @@ import { AgentEditor } from "@/sections/agents/AgentEditor";
 import { AgentDetailPage } from "@/sections/agents/AgentDetailPage";
 import { AgentsList } from "@/sections/agents/AgentsList";
 import { RunConsole } from "@/sections/agents/RunConsole";
+import { ExecutionsList } from "@/sections/executions/ExecutionsList";
+import { ExecutionDetailPage } from "@/sections/executions/ExecutionDetail";
 
 import { SectionGate } from "@/capabilities/SectionGate";
 import type { SectionKey } from "@/capabilities/sectionRegistry";
@@ -40,7 +42,8 @@ export function sectionRoutes() {
     { path: "/agents/:agentId", element: gated("agents", <AgentDetailPage />) },
     { path: "/agents/:agentId/run", element: gated("agents", <RunConsole />) },
     { path: "/agents/:agentId/edit", element: gated("agents", <AgentEditor />) },
-    { path: "/executions", element: gated("executions") },
+    { path: "/executions", element: gated("executions", <ExecutionsList />) },
+    { path: "/executions/:runId", element: gated("executions", <ExecutionDetailPage />) },
     { path: "/conversations", element: gated("conversations") },
     { path: "/tools", element: gated("tools") },
     { path: "/models", element: gated("models") },

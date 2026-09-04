@@ -7,13 +7,8 @@ import type { components } from "@/api/schema";
 // it on a 50ms cycle (cleared on terminal/abort). Live SSE and JSON replay
 // feed the same function → identical rendering.
 
-/** The wire event: one of the envelope's discriminated types. */
-export type WireEvent = {
-  event_id: string;
-  run_id: string;
-  sequence: number | null;
-  type: string;
-} & Record<string, unknown>;
+/** The wire event: the generated envelope union (schema authority). */
+export type WireEvent = components["schemas"]["CursorEvent"]["event"];
 
 export type UsageView = components["schemas"]["Usage"];
 
@@ -123,13 +118,13 @@ export function applyEvent(
         ...base,
         status: "running",
         runId: event.run_id,
-        sessionId: (event.session_id as string | null) ?? state.sessionId,
+        sessionId: event.session_id ?? state.sessionId,
       };
     case "iteration.started": {
       const item: IterationMarkerView = {
         kind: "iteration",
         id: event.event_id,
-        iteration: event.iteration as number,
+        iteration: event.iteration,
       };
       return { ...base, items: [...state.items, item] };
     }
@@ -141,46 +136,46 @@ export function applyEvent(
       return base;
     case "text.delta":
       // Buffered — folded into a message item by flushPending().
-      return { ...base, pendingText: state.pendingText + (event.text as string) };
+      return { ...base, pendingText: state.pendingText + event.text };
     case "tool.call.requested": {
       const item: ToolCardView = {
         kind: "tool",
         id: event.event_id,
-        toolCallId: event.tool_call_id as string,
-        name: event.name as string,
+        toolCallId: event.tool_call_id,
+        name: event.name,
         status: "requested",
-        arguments: event.arguments as Record<string, unknown> | undefined,
+        arguments: event.arguments,
       };
       return { ...base, items: [...state.items, item] };
     }
     case "tool.call.started":
-      return mapToolCard(base, event.tool_call_id as string, (card) => ({
+      return mapToolCard(base, event.tool_call_id, (card) => ({
         ...card,
         status: "running",
       }));
     case "tool.call.completed":
-      return mapToolCard(base, event.tool_call_id as string, (card) => ({
+      return mapToolCard(base, event.tool_call_id, (card) => ({
         ...card,
         status: "completed",
-        output: event.output as string,
-        isError: event.is_error as boolean,
-        latencyMs: event.latency_ms as number,
+        output: event.output,
+        isError: event.is_error,
+        latencyMs: event.latency_ms,
       }));
     case "tool.call.failed":
-      return mapToolCard(base, event.tool_call_id as string, (card) => ({
+      return mapToolCard(base, event.tool_call_id, (card) => ({
         ...card,
         status: "failed",
-        error: event.error as string,
-        errorKind: event.kind as string,
+        error: event.error,
+        errorKind: event.kind,
       }));
     case "run.completed": {
       const flushed = flushPending(base);
       return {
         ...flushed,
         status: "completed",
-        finalMessage: event.final_message as string,
-        usage: event.total_usage as UsageView,
-        iterations: event.iterations as number,
+        finalMessage: event.final_message,
+        usage: event.total_usage,
+        iterations: event.iterations,
         pendingText: "",
       };
     }
@@ -190,10 +185,10 @@ export function applyEvent(
         ...flushed,
         status: "failed",
         error: {
-          message: event.error as string,
-          kind: event.error_kind as string,
+          message: event.error,
+          kind: event.error_kind,
         },
-        usage: event.total_usage as UsageView,
+        usage: event.total_usage,
         pendingText: "",
       };
     }
@@ -202,14 +197,19 @@ export function applyEvent(
       return {
         ...flushed,
         status: "cancelled",
-        error: { message: event.reason as string, kind: "cancelled" },
-        usage: event.total_usage as UsageView,
+        error: { message: event.reason, kind: "cancelled" },
+        usage: event.total_usage,
         pendingText: "",
       };
     }
-    default:
-      // Unknown event types render nothing (forward-compat, like SectionGate).
+    default: {
+      // Exhaustive: the union has no other members. The `never` check keeps
+      // a future backend event type from silently rendering nothing — but at
+      // runtime an unknown type still folds to base (forward-compat).
+      const _exhaustive: never = event;
+      void _exhaustive;
       return base;
+    }
   }
 }
 

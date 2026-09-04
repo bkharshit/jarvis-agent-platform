@@ -28,6 +28,58 @@ export const versionSummaryFixture = {
   created_at: "2026-09-04T12:00:00Z",
 };
 
+/** A realistic RunResult row. */
+export const runFixture = {
+  run_id: "run-abc-123",
+  agent_id: "agent-1",
+  status: "succeeded" as const,
+  input: "what is 2+2?",
+  agent_version_id: "ver-1",
+  session_id: "session-7",
+  trace_id: "",
+  final_message: "It is 4.",
+  total_usage: { input_tokens: 12, output_tokens: 4, extra: {} },
+  iterations: 1,
+  error: null,
+  error_kind: null,
+  started_at: "2026-09-04T13:00:00Z",
+  finished_at: "2026-09-04T13:00:02Z",
+  event_cursor: 6,
+};
+
+export const executionDetailFixture = {
+  run: runFixture,
+  messages: [
+    {
+      role: "user",
+      content: [{ type: "text", text: "what is 2+2?" }],
+    },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "It is 4." }],
+    },
+  ],
+  tool_executions: [
+    {
+      tool_call_id: "call-1",
+      tool_name: "calculator",
+      output: "4",
+      is_error: false,
+      latency_ms: 3,
+    },
+  ],
+};
+
+/** Cursor-tagged event log matching runFixture (replay fixture). */
+export const eventLogFixture = [
+  { cursor: 0, event: { event_id: "r0", run_id: "run-abc-123", type: "run.started", agent_id: "agent-1", agent_version_id: "ver-1", session_id: "session-7", input: "what is 2+2?" } },
+  { cursor: 1, event: { event_id: "r1", run_id: "run-abc-123", type: "iteration.started", iteration: 1 } },
+  { cursor: 2, event: { event_id: "r2", run_id: "run-abc-123", type: "tool.call.requested", tool_call_id: "call-1", name: "calculator", arguments: { expression: "2+2" } } },
+  { cursor: 3, event: { event_id: "r3", run_id: "run-abc-123", type: "tool.call.completed", tool_call_id: "call-1", name: "calculator", output: "4", is_error: false, latency_ms: 3 } },
+  { cursor: 4, event: { event_id: "r4", run_id: "run-abc-123", type: "text.delta", text: "It is 4." } },
+  { cursor: 5, event: { event_id: "r5", run_id: "run-abc-123", type: "run.completed", final_message: "It is 4.", total_usage: { input_tokens: 12, output_tokens: 4, extra: {} }, iterations: 1 } },
+];
+
 export const handlers = [
   http.get("/v1/agents", () => HttpResponse.json({ items: agentsFixture })),
   http.post("/v1/agents", () => HttpResponse.json({ definition: agentFixture, versions: [] }, { status: 201 })),
@@ -63,6 +115,37 @@ export const handlers = [
     HttpResponse.json({ definition: agentFixture, versions: [] }),
   ),
   http.delete("/v1/agents/:agent_id", () => new HttpResponse(null, { status: 204 })),
+  http.get("/v1/executions", ({ request }) => {
+    const url = new URL(request.url);
+    const agent = url.searchParams.get("agent_id");
+    const status = url.searchParams.get("status");
+    const items = [runFixture].filter(
+      (r) =>
+        (agent === null || r.agent_id === agent) &&
+        (status === null || r.status === status),
+    );
+    return HttpResponse.json({ items });
+  }),
+  http.get("/v1/executions/:run_id", ({ params }) => {
+    const { run_id } = params as { run_id: string };
+    if (run_id === runFixture.run_id) {
+      return HttpResponse.json(executionDetailFixture);
+    }
+    return HttpResponse.json(
+      { error: { kind: "not_found", message: `execution ${run_id} not found` } },
+      { status: 404 },
+    );
+  }),
+  http.get("/v1/executions/:run_id/events", ({ params }) => {
+    const { run_id } = params as { run_id: string };
+    if (run_id === runFixture.run_id) {
+      return HttpResponse.json({ run_id, after: null, events: eventLogFixture });
+    }
+    return HttpResponse.json(
+      { error: { kind: "not_found", message: `execution ${run_id} not found` } },
+      { status: 404 },
+    );
+  }),
   http.get("/v1/capabilities", () => {
     return HttpResponse.json({
       sections: {
