@@ -72,7 +72,15 @@ def _definition_from_create(req: AgentUpsertRequest, agent_id: str) -> AgentDefi
     missing = sorted({"name", "model", "strategy"} - set(payload))
     if missing:
         raise ApiError(
-            422, "validation", f"missing required field(s): {', '.join(missing)}"
+            422,
+            "validation",
+            f"missing required field(s): {', '.join(missing)}",
+            details={
+                "errors": [
+                    {"loc": ["body", field], "msg": "field required", "type": "missing"}
+                    for field in missing
+                ]
+            },
         )
     return AgentDefinition(id=agent_id, **payload)
 

@@ -29,8 +29,9 @@ MESSAGE_ROLE = sa.Enum("system", "developer", "user", "assistant", "tool", name=
 
 
 def upgrade() -> None:
-    EXECUTION_STATUS.create(op.get_bind(), checkfirst=True)
-    MESSAGE_ROLE.create(op.get_bind(), checkfirst=True)
+    # NOTE: no explicit Enum.create() here — op.create_table emits CREATE TYPE
+    # for the enum columns itself, and a checkfirst pre-create makes that
+    # second emission fail with DuplicateObjectError.
 
     op.create_table(
         "agents",

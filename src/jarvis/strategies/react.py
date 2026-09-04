@@ -57,8 +57,10 @@ class ReActStrategy:
 
         final = _FINAL_PATTERN.search(text)
         if final:
+            # The user-facing answer is what follows the marker, not the
+            # raw protocol line — strip it from the finish message.
             return FinishStep(
-                assistant_message=assistant,
+                assistant_message=assistant.model_copy(update={"content": final.group(1)}),
                 finish_reason="stop",
             )
 

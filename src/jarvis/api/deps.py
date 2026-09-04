@@ -10,6 +10,7 @@ factory → strategy registry → `AgentRuntime` with `RunLimits` from Settings
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
@@ -47,7 +48,11 @@ class AppContainer:
     limits: RunLimits
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> AppContainer:
+    def from_settings(
+        cls, settings: Settings, *, mock_provider: Any | None = None
+    ) -> AppContainer:
+        """`mock_provider` injects a shared MockModelProvider (tests / demo);
+        production wiring passes nothing."""
         engine = create_async_engine(settings.database_url)
         sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
         agents = SqlAgentRepo(sessionmaker)
@@ -66,7 +71,7 @@ class AppContainer:
         # execution_events.cursor (SSE Last-Event-ID, ADR 0003). Sinks are
         # never dropped in Phase 1 — /stream resume relies on them.
         bus = InProcessEventBus(persist=executions.append_event)
-        models = DefaultModelProviderFactory()
+        models = DefaultModelProviderFactory(mock_provider=mock_provider)
         strategies = DefaultStrategyRegistry()
         runtime = AgentRuntime(
             strategies=strategies,
