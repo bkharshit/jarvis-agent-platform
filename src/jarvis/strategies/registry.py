@@ -31,6 +31,10 @@ class DefaultStrategyRegistry:
         }
         self._strategies.update(extra or {})
 
+    def names(self) -> list[str]:
+        """Registered strategy names, sorted — feeds /v1/capabilities."""
+        return sorted(self._strategies)
+
     def resolve(self, config: StrategyConfig) -> AgentStrategy:
         try:
             return self._strategies[config.type]

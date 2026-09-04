@@ -18,6 +18,7 @@ from jarvis import __version__
 from jarvis.api.deps import AppContainer
 from jarvis.api.errors import ApiError, envelope
 from jarvis.api.routes.agents import router as agents_router
+from jarvis.api.routes.capabilities import router as capabilities_router
 from jarvis.api.routes.conversations import router as conversations_router
 from jarvis.api.routes.executions import router as executions_router
 from jarvis.config import Settings
@@ -59,11 +60,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.exception_handler(Exception)
     async def _internal_error(_: Request, exc: Exception) -> JSONResponse:
         logger.exception("unhandled error")
-        return JSONResponse(
-            status_code=500, content=envelope("internal", "internal server error")
-        )
+        return JSONResponse(status_code=500, content=envelope("internal", "internal server error"))
 
     app.include_router(agents_router, prefix="/v1")
+    app.include_router(capabilities_router, prefix="/v1")
     app.include_router(executions_router, prefix="/v1")
     app.include_router(conversations_router, prefix="/v1")
 

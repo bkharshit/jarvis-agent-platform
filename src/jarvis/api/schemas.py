@@ -116,16 +116,34 @@ class CancelResult(_Model):
     status: str
 
 
+class SectionCapability(_Model):
+    """One IA section's enablement fact (F1). Disabled sections always carry
+    the `stage` that will enable them; `detail` carries derived facts
+    (registries mirror registries — never hardcoded)."""
+
+    enabled: bool
+    mode: str | None = None
+    summary: str | None = None
+    stage: str | None = None
+    detail: dict[str, Any] | None = None
+
+
+class CapabilitiesResponse(_Model):
+    sections: dict[str, SectionCapability]
+
+
 __all__ = [
     "AgentDetail",
     "AgentList",
     "AgentUpsertRequest",
     "CancelResult",
+    "CapabilitiesResponse",
     "CursorEvent",
     "EventList",
     "ExecutionDetail",
     "ExecutionList",
     "MessageList",
     "RunRequest",
+    "SectionCapability",
     "VersionSummary",
 ]
