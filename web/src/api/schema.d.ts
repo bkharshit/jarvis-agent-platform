@@ -357,6 +357,26 @@ export interface components {
                 [key: string]: components["schemas"]["SectionCapability"];
             };
         };
+        /**
+         * CursorEvent
+         * @description One replayed event tagged with its durable cursor (SSE Last-Event-ID
+         *     space), so JSON replay can drive exactly-once clients too.
+         */
+        CursorEvent: {
+            /** Cursor */
+            cursor: number;
+            /** Event */
+            event: components["schemas"]["RunStarted"] | components["schemas"]["IterationStarted"] | components["schemas"]["ModelInvocationStarted"] | components["schemas"]["TextDelta"] | components["schemas"]["ModelInvocationCompleted"] | components["schemas"]["ToolCallRequested"] | components["schemas"]["ToolCallStarted"] | components["schemas"]["ToolCallCompleted"] | components["schemas"]["ToolCallFailed"] | components["schemas"]["IterationCompleted"] | components["schemas"]["RunCompleted"] | components["schemas"]["RunFailed"] | components["schemas"]["RunCancelled"];
+        };
+        /** EventList */
+        EventList: {
+            /** Run Id */
+            run_id: string;
+            /** After */
+            after?: number | null;
+            /** Events */
+            events: components["schemas"]["CursorEvent"][];
+        };
         /** ExecutionDetail */
         ExecutionDetail: {
             run: components["schemas"]["RunResult"];
@@ -388,6 +408,49 @@ export interface components {
             type: "image";
             /** Url */
             url: string;
+        };
+        /** IterationCompleted */
+        IterationCompleted: {
+            /** Event Id */
+            event_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "iteration.completed";
+            /** Iteration */
+            iteration: number;
+            usage: components["schemas"]["Usage"];
+        };
+        /** IterationStarted */
+        IterationStarted: {
+            /** Event Id */
+            event_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "iteration.started";
+            /** Iteration */
+            iteration: number;
         };
         /** MemoryConfig */
         MemoryConfig: {
@@ -437,6 +500,54 @@ export interface components {
             /** Messages */
             messages: components["schemas"]["Message"][];
         };
+        /** ModelInvocationCompleted */
+        ModelInvocationCompleted: {
+            /** Event Id */
+            event_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "model.invocation.completed";
+            usage: components["schemas"]["Usage"];
+            /** Finish Reason */
+            finish_reason: string;
+            /** Model */
+            model: string;
+        };
+        /** ModelInvocationStarted */
+        ModelInvocationStarted: {
+            /** Event Id */
+            event_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "model.invocation.started";
+            /**
+             * Attempt
+             * @default 1
+             */
+            attempt: number;
+        };
         /**
          * ModelRef
          * @description Reference to a model. `api_key_env` names an environment variable —
@@ -451,6 +562,79 @@ export interface components {
             base_url?: string | null;
             /** Api Key Env */
             api_key_env?: string | null;
+        };
+        /** RunCancelled */
+        RunCancelled: {
+            /** Event Id */
+            event_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "run.cancelled";
+            /** Reason */
+            reason: string;
+            total_usage: components["schemas"]["Usage"];
+        };
+        /** RunCompleted */
+        RunCompleted: {
+            /** Event Id */
+            event_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "run.completed";
+            /** Final Message */
+            final_message: string;
+            total_usage: components["schemas"]["Usage"];
+            /** Iterations */
+            iterations: number;
+        };
+        /** RunFailed */
+        RunFailed: {
+            /** Event Id */
+            event_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "run.failed";
+            /** Error */
+            error: string;
+            /**
+             * Error Kind
+             * @enum {string}
+             */
+            error_kind: "max_iterations" | "timeout" | "model" | "tool" | "output_schema";
+            total_usage: components["schemas"]["Usage"];
         };
         /**
          * RunRequest
@@ -525,6 +709,36 @@ export interface components {
             /** Event Cursor */
             event_cursor?: number | null;
         };
+        /** RunStarted */
+        RunStarted: {
+            /** Event Id */
+            event_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "run.started";
+            /** Agent Id */
+            agent_id: string;
+            /** Agent Version Id */
+            agent_version_id: string;
+            /** Session Id */
+            session_id?: string | null;
+            /**
+             * Input
+             * @default
+             */
+            input: string;
+        };
         /**
          * SectionCapability
          * @description One IA section's enablement fact (F1). Disabled sections always carry
@@ -556,6 +770,27 @@ export interface components {
             params?: {
                 [key: string]: unknown;
             };
+        };
+        /** TextDelta */
+        TextDelta: {
+            /** Event Id */
+            event_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "text.delta";
+            /** Text */
+            text: string;
         };
         /** TextPart */
         TextPart: {
@@ -592,6 +827,125 @@ export interface components {
             arguments?: {
                 [key: string]: unknown;
             };
+        };
+        /** ToolCallCompleted */
+        ToolCallCompleted: {
+            /** Event Id */
+            event_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tool.call.completed";
+            /** Tool Call Id */
+            tool_call_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Output
+             * @default
+             */
+            output: string;
+            /**
+             * Is Error
+             * @default false
+             */
+            is_error: boolean;
+            /**
+             * Latency Ms
+             * @default 0
+             */
+            latency_ms: number;
+        };
+        /** ToolCallFailed */
+        ToolCallFailed: {
+            /** Event Id */
+            event_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tool.call.failed";
+            /** Tool Call Id */
+            tool_call_id: string;
+            /** Name */
+            name: string;
+            /** Error */
+            error: string;
+            /**
+             * Kind
+             * @default internal
+             * @enum {string}
+             */
+            kind: "validation" | "timeout" | "internal";
+        };
+        /** ToolCallRequested */
+        ToolCallRequested: {
+            /** Event Id */
+            event_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tool.call.requested";
+            /** Tool Call Id */
+            tool_call_id: string;
+            /** Name */
+            name: string;
+            /** Arguments */
+            arguments?: {
+                [key: string]: unknown;
+            };
+        };
+        /** ToolCallStarted */
+        ToolCallStarted: {
+            /** Event Id */
+            event_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tool.call.started";
+            /** Tool Call Id */
+            tool_call_id: string;
+            /** Name */
+            name: string;
         };
         /** ToolResult */
         ToolResult: {
@@ -1067,7 +1421,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["EventList"];
                 };
             };
             /** @description Validation Error */

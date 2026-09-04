@@ -74,7 +74,7 @@ async def cancel_run(run_id: str, container: AppContainer = ContainerDep) -> Can
     return CancelResult(run_id=run_id, cancelled=triggered, status=run.status)
 
 
-@router.get("/{run_id}/events", response_model=None)
+@router.get("/{run_id}/events", response_model=EventList)
 async def list_events(
     run_id: str,
     request: Request,

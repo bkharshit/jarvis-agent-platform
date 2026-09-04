@@ -630,7 +630,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/EventList"
+                }
               }
             }
           },
@@ -1087,6 +1089,117 @@
         ],
         "title": "CapabilitiesResponse"
       },
+      "CursorEvent": {
+        "properties": {
+          "cursor": {
+            "type": "integer",
+            "title": "Cursor"
+          },
+          "event": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RunStarted"
+              },
+              {
+                "$ref": "#/components/schemas/IterationStarted"
+              },
+              {
+                "$ref": "#/components/schemas/ModelInvocationStarted"
+              },
+              {
+                "$ref": "#/components/schemas/TextDelta"
+              },
+              {
+                "$ref": "#/components/schemas/ModelInvocationCompleted"
+              },
+              {
+                "$ref": "#/components/schemas/ToolCallRequested"
+              },
+              {
+                "$ref": "#/components/schemas/ToolCallStarted"
+              },
+              {
+                "$ref": "#/components/schemas/ToolCallCompleted"
+              },
+              {
+                "$ref": "#/components/schemas/ToolCallFailed"
+              },
+              {
+                "$ref": "#/components/schemas/IterationCompleted"
+              },
+              {
+                "$ref": "#/components/schemas/RunCompleted"
+              },
+              {
+                "$ref": "#/components/schemas/RunFailed"
+              },
+              {
+                "$ref": "#/components/schemas/RunCancelled"
+              }
+            ],
+            "title": "Event",
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "iteration.completed": "#/components/schemas/IterationCompleted",
+                "iteration.started": "#/components/schemas/IterationStarted",
+                "model.invocation.completed": "#/components/schemas/ModelInvocationCompleted",
+                "model.invocation.started": "#/components/schemas/ModelInvocationStarted",
+                "run.cancelled": "#/components/schemas/RunCancelled",
+                "run.completed": "#/components/schemas/RunCompleted",
+                "run.failed": "#/components/schemas/RunFailed",
+                "run.started": "#/components/schemas/RunStarted",
+                "text.delta": "#/components/schemas/TextDelta",
+                "tool.call.completed": "#/components/schemas/ToolCallCompleted",
+                "tool.call.failed": "#/components/schemas/ToolCallFailed",
+                "tool.call.requested": "#/components/schemas/ToolCallRequested",
+                "tool.call.started": "#/components/schemas/ToolCallStarted"
+              }
+            }
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "cursor",
+          "event"
+        ],
+        "title": "CursorEvent",
+        "description": "One replayed event tagged with its durable cursor (SSE Last-Event-ID\nspace), so JSON replay can drive exactly-once clients too."
+      },
+      "EventList": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/CursorEvent"
+            },
+            "type": "array",
+            "title": "Events"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "run_id",
+          "events"
+        ],
+        "title": "EventList"
+      },
       "ExecutionDetail": {
         "properties": {
           "run": {
@@ -1166,6 +1279,102 @@
         ],
         "title": "ImagePart",
         "description": "Reserved for multimodal phases; not produced by Phase 1 code."
+      },
+      "IterationCompleted": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "type": {
+            "type": "string",
+            "const": "iteration.completed",
+            "title": "Type",
+            "default": "iteration.completed"
+          },
+          "iteration": {
+            "type": "integer",
+            "title": "Iteration"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "run_id",
+          "iteration",
+          "usage"
+        ],
+        "title": "IterationCompleted"
+      },
+      "IterationStarted": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "type": {
+            "type": "string",
+            "const": "iteration.started",
+            "title": "Type",
+            "default": "iteration.started"
+          },
+          "iteration": {
+            "type": "integer",
+            "title": "Iteration"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "run_id",
+          "iteration"
+        ],
+        "title": "IterationStarted"
       },
       "MemoryConfig": {
         "properties": {
@@ -1308,6 +1517,107 @@
         ],
         "title": "MessageList"
       },
+      "ModelInvocationCompleted": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "type": {
+            "type": "string",
+            "const": "model.invocation.completed",
+            "title": "Type",
+            "default": "model.invocation.completed"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "finish_reason": {
+            "type": "string",
+            "title": "Finish Reason"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "run_id",
+          "usage",
+          "finish_reason",
+          "model"
+        ],
+        "title": "ModelInvocationCompleted"
+      },
+      "ModelInvocationStarted": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "type": {
+            "type": "string",
+            "const": "model.invocation.started",
+            "title": "Type",
+            "default": "model.invocation.started"
+          },
+          "attempt": {
+            "type": "integer",
+            "title": "Attempt",
+            "default": 1
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "run_id"
+        ],
+        "title": "ModelInvocationStarted"
+      },
       "ModelRef": {
         "properties": {
           "provider": {
@@ -1349,6 +1659,173 @@
         ],
         "title": "ModelRef",
         "description": "Reference to a model. `api_key_env` names an environment variable \u2014\nthe secret itself never enters the domain."
+      },
+      "RunCancelled": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "type": {
+            "type": "string",
+            "const": "run.cancelled",
+            "title": "Type",
+            "default": "run.cancelled"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "total_usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "run_id",
+          "reason",
+          "total_usage"
+        ],
+        "title": "RunCancelled"
+      },
+      "RunCompleted": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "type": {
+            "type": "string",
+            "const": "run.completed",
+            "title": "Type",
+            "default": "run.completed"
+          },
+          "final_message": {
+            "type": "string",
+            "title": "Final Message"
+          },
+          "total_usage": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "iterations": {
+            "type": "integer",
+            "title": "Iterations"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "run_id",
+          "final_message",
+          "total_usage",
+          "iterations"
+        ],
+        "title": "RunCompleted"
+      },
+      "RunFailed": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "type": {
+            "type": "string",
+            "const": "run.failed",
+            "title": "Type",
+            "default": "run.failed"
+          },
+          "error": {
+            "type": "string",
+            "title": "Error"
+          },
+          "error_kind": {
+            "type": "string",
+            "enum": [
+              "max_iterations",
+              "timeout",
+              "model",
+              "tool",
+              "output_schema"
+            ],
+            "title": "Error Kind"
+          },
+          "total_usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "run_id",
+          "error",
+          "error_kind",
+          "total_usage"
+        ],
+        "title": "RunFailed"
       },
       "RunRequest": {
         "properties": {
@@ -1535,6 +2012,73 @@
         ],
         "title": "RunResult"
       },
+      "RunStarted": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "type": {
+            "type": "string",
+            "const": "run.started",
+            "title": "Type",
+            "default": "run.started"
+          },
+          "agent_id": {
+            "type": "string",
+            "title": "Agent Id"
+          },
+          "agent_version_id": {
+            "type": "string",
+            "title": "Agent Version Id"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "input": {
+            "type": "string",
+            "title": "Input",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "run_id",
+          "agent_id",
+          "agent_version_id"
+        ],
+        "title": "RunStarted"
+      },
       "SectionCapability": {
         "properties": {
           "enabled": {
@@ -1618,6 +2162,52 @@
         ],
         "title": "StrategyConfig"
       },
+      "TextDelta": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "type": {
+            "type": "string",
+            "const": "text.delta",
+            "title": "Type",
+            "default": "text.delta"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "run_id",
+          "text"
+        ],
+        "title": "TextDelta"
+      },
       "TextPart": {
         "properties": {
           "type": {
@@ -1685,6 +2275,245 @@
           "name"
         ],
         "title": "ToolCall"
+      },
+      "ToolCallCompleted": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "type": {
+            "type": "string",
+            "const": "tool.call.completed",
+            "title": "Type",
+            "default": "tool.call.completed"
+          },
+          "tool_call_id": {
+            "type": "string",
+            "title": "Tool Call Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "output": {
+            "type": "string",
+            "title": "Output",
+            "default": ""
+          },
+          "is_error": {
+            "type": "boolean",
+            "title": "Is Error",
+            "default": false
+          },
+          "latency_ms": {
+            "type": "integer",
+            "title": "Latency Ms",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "run_id",
+          "tool_call_id",
+          "name"
+        ],
+        "title": "ToolCallCompleted"
+      },
+      "ToolCallFailed": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "type": {
+            "type": "string",
+            "const": "tool.call.failed",
+            "title": "Type",
+            "default": "tool.call.failed"
+          },
+          "tool_call_id": {
+            "type": "string",
+            "title": "Tool Call Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "error": {
+            "type": "string",
+            "title": "Error"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "validation",
+              "timeout",
+              "internal"
+            ],
+            "title": "Kind",
+            "default": "internal"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "run_id",
+          "tool_call_id",
+          "name",
+          "error"
+        ],
+        "title": "ToolCallFailed"
+      },
+      "ToolCallRequested": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "type": {
+            "type": "string",
+            "const": "tool.call.requested",
+            "title": "Type",
+            "default": "tool.call.requested"
+          },
+          "tool_call_id": {
+            "type": "string",
+            "title": "Tool Call Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "arguments": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Arguments"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "run_id",
+          "tool_call_id",
+          "name"
+        ],
+        "title": "ToolCallRequested"
+      },
+      "ToolCallStarted": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "type": {
+            "type": "string",
+            "const": "tool.call.started",
+            "title": "Type",
+            "default": "tool.call.started"
+          },
+          "tool_call_id": {
+            "type": "string",
+            "title": "Tool Call Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "run_id",
+          "tool_call_id",
+          "name"
+        ],
+        "title": "ToolCallStarted"
       },
       "ToolResult": {
         "properties": {
