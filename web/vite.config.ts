@@ -13,8 +13,10 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/v1": "http://127.0.0.1:8000",
-      "/healthz": "http://127.0.0.1:8000",
+      // JARVIS_API_URL lets a second backend instance run alongside the
+      // default :8000 (e.g. the e2e smoke on :8001).
+      "/v1": process.env.JARVIS_API_URL ?? "http://127.0.0.1:8000",
+      "/healthz": process.env.JARVIS_API_URL ?? "http://127.0.0.1:8000",
     },
   },
 });

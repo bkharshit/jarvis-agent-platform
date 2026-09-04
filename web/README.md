@@ -31,3 +31,19 @@ against them via `openapi-fetch`. No hand-written response shapes in `src/api/`
 `vite.config.ts` proxies `/v1` and `/healthz` to `127.0.0.1:8000`. That proxy
 is the single seam to the backend — no CORS middleware on the FastAPI app.
 Start the backend with `uv run jarvis serve`.
+## E2e smoke (Playwright)
+
+```bash
+# prerequisite: a running backend with local Postgres (no Docker here)
+uv run jarvis serve            # default :8000; if that port is taken:
+JARVIS_PORT=8001 JARVIS_MODEL_PROVIDER=mock JARVIS_MODEL_NAME=mock-agent uv run jarvis serve
+
+# point the Vite proxy at it and run
+cd web && JARVIS_API_URL=http://127.0.0.1:8001 npx playwright test
+```
+
+`playwright.config.ts` starts Vite itself via `webServer`. The smoke creates a
+randomized mock `function_calling` agent (memory on — the runtime creates the
+conversation row only for memory-enabled agents), runs it over live SSE, then
+walks executions detail → replay → conversations transcript → a disabled
+section naming its stage. Rows are left behind on purpose.

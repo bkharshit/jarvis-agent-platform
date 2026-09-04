@@ -1,5 +1,5 @@
 .PHONY: install test test-db test-all lint typecheck format clean \
-	gen-api web-install web web-test web-lint
+	gen-api web-install web web-test web-lint web-e2e
 
 install:
 	uv sync --extra dev
@@ -24,6 +24,12 @@ web-test:
 
 web-lint:
 	cd web && npm run typecheck && npm run lint
+
+# E2e smoke against a running backend (prerequisite: uv run jarvis serve
+# with local Postgres — no Docker on this machine). Vite is started by
+# Playwright's webServer.
+web-e2e:
+	cd web && npx playwright test
 
 test:
 	uv run pytest tests/unit
