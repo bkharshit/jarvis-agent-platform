@@ -8,6 +8,8 @@ import { ExecutionsList } from "@/sections/executions/ExecutionsList";
 import { ExecutionDetailPage } from "@/sections/executions/ExecutionDetail";
 import { ConversationsList } from "@/sections/conversations/ConversationsList";
 import { ConversationDetailPage } from "@/sections/conversations/ConversationDetail";
+import { ToolsPage } from "@/sections/tools/ToolsPage";
+import { ModelsPage } from "@/sections/models/ModelsPage";
 
 import { SectionGate } from "@/capabilities/SectionGate";
 import type { SectionKey } from "@/capabilities/sectionRegistry";
@@ -51,8 +53,8 @@ export function sectionRoutes() {
       path: "/conversations/:agentId/:sessionId",
       element: gated("conversations", <ConversationDetailPage />),
     },
-    { path: "/tools", element: gated("tools") },
-    { path: "/models", element: gated("models") },
+    { path: "/tools", element: gated("tools", <ToolsPage />) },
+    { path: "/models", element: gated("models", <ModelsPage />) },
     { path: "/workflows", element: gated("workflows") },
     { path: "/knowledge", element: gated("knowledge") },
     { path: "/evaluations", element: gated("evaluations") },

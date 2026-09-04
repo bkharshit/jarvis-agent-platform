@@ -41,3 +41,78 @@ export function providerNames(capabilities: Capabilities | undefined): string[] 
     return record && typeof record.name === "string" ? [record.name] : [];
   });
 }
+export interface BuiltinToolFull {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+export interface McpGate {
+  enabled: boolean;
+  stage: string | null;
+}
+
+export function mcpGate(capabilities: Capabilities | undefined): McpGate {
+  const detail = asRecord(capabilities?.sections.tools?.detail);
+  const mcp = detail ? asRecord(detail.mcp) : null;
+  return {
+    enabled: mcp?.enabled === true,
+    stage: typeof mcp?.stage === "string" ? mcp.stage : null,
+  };
+}
+
+export function builtinToolsFull(capabilities: Capabilities | undefined): BuiltinToolFull[] {
+  const detail = asRecord(capabilities?.sections.tools?.detail);
+  if (!detail || !Array.isArray(detail.builtins)) return [];
+  return detail.builtins.flatMap((entry) => {
+    const record = asRecord(entry);
+    if (!record || typeof record.name !== "string") return [];
+    return [
+      {
+        name: record.name,
+        description: typeof record.description === "string" ? record.description : "",
+        parameters:
+          asRecord(record.parameters) ?? {},
+      },
+    ];
+  });
+}
+
+export interface ProviderInfo {
+  name: string;
+  description: string;
+  capabilities: Record<string, unknown>;
+}
+
+export interface ModelDefaults {
+  provider: string;
+  model: string;
+  base_url: string | null;
+}
+
+export function modelProviders(capabilities: Capabilities | undefined): ProviderInfo[] {
+  const detail = asRecord(capabilities?.sections.models?.detail);
+  if (!detail || !Array.isArray(detail.providers)) return [];
+  return detail.providers.flatMap((entry) => {
+    const record = asRecord(entry);
+    if (!record || typeof record.name !== "string") return [];
+    return [
+      {
+        name: record.name,
+        description: typeof record.description === "string" ? record.description : "",
+        capabilities: asRecord(record.capabilities) ?? {},
+      },
+    ];
+  });
+}
+
+export function modelDefaults(capabilities: Capabilities | undefined): ModelDefaults | null {
+  const detail = asRecord(capabilities?.sections.models?.detail);
+  const defaults = detail ? asRecord(detail.defaults) : null;
+  if (!defaults || typeof defaults.provider !== "string") return null;
+  return {
+    provider: defaults.provider,
+    model: typeof defaults.model === "string" ? defaults.model : "",
+    base_url: typeof defaults.base_url === "string" ? defaults.base_url : null,
+  };
+}

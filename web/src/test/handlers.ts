@@ -171,11 +171,48 @@ export const handlers = [
   http.get("/v1/capabilities", () => {
     return HttpResponse.json({
       sections: {
-        agents: { enabled: true, summary: "Create, version, and run agents" },
+        agents: { enabled: true, summary: "Create, version, and run agents", detail: { strategies: ["react", "function_calling"] } },
         executions: { enabled: true, summary: "Browse runs" },
         conversations: { enabled: true, summary: "Per-session history" },
-        tools: { enabled: true, summary: "Builtin registry" },
-        models: { enabled: true, mode: "read-only", summary: "Provider info" },
+        tools: {
+          enabled: true,
+          summary: "Builtin registry",
+          detail: {
+            builtins: [
+              {
+                name: "calculator",
+                description: "Evaluate an arithmetic expression.",
+                parameters: {
+                  type: "object",
+                  properties: { expression: { type: "string" } },
+                  required: ["expression"],
+                },
+              },
+              { name: "current_time", description: "Current UTC time.", parameters: {} },
+            ],
+            mcp: { enabled: false, stage: "S4" },
+          },
+        },
+        models: {
+          enabled: true,
+          mode: "read-only",
+          summary: "Provider info",
+          detail: {
+            providers: [
+              {
+                name: "mock",
+                description: "Scripted provider for tests and demos (no network)",
+                capabilities: { streaming: true, function_calling: true, structured_output: "json_schema", parallel_tool_calls: false },
+              },
+              {
+                name: "openai_compatible",
+                description: "Any OpenAI-compatible endpoint via base_url",
+                capabilities: { streaming: true, function_calling: true, structured_output: "json_schema", parallel_tool_calls: true },
+              },
+            ],
+            defaults: { provider: "mock", model: "mock-agent", base_url: null },
+          },
+        },
         workflows: {
           enabled: false,
           stage: "S6",
