@@ -13,6 +13,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 from rich.tree import Tree
+from sqlalchemy.exc import IntegrityError
 
 from jarvis import __version__
 from jarvis.api.deps import AppContainer
@@ -58,6 +59,12 @@ async def _with_container(action: Any) -> None:
     container = _container()
     try:
         await action(container)
+    except IntegrityError as exc:
+        # Unique-constraint violations surface as friendly conflicts, not
+        # tracebacks (duplicate agent names are the common case).
+        cause = exc.orig.__cause__ if exc.orig is not None else None
+        err_console.print(f"[red]conflict:[/red] {cause or exc}")
+        raise typer.Exit(1) from exc
     finally:
         await container.aclose()
 

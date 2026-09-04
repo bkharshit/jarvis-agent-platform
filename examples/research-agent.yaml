@@ -1,0 +1,50 @@
+# Example agent definition — `jarvis agent create --file examples/research-agent.yaml`
+#
+# Server-owned keys (id, created_at, updated_at) are assigned by the platform
+# and are rejected if supplied. Publishing is automatic: creating an agent
+# publishes version 1; every PATCH publishes a new immutable version.
+
+name: research-agent
+description: >-
+  Answers questions with the help of builtin tools: fetches facts over HTTP,
+  does arithmetic, and knows the current time.
+
+# The model is resolved per-run by the provider factory:
+#   provider: mock               -> scripted MockModelProvider (no network)
+#   provider: openai_compatible  -> any OpenAI-compatible endpoint (Ollama, vLLM, ...)
+model:
+  provider: openai_compatible
+  model: gpt-4o-mini
+  # base_url: http://localhost:11434/v1   # e.g. local Ollama
+  # api_key_env: OPENAI_API_KEY           # names an env var; the secret itself
+  #                                       # never enters configuration (ADR 0005)
+
+system_prompt: >-
+  You are a meticulous research assistant. Use tools when they make the answer
+  more accurate, show your reasoning briefly, and cite the source URL when you
+  fetched a fact over HTTP.
+
+strategy:
+  # "react" = Thought/Action/Action Input/Final Answer text protocol;
+  # "function_calling" = provider-native tool calls.
+  type: react
+
+tools:
+  - name: calculator
+  - name: current_time
+  - name: http_get
+    # Allow-lists are opt-in: an http_get binding without allowed_hosts
+    # refuses every request.
+    config:
+      allowed_hosts:
+        - en.wikipedia.org
+        - api.frankfurter.app
+
+memory:
+  # When enabled, pass a --session id (CLI) or session_id (API) to continue
+  # a conversation across runs.
+  enabled: true
+  max_messages: 20
+
+max_iterations: 8
+temperature: 0.3
