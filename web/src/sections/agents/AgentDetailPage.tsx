@@ -83,14 +83,22 @@ function DefinitionTab({ definition }: { definition: AgentDefinition }) {
 
 function RunsTab({ agentId }: { agentId: string }) {
   return (
-    <div className="text-sm">
+    <div className="flex flex-col gap-3 text-sm">
       <p className="text-neutral-400">Executions of this agent:</p>
-      <Link
-        to={`/executions?agent=${agentId}`}
-        className="mt-3 inline-block rounded border border-neutral-700 px-3 py-1.5 text-neutral-200 hover:bg-neutral-900"
-      >
-        View runs →
-      </Link>
+      <div className="flex gap-3">
+        <Link
+          to={`/executions?agent=${agentId}`}
+          className="rounded border border-neutral-700 px-3 py-1.5 text-neutral-200 hover:bg-neutral-900"
+        >
+          View runs →
+        </Link>
+        <Link
+          to={`/agents/${agentId}/run`}
+          className="rounded bg-neutral-100 px-3 py-1.5 font-medium text-neutral-900 hover:bg-white"
+        >
+          Run this agent
+        </Link>
+      </div>
     </div>
   );
 }
