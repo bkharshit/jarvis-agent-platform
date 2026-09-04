@@ -11,3 +11,10 @@ build/
 .DS_Store
 .alembic_runtime*
 .claude/settings.local.json
+
+# frontend (web/)
+web/node_modules/
+web/dist/
+web/coverage/
+web/playwright-report/
+web/test-results/

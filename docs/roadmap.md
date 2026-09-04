@@ -75,9 +75,9 @@ This stage consumes that surface; it extends the backend only with one
 small addition.
 
 **Work items:** see `docs/architecture/frontend-architecture.md` §F1
-(commit-style list). The one backend item that rides here:
-`GET /v1/capabilities` — the section-flag payload every enabled/disabled
-decision renders from.
+(commit-style list). Build plan: `docs/implementation-plan-f1.md`. The one
+backend item that rides here: `GET /v1/capabilities` — the section-flag
+payload every enabled/disabled decision renders from.
 
 **Acceptance:** an agent can be created, edited, versioned, run, watched
 live (SSE with `Last-Event-ID` reconnect), cancelled, and replayed entirely

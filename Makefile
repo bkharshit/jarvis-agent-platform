@@ -1,7 +1,22 @@
-.PHONY: install test test-db test-all lint typecheck format clean
+.PHONY: install test test-db test-all lint typecheck format clean \
+	web-install web web-test web-lint
 
 install:
 	uv sync --extra dev
+
+# --- frontend (web/, stage F1) ------------------------------------------
+
+web-install:
+	cd web && npm install
+
+web:
+	cd web && npm run dev
+
+web-test:
+	cd web && npm run typecheck && npm run lint && npm run test
+
+web-lint:
+	cd web && npm run typecheck && npm run lint
 
 test:
 	uv run pytest tests/unit
