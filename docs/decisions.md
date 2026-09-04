@@ -15,6 +15,7 @@
 | 1.3 | **Pure-Pydantic domain + Protocol ports, dependency rule lint-enforced.** `domain/` and `ports/` import only pydantic/stdlib; everything else depends inward; `mypy --strict` on domain/ports. | Adapters are swappable by construction — CLI and HTTP already share `AppContainer` and nothing else changed to support both. |
 | 1.4 | **Do not over-engineer Phase 1.** No plugins/marketplace, multi-tenancy, RAG, workflows, multi-agent, Redis. | Every deferral names its seam in `docs/roadmap.md`; nothing Phase 1 built needs rewriting for them. |
 | 1.5 | **Fully testable with no DB, no network, no LLM.** `MockModelProvider` (scripted turns, failure injection, request recording) + unit suite of 150 tests; integration suite (27 tests) isolated behind the `db` marker. | The runtime is verifiable in seconds from Python; LLM/DB paths are exercised deliberately, not accidentally. |
+| 1.6 (2026-09-04) | **The frontend ships alongside the backend, not after it.** The full product IA (Agents, Workflows, Tools, MCP, Models, Knowledge, Executions, Evaluations, Observability, Plugins, Triggers, Settings — Dify-inspired) is designed up front and ships as the app shell against the Phase 1 API; every remaining section is gated on real backend capability (its roadmap stage), rendered disabled/coming-soon, never faked. Supersedes roadmap stage S5; see F1 in `docs/roadmap.md` and `docs/architecture/frontend-architecture.md`. | IA/routing decisions are cheapest now and most expensive to retrofit; an early shell gives continuous end-to-end visibility and forces API-design feedback early. The capabilities payload (`GET /v1/capabilities`) keeps enablement a backend *fact*, not a frontend promise. Backend stages keep their gates; each stage's last item is enabling its UI section. |
 
 ## 2. Formal ADRs (0001–0005)
 
@@ -147,7 +148,9 @@ the code.
 
 Redis/queues · plugins & marketplace · multi-tenancy/auth · RAG · workflow
 engine · multi-agent · human-in-the-loop · richer memory · evaluation ·
-triggers · frontend · MCP · parallel tool calls · jinja2 sandboxing · OTel
-exporters. Each deferral names its seam in `docs/roadmap.md` (stages
-S1–S14) — the deferral is a sequencing decision, not an architectural
-rejection.
+triggers · MCP · parallel tool calls · jinja2 sandboxing · OTel exporters.
+Each deferral names its seam in `docs/roadmap.md` (stages S1–S14) — the
+deferral is a sequencing decision, not an architectural rejection.
+(*Frontend* was on this list until 2026-09-04 — decision 1.6 moved it to a
+parallel track: the shell ships now against Phase 1, and each backend stage
+enables its UI section as it lands.)

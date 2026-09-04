@@ -6,6 +6,9 @@ establishes.
 
 > Status: Phase 1 (agent runtime) complete. See `docs/implementation-plan.md`
 > for the build sequence and `docs/adr/` for the design decisions.
+> The frontend now ships alongside the backend: the full product shell
+> lands first (roadmap F1) and each section enables as its backend
+> capability lands — see `docs/architecture/frontend-architecture.md`.
 
 ## What it is
 
@@ -138,6 +141,9 @@ Environment variables (prefix `JARVIS_`, or a `.env` file):
 | `JARVIS_HOST` / `JARVIS_PORT` | `127.0.0.1` / `8000` | HTTP bind |
 
 ## Development
+
+> **Hands-on locally?** `docs/local-run-guide.md` is the copy-pasteable
+> walkthrough of every implemented feature (updated per stage).
 
 ```bash
 make test          # unit suite — no DB, no network, no LLM

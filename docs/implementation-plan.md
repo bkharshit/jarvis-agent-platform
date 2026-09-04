@@ -1,6 +1,10 @@
 # JARVIS — Implementation Plan (Phase 0 + Phase 1)
 
-> Status: approved plan. Implementation has **not** started.
+> Status: **complete** (all 21 commits landed on `main`, 2026-09-04). This
+> doc is the historical Phase 0/1 plan, preserved as written; the living
+> plan is `docs/roadmap.md`. Note: its "frontend is Phase 2 — not started"
+> line was superseded on 2026-09-04 by decision 1.6 — the frontend now
+> ships alongside the backend (roadmap F1).
 > Reference: Dify clone at `./dify-reference` (read-only, HEAD Sept 2026) — used as architectural reference only.
 
 ## Context

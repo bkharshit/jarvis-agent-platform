@@ -15,15 +15,39 @@ that requires rewriting for these stages. Changing a Phase 1 contract
 (`EventSink`, `StrategyRegistry`, `Tool`, `ExecutionContext`, …) requires a
 new ADR first.
 
+## Development model (updated 2026-09-04 — supersedes old stage S5)
+
+The frontend no longer waits for the backend roadmap to complete. The
+approach is:
+
+**Full product structure early → backend/API capability → enable the
+corresponding UI → next capability.**
+
+- The whole product IA (Agents, Workflows, Tools, MCP, Models, Knowledge,
+  Executions, Evaluations, Observability, Plugins, Triggers, Settings) is
+  designed now and ships as the app shell — specified in
+  `docs/architecture/frontend-architecture.md` (the authoritative frontend
+  doc).
+- The shell ships against the **existing Phase 1 API**: Agents,
+  Executions, and Conversations are live from day one (stage F1 below).
+- Every other section renders **disabled / coming-soon**, gated by a
+  backend-driven capabilities payload (`GET /v1/capabilities`) — never
+  faked functionality.
+- Each backend stage below ends with a **UI enablement** item: when the
+  stage's API lands, its section flips on. Backend gates (tests, ruff,
+  mypy) are unchanged; UI enablement is the stage's last item, not a
+  substitute for backend rigor.
+
 ## Stage order and dependencies
 
 ```
+F1 Product shell (rides the Phase 1 API, starts immediately)
 S1 Distributed runs / queue-backed events ──┬─> S13 Triggers (needs workers)
-S2 Auth & multi-tenancy ────────────────────┼─> S5 Frontend builder
+S2 Auth & multi-tenancy ────────────────────┼─> (flips Settings UI on)
 S7 OTel tracing (independent)               ├─> S14 Multi-agent (needs S1
 S3 Plugin strategies (independent)          │    durability + tool family)
 S4 MCP tools (independent) ─────────────────┤
-S6 Workflow engine (needs S1) ──────────────┘
+S6 Workflow engine (needs S1) ──────────────┘   (+ its canvas UI)
 S10 Human-in-the-loop (in-process first; durable pause wants S1)
 S11 Evaluation framework (independent; richer with S12)
 S12 Richer memory (independent)
@@ -31,11 +55,34 @@ S8 RAG / knowledge (needs S4 tool family)
 S9 Small hardening items (any time)
 ```
 
-S1–S4, S7, S10–S12 are independent of each other; S5/S6/S8/S13/S14 consume
-several. The recommended sequence is S1 → S2 → S3/S4 (either) → S6 → S5 →
-S8, with S7 and S9 slotted anywhere; S10–S12 slot in as product needs
-demand (S10 early if interactive agents are the priority — it works fully
-in-process before S1 lands).
+F1 and S1–S4, S7, S10–S12 are independent of each other (F1 may interleave
+with S1); S6/S8/S13/S14 consume several. The recommended sequence is
+F1 → S1 → S2 → S10 → S3/S4 (either) → S6 → S12/S11 → S14 → S13, with S7 and
+S9 slotted anywhere; S10 lands early if interactive agents are the
+priority — it works fully in-process before S1.
+
+---
+
+## F1 — Product shell & Phase-1 UI (starts immediately)
+
+**Goal:** the full product shell with Agents / Executions / Conversations
+live against the existing Phase 1 API; every other section an honest
+coming-soon panel.
+
+**Rides on:** the complete, tested Phase 1 API surface (agents CRUD +
+versions, run/stream, executions list/detail/replay/cancel, conversations).
+This stage consumes that surface; it extends the backend only with one
+small addition.
+
+**Work items:** see `docs/architecture/frontend-architecture.md` §F1
+(commit-style list). The one backend item that rides here:
+`GET /v1/capabilities` — the section-flag payload every enabled/disabled
+decision renders from.
+
+**Acceptance:** an agent can be created, edited, versioned, run, watched
+live (SSE with `Last-Event-ID` reconnect), cancelled, and replayed entirely
+through the UI; every disabled section names its enabling stage; no screen
+renders data the API didn't return.
 
 ---
 
@@ -75,6 +122,10 @@ and `Last-Event-ID` resume already survives restarts for *finished* runs.
 5. Cancel path: `POST /executions/{id}/cancel` publishes instead of poking
    in-process tokens.
 
+**UI enablement:** none — the run console and executions views must work
+*unchanged* against the queue-backed sink (their existing behavior is the
+acceptance test).
+
 **Acceptance:** kill the API server mid-run; a worker finishes the run; an
 SSE client reconnecting with `Last-Event-ID` observes no gaps and no
 duplicates. Existing integration suite (SSE exactly-once, terminal
@@ -108,6 +159,9 @@ executions (404, not 403 — no existence leak); anonymous mode remains a
 config choice for local dev; all Phase 1 tests pass with a single shared
 tenant.
 
+**UI enablement:** the **Settings** section flips on (login, API keys,
+tenant members); the shell drops its anonymous-mode notice.
+
 ---
 
 ## S3 — Plugin strategies
@@ -133,6 +187,9 @@ installed without touching the core.
 **Acceptance:** a sample plugin strategy (in a test fixture package) runs an
 agent through the API with zero core changes; malformed strategies still
 cannot crash a run (the orchestrator's never-raise guarantee holds).
+
+**UI enablement:** the **Plugins** section (strategy listing + allow-list
+config).
 
 ---
 
@@ -161,18 +218,21 @@ another Tool family behind `Tool`".
 agent uses it through `/run` like a builtin; tool executions appear in
 `tool_executions` rows identically to builtins.
 
+**UI enablement:** **Tools → MCP** (server management; `mcp__*` bindings
+listed alongside builtins).
+
 ---
 
-## S5 — Frontend builder
+## S5 — Frontend builder (SUPERSEDED)
 
-**Goal:** the Phase 2 of the overview — visual agent builder.
-
-**Design sketch (unchanged from earlier discussions):** React + Vite +
-React Flow; the backend is already sufficient (agents CRUD, versions, SSE).
-A thin mirror service exposes the *same* registry data the backend uses
-(tool descriptors, strategy names, config schemas) so the canvas validates
-against reality. SSE resume (`Last-Event-ID`) gives the run console its
-stream for free. Multi-tenancy (S2) should land first or with it.
+The original S5 ("frontend builder after S2") is superseded by the
+development model above (2026-09-04). The shell ships now as **F1**
+against the Phase 1 API; agent editing, the run console, and the
+executions browser ship there. The visual **workflow canvas** — the React
+Flow builder that was S5's core — moves to S6 as that stage's UI-enablement
+item (a canvas without the workflow engine behind it would be exactly the
+fake functionality this model forbids). The stage number is kept to avoid
+renumbering S6–S14; nothing else in this doc refers to S5.
 
 ---
 
@@ -199,6 +259,11 @@ paradigm.
 node yields `run.failed` with the node id; cursor/resume tests pass
 verbatim.
 
+**UI enablement:** the **Workflows** section — the React Flow canvas (the
+superseded S5 core): node registry mirrors backend node types, draft-save
+with server hash for optimistic concurrency, `_`-prefixed runtime state
+stripped at save (Dify lessons, `docs/reference/dify-map.md`).
+
 ---
 
 ## S7 — OTel tracing
@@ -212,6 +277,9 @@ every execution row — this stage is pure addition.
 instrument the runtime (span per iteration/model call/tool call), sink
 span-links to the event cursor. Exporter behind Settings (`JARVIS_OTEL_*`),
 off by default.
+
+**UI enablement:** the **Observability** section (trace list + span view
+keyed by the already-persisted `trace_id`).
 
 ---
 
@@ -227,6 +295,9 @@ pgvector first since Postgres is already there) plus a `knowledge` binding
 section in the agent definition that injects retrieved context into the
 prompt through `PromptEngine` — no runtime loop changes.
 
+**UI enablement:** the **Knowledge** section (datasets) + a knowledge
+binding in the agent editor.
+
 ---
 
 ## S9 — Small hardening items (grab-bag, any time)
@@ -234,7 +305,7 @@ prompt through `PromptEngine` — no runtime loop changes.
 | Item | Seam | Note |
 | --- | --- | --- |
 | Parallel tool calls | capability flag exists on the model layer | runtime executes sequentially today; flip per-agent |
-| Jinja2 sandboxing | `prompt/` PromptEngine is isolated | required only when user-supplied templates are exposed (S5) |
+| Jinja2 sandboxing | `prompt/` PromptEngine is isolated | required only when user-supplied templates are exposed (F1 agent editor) |
 | Redis event bus | `EventSink` port | only if S1's Postgres fan-out proves insufficient |
 | `make test-db` without Docker | conftest already self-bootstraps `jarvis_test` | document/test the path on CI |
 
@@ -281,6 +352,10 @@ pause; a run paused forever is reaped by the deadline; unit tests cover the
 new event type's terminal-adjacency (no non-terminal events after
 `awaiting_input` until resume).
 
+**UI enablement:** the run console renders `run.awaiting_input` (approval
+cards, input prompts) with a resume action; an awaiting-input inbox on the
+Executions section.
+
 ---
 
 ## S11 — Evaluation framework
@@ -307,6 +382,9 @@ always runs against a pinned version.
 **Acceptance:** an eval run of a mock agent produces scores persisted and
 comparable across versions; an eval run's executions are indistinguishable
 from manual runs in `/executions` (same event model).
+
+**UI enablement:** the **Evaluations** section (datasets, run scores,
+version comparison).
 
 ---
 
@@ -339,6 +417,9 @@ migration for existing agents.
 budget while answering a question that requires the *first* turn's content
 (the window strategy provably fails this test, the summarizer passes).
 
+**UI enablement:** memory-strategy options in the agent editor (each item
+ships independently, as the backend items do).
+
 ---
 
 ## S13 — Triggers
@@ -367,6 +448,9 @@ enqueues run requests; the API's run path is already a thin function of
 **Acceptance:** a cron trigger fires a mock agent on schedule through a
 worker; a webhook POST enqueues and streams like any run; disabling a
 trigger stops runs without deleting history.
+
+**UI enablement:** the **Triggers** section (cron/webhook/event rules,
+enable/disable, provenance shown on trigger-fired runs).
 
 ---
 
@@ -401,24 +485,34 @@ sub-agent tool; the parent's token budget bounds the whole tree; a
 cancelled parent cancels its children at their next checkpoints;
 `/executions/{parent}` links child runs; cursor/resume tests pass per run.
 
+**UI enablement:** sub-agent / handoff bindings in the agent editor;
+execution detail links parent/child runs.
+
 ---
 
 ## Sequenced build order (recommended)
 
-1. **S1** — durability payoff is highest; every later stage leans on runs
+1. **F1** — product shell, immediately: it rides the Phase 1 API that
+   already exists, gives end-to-end visibility from day one, and its API
+   client/SSE/capability foundations are reused by every later stage's UI.
+   May interleave with S1.
+2. **S1** — durability payoff is highest; every later stage leans on runs
    outliving processes.
-2. **S2** — auth before anything user-facing (S5), multi-tenant (S6), or
-   externally reachable (S13 webhooks).
-3. **S10** — human-in-the-loop early if interactive agents are the priority;
+3. **S2** — auth before anything externally reachable (S13 webhooks) or
+   tenant-scoped; flips the Settings UI on.
+4. **S10** — human-in-the-loop early if interactive agents are the priority;
    works fully in-process before S1 makes pauses durable.
-4. **S3 + S4** — independent; S4 first if tool breadth matters sooner.
-5. **S6** — workflow engine, after S1.
-6. **S12 + S11** — richer memory then evaluation, once versions and runs
+5. **S3 + S4** — independent; S4 first if tool breadth matters sooner.
+6. **S6** — workflow engine + its canvas UI, after S1.
+7. **S12 + S11** — richer memory then evaluation, once versions and runs
    accumulate real traffic.
-7. **S14** — multi-agent, after S1 and S4/S6 (nested durability).
-8. **S5** — frontend, after S2 (and benefits from S6/S10).
+8. **S14** — multi-agent, after S1 and S4/S6 (nested durability).
 9. **S13, S7, S8, S9** — as needed (S13 last of the core set: it wants S1 +
    S2 both in place).
 
-Each stage gets its own implementation-plan-style doc (commit sequence,
-gates, tests) at build time, the way Phase 1 did.
+Frontend work no longer appears as a stage of its own: it is **F1 now plus
+one enablement item per backend stage** (see the per-stage **UI enablement**
+lines above and the contract table in
+`docs/architecture/frontend-architecture.md`). Each stage still gets its
+own implementation-plan-style doc (commit sequence, gates, tests) at build
+time, the way Phase 1 did.

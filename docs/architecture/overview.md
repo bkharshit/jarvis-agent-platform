@@ -60,12 +60,20 @@ route subscribes to the sink while the run runs as an asyncio task.
 
 - **Phase 0-1 (this repo state)**: runtime, tools, strategies, persistence,
   API + SSE, CLI — fully testable with the mock provider, no LLM needed.
-- **Phase 2**: frontend builder (React/Vite/React Flow; registry mirrors
-  backend).
-- **Phase 4**: MCP — just another Tool family behind `Tool`.
-- **Phase 5**: workflow engine — sibling executor reusing the event model,
+- **F1 (next, starts immediately)**: the **product shell** — full
+  Dify-inspired IA (Agents, Workflows, Tools, Models, Knowledge,
+  Executions, Evaluations, Observability, Plugins, Triggers, Settings).
+  Agents / Executions / Conversations are live against the Phase 1 API;
+  every unimplemented section renders disabled/coming-soon, gated by
+  `GET /v1/capabilities` (`docs/architecture/frontend-architecture.md`).
+- **Phase 2+ backend stages (roadmap S1–S14)**: each stage lands its
+  backend capability *and* flips on its UI section (S2 → Settings, S4 →
+  MCP in Tools, S6 → the workflow canvas, S8 → Knowledge, …). The frontend
+  no longer waits for the backend to finish (decision 1.6).
+- **MCP**: just another Tool family behind `Tool`.
+- **Workflow engine**: sibling executor reusing the event model,
   persistence, and limits.
-- **Later**: RAG/knowledge, plugins/marketplace, multi-tenancy, multi-agent.
+- **Later**: plugins/marketplace, multi-agent, triggers.
 
 Deliberately **not** in Phase 1: Redis (in-process event bus; the `EventSink`
 port anticipates queues), plugins, multi-tenancy, RAG, workflows,
