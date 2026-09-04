@@ -146,7 +146,8 @@ the code.
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 
 Redis/queues · plugins & marketplace · multi-tenancy/auth · RAG · workflow
-engine · multi-agent · frontend · MCP · parallel tool calls · jinja2
-sandboxing · OTel exporters. Each deferral names its seam in
-`docs/roadmap.md` (stages S1–S9) — the deferral is a sequencing decision,
-not an architectural rejection.
+engine · multi-agent · human-in-the-loop · richer memory · evaluation ·
+triggers · frontend · MCP · parallel tool calls · jinja2 sandboxing · OTel
+exporters. Each deferral names its seam in `docs/roadmap.md` (stages
+S1–S14) — the deferral is a sequencing decision, not an architectural
+rejection.
