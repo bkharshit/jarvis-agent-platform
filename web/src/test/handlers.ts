@@ -146,6 +146,28 @@ export const handlers = [
       { status: 404 },
     );
   }),
+  http.get("/v1/conversations/:agent_id/:session_id/messages", ({ params }) => {
+    const { agent_id, session_id } = params as { agent_id: string; session_id: string };
+    if (agent_id === agentFixture.id && session_id === "session-7") {
+      return HttpResponse.json({
+        agent_id,
+        session_id,
+        messages: [
+          { role: "user", content: "what is 2+2?" },
+          { role: "assistant", content: "It is 4." },
+        ],
+      });
+    }
+    return HttpResponse.json(
+      {
+        error: {
+          kind: "not_found",
+          message: `no conversation for agent ${agent_id} / session ${session_id}`,
+        },
+      },
+      { status: 404 },
+    );
+  }),
   http.get("/v1/capabilities", () => {
     return HttpResponse.json({
       sections: {

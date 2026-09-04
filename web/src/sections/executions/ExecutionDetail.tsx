@@ -5,6 +5,7 @@ import {
   useExecution,
   useReplayEvents,
 } from "@/api/queries/executions";
+import { contentToText } from "@/components/messageContent";
 import { EventTimeline } from "@/components/EventTimeline";
 import { SectionGate } from "@/capabilities/SectionGate";
 import {
@@ -136,12 +137,7 @@ function ExecutionDetailInner() {
               <li key={i} className="rounded bg-neutral-900 p-3 text-sm">
                 <span className="text-xs text-neutral-400">{m.role}</span>
                 <p className="mt-1 whitespace-pre-wrap text-neutral-200">
-                  {typeof m.content === "string"
-                    ? m.content
-                    : m.content
-                        .map((p) => (p.type === "text" ? p.text : null))
-                        .filter(Boolean)
-                        .join("\n")}
+                  {contentToText(m.content)}
                 </p>
               </li>
             ))}

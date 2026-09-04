@@ -6,6 +6,8 @@ import { AgentsList } from "@/sections/agents/AgentsList";
 import { RunConsole } from "@/sections/agents/RunConsole";
 import { ExecutionsList } from "@/sections/executions/ExecutionsList";
 import { ExecutionDetailPage } from "@/sections/executions/ExecutionDetail";
+import { ConversationsList } from "@/sections/conversations/ConversationsList";
+import { ConversationDetailPage } from "@/sections/conversations/ConversationDetail";
 
 import { SectionGate } from "@/capabilities/SectionGate";
 import type { SectionKey } from "@/capabilities/sectionRegistry";
@@ -44,7 +46,11 @@ export function sectionRoutes() {
     { path: "/agents/:agentId/edit", element: gated("agents", <AgentEditor />) },
     { path: "/executions", element: gated("executions", <ExecutionsList />) },
     { path: "/executions/:runId", element: gated("executions", <ExecutionDetailPage />) },
-    { path: "/conversations", element: gated("conversations") },
+    { path: "/conversations", element: gated("conversations", <ConversationsList />) },
+    {
+      path: "/conversations/:agentId/:sessionId",
+      element: gated("conversations", <ConversationDetailPage />),
+    },
     { path: "/tools", element: gated("tools") },
     { path: "/models", element: gated("models") },
     { path: "/workflows", element: gated("workflows") },
