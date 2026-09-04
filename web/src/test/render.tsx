@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "@testing-library/react";
 import type { ReactElement } from "react";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes } from "react-router";
 
+import { Toaster } from "@/components/Toaster";
 import type { Capabilities } from "@/capabilities/types";
 import { capabilitiesQueryKey } from "@/capabilities/useCapabilities";
 
@@ -39,6 +40,8 @@ export function renderWithProviders(
   options?: {
     capabilities?: Capabilities | null;
     initialEntries?: string[];
+    /** Route pattern to mount `ui` under, so useParams works (e.g. "/agents/:agentId/edit"). */
+    path?: string;
   },
 ) {
   const client = new QueryClient({
@@ -50,7 +53,14 @@ export function renderWithProviders(
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={options?.initialEntries ?? ["/"]}>
-        {ui}
+        {options?.path ? (
+          <Routes>
+            <Route path={options.path} element={ui} />
+          </Routes>
+        ) : (
+          ui
+        )}
+        <Toaster />
       </MemoryRouter>
     </QueryClientProvider>,
   );

@@ -1,5 +1,8 @@
 import type { ReactNode } from "react";
 
+import { AgentEditor } from "@/sections/agents/AgentEditor";
+import { AgentsList } from "@/sections/agents/AgentsList";
+
 import { SectionGate } from "@/capabilities/SectionGate";
 import type { SectionKey } from "@/capabilities/sectionRegistry";
 
@@ -30,7 +33,9 @@ function gated(sectionKey: SectionKey, element?: ReactNode) {
 // their section as the screens land (agents/:id, executions/:id, …).
 export function sectionRoutes() {
   return [
-    { path: "/agents", element: gated("agents") },
+    { path: "/agents", element: gated("agents", <AgentsList />) },
+    { path: "/agents/new", element: gated("agents", <AgentEditor />) },
+    { path: "/agents/:agentId/edit", element: gated("agents", <AgentEditor />) },
     { path: "/executions", element: gated("executions") },
     { path: "/conversations", element: gated("conversations") },
     { path: "/tools", element: gated("tools") },
