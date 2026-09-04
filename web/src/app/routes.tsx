@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { AgentEditor } from "@/sections/agents/AgentEditor";
+import { AgentDetailPage } from "@/sections/agents/AgentDetailPage";
 import { AgentsList } from "@/sections/agents/AgentsList";
 
 import { SectionGate } from "@/capabilities/SectionGate";
@@ -35,6 +36,7 @@ export function sectionRoutes() {
   return [
     { path: "/agents", element: gated("agents", <AgentsList />) },
     { path: "/agents/new", element: gated("agents", <AgentEditor />) },
+    { path: "/agents/:agentId", element: gated("agents", <AgentDetailPage />) },
     { path: "/agents/:agentId/edit", element: gated("agents", <AgentEditor />) },
     { path: "/executions", element: gated("executions") },
     { path: "/conversations", element: gated("conversations") },

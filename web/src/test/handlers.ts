@@ -21,16 +21,41 @@ export const agentFixture = {
 
 export const agentsFixture = [agentFixture];
 
+export const versionSummaryFixture = {
+  version: 1,
+  id: "ver-1",
+  label: "initial",
+  created_at: "2026-09-04T12:00:00Z",
+};
+
 export const handlers = [
   http.get("/v1/agents", () => HttpResponse.json({ items: agentsFixture })),
   http.post("/v1/agents", () => HttpResponse.json({ definition: agentFixture, versions: [] }, { status: 201 })),
   http.get("/v1/agents/:agent_id", ({ params }) => {
     const { agent_id } = params as { agent_id: string };
     if (agent_id === agentFixture.id) {
-      return HttpResponse.json({ definition: agentFixture, versions: [] });
+      return HttpResponse.json({ definition: agentFixture, versions: [versionSummaryFixture] });
     }
     return HttpResponse.json(
       { error: { kind: "not_found", message: `agent ${agent_id} not found` } },
+      { status: 404 },
+    );
+  }),
+  http.get("/v1/agents/:agent_id/versions/:version", ({ params }) => {
+    const { version } = params as { version: string };
+    const n = Number(version);
+    if (n === versionSummaryFixture.version) {
+      return HttpResponse.json({
+        id: "ver-1",
+        agent_id: agentFixture.id,
+        version: n,
+        snapshot: agentFixture,
+        label: versionSummaryFixture.label,
+        created_at: versionSummaryFixture.created_at,
+      });
+    }
+    return HttpResponse.json(
+      { error: { kind: "not_found", message: `version ${version} not found` } },
       { status: 404 },
     );
   }),

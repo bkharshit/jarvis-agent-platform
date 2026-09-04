@@ -54,7 +54,7 @@ export function AgentsList() {
               <tr key={agent.id} className="border-b border-neutral-900">
                 <td className="py-2 pr-4">
                   <Link
-                    to={`/agents/${agent.id}/edit`}
+                    to={`/agents/${agent.id}`}
                     className="text-neutral-100 underline-offset-2 hover:underline"
                   >
                     {agent.name}
