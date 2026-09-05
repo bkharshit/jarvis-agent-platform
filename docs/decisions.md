@@ -148,6 +148,11 @@ the code.
   instead of compose; `make test-db` still targets Docker (documented
   limitation), and `pytest tests/integration -m db` works against any
   reachable Postgres.
+- **D25 (2026-09-05) — Live model listing (ADR 0007).** `ModelProvider`
+  and `ModelProviderFactory` gain `list_models`; `GET /v1/models` exposes
+  it; the agent editor's Model field becomes a datalist-backed combo box
+  over the endpoint's real catalog, with free text always valid. The
+  capabilities payload stays registry-derived — live IO never enters it.
 
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 
