@@ -79,6 +79,8 @@ uv run jarvis doctor --ping-model
 | POST | `/executions/{run_id}/cancel` | Idempotent cancel of a live run |
 | GET | `/executions/{run_id}/events` | Event replay: JSON, or SSE with `Accept: text/event-stream` |
 | GET | `/conversations/{agent_id}/{session_id}/messages` | Conversation history |
+| GET | `/capabilities` | Section flags + registry-derived detail the UI renders from |
+| GET | `/models` | Live model catalog from a provider endpoint (`provider`, optional `base_url`/`api_key_env`; 502 `model_unreachable`/`model_auth` on failure — ADR 0007) |
 
 Every error has one envelope shape: `{"error": {"kind", "message", "details"}}`.
 

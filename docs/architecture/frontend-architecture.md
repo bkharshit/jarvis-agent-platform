@@ -42,7 +42,7 @@ backend work enables the section.
 | **Executions** — runs list, detail, event replay | Logs (per app) | `/v1/executions*` | Phase 1 | ✅ enabled |
 | **Conversations** — per-session transcripts | — | `/v1/conversations/…` | Phase 1 | ✅ enabled |
 | **Tools** — builtin registry, bindings | Tools | tool descriptors via agent bindings | Phase 1 (builtins) | ✅ partial |
-| **Models** — provider/model info | Settings → Model Providers | provider summary via `/v1/capabilities` | read-only info | ✅ read-only |
+| **Models** — provider/model info | Settings → Model Providers | provider summary via `/v1/capabilities`; live catalog via `/v1/models` (ADR 0007) | read-only info | ✅ read-only + editor suggestions |
 | **Workflows** — canvas builder, runs | Workflow canvas (ReactFlow) | workflow API | S6 | 🚧 coming-soon |
 | **Knowledge** — datasets, retrieval | Knowledge | knowledge API | S8 | 🚧 coming-soon |
 | **Evaluations** — datasets, runs, scores | — | eval API | S11 | 🚧 coming-soon |
@@ -182,7 +182,10 @@ Routes at first ship:
 - **Agent editor** — form + YAML view over `AgentDefinition` (model ref,
   strategy picker from the backend's registry, tool binding toggles with
   per-binding config like `allowed_hosts`, memory, limits). Save → the
-  auto-published immutable version appears in the Versions tab.
+  auto-published immutable version appears in the Versions tab. The Model
+  field is a datalist over the provider's live catalog (`GET /v1/models`,
+  ADR 0007) with free text always valid; new drafts seed from the
+  capabilities `defaults` block.
 - **Run console** — input box → `POST /stream`; live event timeline
   (coalesced `text.delta` text, tool-call cards with results, iteration
   markers); cancel button → `/executions/{id}/cancel`; disconnect/reconnect
