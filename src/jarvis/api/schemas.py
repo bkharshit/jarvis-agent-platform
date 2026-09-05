@@ -132,6 +132,15 @@ class CapabilitiesResponse(_Model):
     sections: dict[str, SectionCapability]
 
 
+class ModelListResponse(_Model):
+    """Live catalog from a provider endpoint (ADR 0007) — what the endpoint
+    answered, not a configured fact."""
+
+    provider: str
+    base_url: str | None = None
+    models: list[str]
+
+
 __all__ = [
     "AgentDetail",
     "AgentList",
@@ -143,6 +152,7 @@ __all__ = [
     "ExecutionDetail",
     "ExecutionList",
     "MessageList",
+    "ModelListResponse",
     "RunRequest",
     "SectionCapability",
     "VersionSummary",
