@@ -78,3 +78,18 @@ Two structural facts from Phase 1 carry over: the global
   never in that process. A run whose **worker** dies mid-flight is failed
   by the sweeper with a terminal event (mid-run event-sequence resume is
   deliberately deferred).
+
+## Alternatives Considered & Trade-offs (Why Not Kafka or RabbitMQ?)
+
+1. **Dual-Write Hazard (Kafka/RabbitMQ vs PostgreSQL Queue)**:
+   Publishing an execution to an external broker alongside inserting the `agent_executions` DB row requires two-phase commits or the Transactional Outbox Pattern to prevent dangling records. With `SqlExecutionRepo.create_queued_run`, the execution row (`status='queued'`) and the `run_queue` message are committed in **one single ACID transaction**.
+2. **Task Lifecycle Mismatch (Kafka Partitioning)**:
+   Kafka is an append-only event streaming platform, not a task queue. Variable 10s–60s LLM execution durations risk tripping consumer group rebalance timeouts (`max.poll.interval.ms`). Furthermore, Kafka cannot selectively re-queue a single failed task midway through an immutable partition without reprocessing subsequent offsets.
+3. **Dynamic Lease Renewals & Targeting (RabbitMQ)**:
+   RabbitMQ ack/visibility timeouts do not natively support continuous dynamic lease extensions (worker heartbeats) or targeted cross-process cancellation of specific in-flight executions. PostgreSQL `run_cancels` and row-level `lease_until` timestamps support both seamlessly.
+4. **Unified Storage for Live Streaming and Historical Replay**:
+   An agent platform must serve both low-latency live SSE streams and historical replays from months ago. Retaining all events indefinitely in Kafka is cost-prohibitive, forcing a dual-write DB pipeline anyway. PostgreSQL `PgEventStream` uses the exact same indexed `execution_events` table for live streaming (`NOTIFY` wake-ups), `Last-Event-ID` disconnect resumption, and historical replays.
+5. **Zero New Infrastructure**:
+   `SELECT ... FOR UPDATE SKIP LOCKED` delivers hundreds of claims/sec with zero Docker/JVM/Erlang infrastructure dependencies, keeping `jarvis serve` lightweight and instantly runnable in local development.
+6. **Future Extensibility**:
+   `RunQueue` and `EventStream` are pure Python `Protocol` interfaces in `src/jarvis/ports/`. If scale demands (e.g. 100k+ runs/sec), Redis, SQS, or Kafka adapters can be introduced without altering domain, runtime, or API code.

@@ -54,3 +54,8 @@ Type-discriminated union `ExecutionEvent` (Pydantic `Literal` discriminators,
   live; the terminal event ends the stream.
 - Blocking and streaming routes produce identical sequences (guarded by
   test).
+
+## Transport & Delivery (Stage S1 / ADR 0008)
+
+- **`PgEventStream`**: Subscribers tail `execution_events` by global cursor. PostgreSQL `LISTEN/NOTIFY` acts strictly as an interrupt/wake-up signal (with a 1s fallback poll), ensuring a unified storage engine for both live SSE streaming and historical replays.
+- **Resilience**: Delivery is exactly-once from PostgreSQL; missed `NOTIFY` signals cost at most 1s of latency, never data correctness. See [ADR 0008](../adr/0008-distributed-runs.md) for alternatives considered (e.g. why PostgreSQL was chosen over Kafka or RabbitMQ).
