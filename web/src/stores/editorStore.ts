@@ -2,11 +2,15 @@ import { create } from "zustand";
 
 import type { AgentDefinition, AgentUpsert, ToolBinding } from "@/api/queries/agents";
 
+import type { ModelDefaults } from "@/capabilities/detail";
+
 // Form-shaped draft. Optional API fields are "" here and *omitted* from the
 // saved body — the PATCH route does model_dump(exclude_unset=True) +
 // model_copy without re-validation, so an explicit null can poison the
 // snapshot (plan risk: PATCH null injection). Client-only state never
 // reaches the wire (every API schema is extra="forbid").
+
+type ModelDefaultsInput = ModelDefaults;
 
 export interface ToolDraft {
   name: string;
@@ -33,7 +37,8 @@ interface EditorState {
   /** id of the agent being edited, or null while creating. */
   agentId: string | null;
   isDirty: boolean;
-  open: (definition: AgentDefinition | null) => void;
+  /** `defaults` seeds a create-draft from the capabilities env defaults. */
+  open: (definition: AgentDefinition | null, defaults?: ModelDefaultsInput | null) => void;
   close: () => void;
   update: (patch: Partial<AgentDraft>) => void;
 }
@@ -73,12 +78,25 @@ function draftFromDefinition(definition: AgentDefinition): AgentDraft {
   };
 }
 
-function draftForCreate(): AgentDraft {
+function draftForCreate(defaults?: ModelDefaultsInput | null): AgentDraft {
+  // Seed from the environment defaults when the capabilities payload has
+  // them (real, env-derived data — ADR 0007); "mock" is only the fallback
+  // when no defaults exist (capabilities not loaded yet).
+  const model =
+    defaults && defaults.model !== ""
+      ? {
+          provider: defaults.provider,
+          model: defaults.model,
+          ...(defaults.base_url !== null && defaults.base_url !== ""
+            ? { base_url: defaults.base_url }
+            : {}),
+        }
+      : { provider: "mock", model: "mock-agent" };
   return draftFromDefinition({
     id: "",
     name: "",
     description: "",
-    model: { provider: "mock", model: "mock-agent" },
+    model,
     system_prompt: "",
     user_prompt_template: null,
     tools: [],
@@ -185,10 +203,10 @@ export const useEditorStore = create<EditorState>((set) => ({
   draft: null,
   agentId: null,
   isDirty: false,
-  open: (definition) =>
+  open: (definition, defaults) =>
     set({
       agentId: definition?.id ?? null,
-      draft: definition ? draftFromDefinition(definition) : draftForCreate(),
+      draft: definition ? draftFromDefinition(definition) : draftForCreate(defaults),
       isDirty: false,
     }),
   close: () => set({ draft: null, agentId: null, isDirty: false }),

@@ -168,6 +168,18 @@ export const handlers = [
       { status: 404 },
     );
   }),
+  http.get("/v1/models", ({ request }) => {
+    const url = new URL(request.url);
+    const provider = url.searchParams.get("provider") ?? "openai_compatible";
+    const models = provider === "mock"
+      ? ["mock-small", "mock-large"]
+      : ["endpoint-model-a", "endpoint-model-b"];
+    return HttpResponse.json({
+      provider,
+      base_url: url.searchParams.get("base_url"),
+      models,
+    });
+  }),
   http.get("/v1/capabilities", () => {
     return HttpResponse.json({
       sections: {

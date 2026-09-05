@@ -207,6 +207,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Models */
+        get: operations["list_models_v1_models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -547,6 +564,19 @@ export interface components {
              * @default 1
              */
             attempt: number;
+        };
+        /**
+         * ModelListResponse
+         * @description Live catalog from a provider endpoint (ADR 0007) — what the endpoint
+         *     answered, not a configured fact.
+         */
+        ModelListResponse: {
+            /** Provider */
+            provider: string;
+            /** Base Url */
+            base_url?: string | null;
+            /** Models */
+            models: string[];
         };
         /**
          * ModelRef
@@ -1456,6 +1486,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MessageList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_models_v1_models_get: {
+        parameters: {
+            query: {
+                provider: string;
+                base_url?: string | null;
+                api_key_env?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelListResponse"];
                 };
             };
             /** @description Validation Error */

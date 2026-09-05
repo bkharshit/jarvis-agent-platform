@@ -716,6 +716,81 @@
         }
       }
     },
+    "/v1/models": {
+      "get": {
+        "tags": [
+          "models"
+        ],
+        "summary": "List Models",
+        "operationId": "list_models_v1_models_get",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "title": "Provider"
+            }
+          },
+          {
+            "name": "base_url",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Base Url"
+            }
+          },
+          {
+            "name": "api_key_env",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Api Key Env"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/healthz": {
       "get": {
         "summary": "Healthz",
@@ -1617,6 +1692,40 @@
           "run_id"
         ],
         "title": "ModelInvocationStarted"
+      },
+      "ModelListResponse": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url"
+          },
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Models"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider",
+          "models"
+        ],
+        "title": "ModelListResponse",
+        "description": "Live catalog from a provider endpoint (ADR 0007) \u2014 what the endpoint\nanswered, not a configured fact."
       },
       "ModelRef": {
         "properties": {

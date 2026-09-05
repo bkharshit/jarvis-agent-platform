@@ -1,5 +1,5 @@
 import { http, HttpResponse } from "msw";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
@@ -25,6 +25,43 @@ function capturePost() {
 }
 
 describe("<AgentEditor/> creating", () => {
+  it("prefills Model from the capabilities environment defaults (ADR 0007)", async () => {
+    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    const modelInput = await screen.findByLabelText("Model");
+    await waitFor(() => expect(modelInput).toHaveValue("mock-agent"));
+    expect(screen.getByLabelText("Provider")).toHaveValue("mock");
+  });
+
+  it("suggests the live model catalog in the Model datalist", async () => {
+    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    await screen.findByLabelText("Model");
+    const datalist = await screen.findByRole("listbox", { hidden: true }, { timeout: 2000 });
+    const options = within(datalist).getAllByRole("option", { hidden: true });
+    expect(options.map((o) => o.getAttribute("value"))).toEqual([
+      "mock-small",
+      "mock-large",
+    ]);
+  });
+
+  it("degrades to free text when the model listing fails", async () => {
+    server.use(
+      http.get("/v1/models", () =>
+        HttpResponse.json(
+          envelope("model_unreachable", "connection refused"),
+          { status: 502 },
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    const modelInput = await screen.findByLabelText("Model");
+    expect(await screen.findByText(/Model listing unavailable \(connection refused\)/))
+      .toBeInTheDocument();
+    await user.clear(modelInput); // the env-default prefill ran; typing replaces it
+    await user.type(modelInput, "hand-typed-model");
+    expect(modelInput).toHaveValue("hand-typed-model");
+  });
+
   it("POSTs a body that omits empty optional fields (null-injection guard)", async () => {
     const user = userEvent.setup();
     const posted = capturePost();

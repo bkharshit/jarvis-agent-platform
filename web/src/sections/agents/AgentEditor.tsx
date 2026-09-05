@@ -3,8 +3,11 @@ import { useNavigate, useParams } from "react-router";
 
 import { ApiError, fieldErrors } from "@/api/errors";
 import { useAgent, useCreateAgent, useUpdateAgent } from "@/api/queries/agents";
+import { useModelList } from "@/api/queries/models";
 import {
   builtinTools,
+  modelDefaults,
+  modelProviders,
   providerNames,
   strategyNames,
 } from "@/capabilities/detail";
@@ -41,17 +44,36 @@ function AgentEditorForm() {
 
   useEffect(() => {
     if (agentId === undefined) {
-      open(null); // creating
-    } else if (detail) {
+      // creating — seed once; a cached capabilities payload may already be
+      // present, and re-running open would wipe in-progress typing.
+      if (draft === null) open(null, modelDefaults(capabilities.data));
+    } else if (detail && draft === null) {
       open(detail.definition); // editing
     }
-  }, [agentId, detail, open]);
+  }, [agentId, detail, open, draft, capabilities.data]);
 
   useEffect(() => close, [close]);
 
   const createAgent = useCreateAgent();
   const updateAgent = useUpdateAgent(agentId ?? "");
   const saving = createAgent.isPending || updateAgent.isPending;
+
+  // ADR 0007: suggest real model ids from the provider endpoint. Hooks stay
+  // unconditional — `draft` is null only while the editor opens.
+  const modelList = useModelList(
+    draft?.model.provider ?? "",
+    draft?.model.base_url ?? "",
+    draft?.model.api_key_env ?? "",
+  );
+  const listingError =
+    modelList.isError && modelList.error instanceof ApiError
+      ? modelList.error.message
+      : modelList.isError
+        ? "request failed"
+        : null;
+  const providerDescription = modelProviders(capabilities.data).find(
+    (info) => info.name === draft?.model.provider,
+  )?.description;
 
   if (agentId !== undefined && isPending) {
     return <p className="px-6 py-10 text-sm text-neutral-400">Loading agent…</p>;
@@ -152,9 +174,18 @@ function AgentEditorForm() {
                 onChange={(e) => update({ model: { ...draft.model, provider: e.target.value } })}
               >
                 {(providers.length > 0 ? providers : [draft.model.provider]).map((p) => (
-                  <option key={p} value={p}>{p}</option>
+                  <option
+                    key={p}
+                    value={p}
+                    title={modelProviders(capabilities.data).find((info) => info.name === p)?.description}
+                  >
+                    {p}
+                  </option>
                 ))}
               </select>
+              {providerDescription && (
+                <p className="mt-1 text-xs text-neutral-500">{providerDescription}</p>
+              )}
               <FieldError message={fieldErrorsMap.provider} />
             </div>
             <div>
@@ -163,8 +194,21 @@ function AgentEditorForm() {
                 id="model-name"
                 className={inputClass}
                 value={draft.model.model}
+                list="model-options"
                 onChange={(e) => update({ model: { ...draft.model, model: e.target.value } })}
               />
+              {/* ADR 0007: real ids the endpoint answered with; free text
+                  stays valid — a failed/absent listing never blocks. */}
+              <datalist id="model-options">
+                {(modelList.data?.models ?? []).map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
+              {listingError && (
+                <p className="mt-1 text-xs text-amber-400">
+                  Model listing unavailable ({listingError}) — type a model id manually.
+                </p>
+              )}
               <FieldError message={fieldErrorsMap.model} />
             </div>
             <div>
