@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import typer
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 from rich.tree import Tree
@@ -48,6 +49,12 @@ _SERVER_OWNED = {"id", "created_at", "updated_at"}
 
 
 def _settings() -> Settings:
+    # Populate the process environment from a local gitignored `.env` before
+    # reading settings (ADR 0005: config stores only secret *names*; the
+    # values live in the environment — `.env` is just a local way to fill
+    # it). Cwd-relative, matching Settings' own env_file; real env vars win
+    # and existing values are never overridden.
+    load_dotenv(Path.cwd() / ".env", override=False)
     return Settings()
 
 

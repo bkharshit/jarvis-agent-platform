@@ -126,7 +126,12 @@ runtime, not the tool.
 
 ## Configuration
 
-Environment variables (prefix `JARVIS_`, or a `.env` file):
+Environment variables (prefix `JARVIS_`, or a `.env` file). The CLI loads a
+local gitignored `.env` from the working directory into the process
+environment at startup (real env vars win) — so secret *values* may live in
+`.env` locally, while configuration stores only their *names* (ADR 0005):
+set `JARVIS_MODEL_API_KEY_ENV=MY_KEY_VAR` in `.env` and `MY_KEY_VAR=...`
+alongside it.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
