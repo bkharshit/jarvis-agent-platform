@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     run_max_total_tokens: int | None = None
     run_timeout_seconds: float | None = None
 
+    # --- distributed runs (S1, ADR 0008) ----------------------------------
+    # Every run goes through the queue. `serve` embeds a worker by default
+    # so one process behaves like Phase 1 from the outside; distributed
+    # deployments turn this off and run `jarvis worker` separately.
+    embedded_worker: bool = True
+    worker_concurrency: int = 4
+
     # --- HTTP server -----------------------------------------------------
     host: str = "127.0.0.1"
     port: int = 8000

@@ -9,7 +9,8 @@ factory → strategy registry → `AgentRuntime` with `RunLimits` from Settings
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import Request
@@ -27,6 +28,7 @@ from jarvis.persistence.repositories import (
 )
 from jarvis.runtime.agent_runtime import AgentRuntime
 from jarvis.runtime.limits import RunLimits
+from jarvis.runtime.worker import Worker, worker_persist
 from jarvis.strategies.registry import DefaultStrategyRegistry
 from jarvis.tools.builtin.calculator import CalculatorTool
 from jarvis.tools.builtin.current_time import CurrentTimeTool
@@ -51,6 +53,8 @@ class AppContainer:
     strategies: DefaultStrategyRegistry
     runtime: AgentRuntime
     limits: RunLimits
+    worker: Worker
+    _worker_task: asyncio.Task[None] | None = field(default=None, repr=False)
 
     @classmethod
     def from_settings(
@@ -94,6 +98,15 @@ class AppContainer:
             conversations=conversations,
             limits=limits,
         )
+        worker = Worker(
+            queue=queue,
+            versions=agents,
+            executions=executions,
+            runtime=runtime,
+            # persist = durable append + pg_notify wake-up (ADR 0008 §4).
+            persist=worker_persist(executions, notifier),
+            concurrency=settings.worker_concurrency,
+        )
         return cls(
             settings=settings,
             engine=engine,
@@ -109,9 +122,30 @@ class AppContainer:
             strategies=strategies,
             runtime=runtime,
             limits=limits,
+            worker=worker,
         )
 
+    # --- embedded worker lifecycle (S1, ADR 0008) ------------------------------
+
+    async def start_worker(self) -> None:
+        """Run the queue worker inside this process (embedded mode). The
+        integration fixtures call this directly — ASGITransport skips the
+        lifespan — and so does `create_app`'s lifespan."""
+        if self._worker_task is None:
+            self._worker_task = asyncio.create_task(self.worker.run_forever())
+
+    async def stop_worker(self) -> None:
+        if self._worker_task is not None:
+            self._worker_task.cancel()
+            try:
+                await self._worker_task
+            except asyncio.CancelledError:
+                pass
+            self._worker_task = None
+        await self.worker.aclose()
+
     async def aclose(self) -> None:
+        await self.stop_worker()
         await self.streams.aclose()
         await self.notifier.aclose()
         await self.engine.dispose()

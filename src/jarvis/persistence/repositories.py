@@ -155,6 +155,15 @@ class SqlAgentRepo:
                 return None
             return self._load_version(row)
 
+    async def get_version_by_id(self, version_id: str) -> AgentVersion | None:
+        """Load a frozen snapshot by its id — how a worker resolves the
+        version pinned on a queue message."""
+        async with self._sessionmaker() as session:
+            row = await session.get(AgentVersionRow, version_id)
+            if row is None:
+                return None
+            return self._load_version(row)
+
     async def latest_version(self, agent_id: str) -> AgentVersion | None:
         async with self._sessionmaker() as session:
             row = (
@@ -309,8 +318,37 @@ class SqlExecutionRepo:
         return row.cursor, _EVENT_ADAPTER.validate_python(row.payload)
 
     async def create_run(self, result: RunResult) -> None:
+        """Ensure the run row exists and is RUNNING — insert it, or flip an
+        existing `queued` row when a worker claims the run (S1: the API wrote
+        the row at enqueue time; the runtime's write becomes the claim)."""
+        row = self._run_row(result)
         async with self._sessionmaker() as session:
-            session.add(self._run_row(result))
+            await session.execute(
+                pg_insert(AgentExecutionRow)
+                .values(
+                    id=row.id,
+                    agent_id=row.agent_id,
+                    agent_version_id=row.agent_version_id,
+                    session_id=row.session_id,
+                    user_id=row.user_id,
+                    trace_id=row.trace_id,
+                    status=row.status,
+                    input=row.input,
+                    output=row.output,
+                    error=row.error,
+                    error_kind=row.error_kind,
+                    total_usage=row.total_usage,
+                    iterations=row.iterations,
+                    started_at=row.started_at,
+                    finished_at=row.finished_at,
+                    event_cursor=row.event_cursor,
+                    metadata_json=row.metadata_json,
+                )
+                .on_conflict_do_update(
+                    index_elements=[AgentExecutionRow.id],
+                    set_={"status": "running", "started_at": row.started_at},
+                )
+            )
             await session.commit()
 
     async def finish_run(self, result: RunResult) -> None:

@@ -147,6 +147,34 @@ def serve() -> None:
 
 
 @app.command()
+def worker() -> None:
+    """Run the queue worker — claims queued runs and executes them (S1).
+
+    Distributed mode: JARVIS_EMBEDDED_WORKER=false `jarvis serve` plus any
+    number of these; runs survive the API process."""
+    from jarvis.runtime.worker import LEASE_SECONDS
+
+    settings = _settings()
+
+    async def go() -> None:
+        container = _container()
+        try:
+            await container.worker.run_forever()
+        finally:
+            await container.aclose()
+
+    console.print(
+        f"Worker claiming queued runs "
+        f"(lease {LEASE_SECONDS:.0f}s, concurrency {settings.worker_concurrency}) "
+        f"— Ctrl+C to stop."
+    )
+    try:
+        asyncio.run(go())
+    except KeyboardInterrupt:
+        console.print("[yellow]worker stopped[/yellow]")
+
+
+@app.command()
 def version() -> None:
     """Print the JARVIS version."""
     console.print(f"jarvis {__version__}")
