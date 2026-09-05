@@ -10,6 +10,7 @@ from typing import Any
 
 from jarvis.domain.agent import ModelRef
 from jarvis.models.client import BoundModelClient
+from jarvis.models.errors import ModelError
 from jarvis.models.mock import MockModelProvider
 from jarvis.models.openai_compatible import OpenAICompatibleProvider
 
@@ -40,6 +41,33 @@ class DefaultModelProviderFactory:
                 api_key=self._api_key_override,
             )
         return BoundModelClient(provider, ref)
+
+    async def list_models(
+        self,
+        provider: str,
+        *,
+        base_url: str | None = None,
+        api_key_env: str | None = None,
+    ) -> list[str]:
+        """Live catalog (ADR 0007). The route never reaches past the factory
+        into adapter constructors."""
+        if provider == "mock":
+            instance: MockModelProvider | Any = self._mock or MockModelProvider()
+        elif provider in self._extra:
+            instance = self._extra[provider]
+            if not hasattr(instance, "list_models"):
+                raise ModelError(
+                    f"provider {provider!r} does not support model listing",
+                    provider=provider,
+                )
+        else:
+            instance = OpenAICompatibleProvider(
+                name=provider,
+                base_url=base_url or "https://api.openai.com/v1",
+                api_key_env=api_key_env,
+                api_key=self._api_key_override,
+            )
+        return await instance.list_models()
 
 
 __all__ = ["DefaultModelProviderFactory"]

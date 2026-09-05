@@ -276,6 +276,47 @@ class TestStreaming:
         assert usage[0].usage.output_tokens == 7
 
 
+class TestListModels:
+    @respx.mock
+    async def test_lists_sorted_ids(self):
+        respx.get(f"{BASE}/models").respond(
+            status_code=200,
+            json={"data": [{"id": "zeta"}, {"id": "alpha"}, {"id": 42}, "junk"]},
+        )
+        assert await _provider().list_models() == ["alpha", "zeta"]
+
+    @respx.mock
+    async def test_sends_auth_header_from_env(self, monkeypatch):
+        monkeypatch.setenv("TEST_LIST_KEY", "sk-list")
+        route = respx.get(f"{BASE}/models").respond(
+            status_code=200, json={"data": [{"id": "m"}]}
+        )
+        await _provider(api_key_env="TEST_LIST_KEY").list_models()
+        assert route.calls.last.request.headers["Authorization"] == "Bearer sk-list"
+
+    @respx.mock
+    async def test_auth_error_mapped(self):
+        respx.get(f"{BASE}/models").respond(status_code=401, text="nope")
+        with pytest.raises(ModelAuthError):
+            await _provider().list_models()
+
+    @respx.mock
+    async def test_connection_error_mapped(self):
+        respx.get(f"{BASE}/models").mock(side_effect=httpx.ConnectError("refused"))
+        from jarvis.models.errors import ModelConnectionError
+
+        with pytest.raises(ModelConnectionError):
+            await _provider().list_models()
+
+    @respx.mock
+    async def test_malformed_payload_raises_stream_error(self):
+        respx.get(f"{BASE}/models").respond(status_code=200, json={"models": ["x"]})
+        from jarvis.models.errors import ModelStreamError
+
+        with pytest.raises(ModelStreamError):
+            await _provider().list_models()
+
+
 class TestFactory:
     async def test_mock_ref_resolves_mock(self):
         from jarvis.models.factory import DefaultModelProviderFactory
@@ -297,3 +338,30 @@ class TestFactory:
             ModelRef(provider="openai_compatible", model="gpt-x", base_url=BASE)
         )
         assert client.ref.model == "gpt-x"
+
+    async def test_list_models_delegates_to_mock(self):
+        from jarvis.models.factory import DefaultModelProviderFactory
+
+        factory = DefaultModelProviderFactory()
+        assert await factory.list_models("mock") == ["mock-small", "mock-large"]
+
+    @respx.mock
+    async def test_list_models_builds_adapter_from_params(self):
+        from jarvis.models.factory import DefaultModelProviderFactory
+
+        route = respx.get(f"{BASE}/models").respond(
+            status_code=200, json={"data": [{"id": "gemma4:31b"}]}
+        )
+        factory = DefaultModelProviderFactory()
+        assert await factory.list_models(
+            "openai_compatible", base_url=BASE, api_key_env="TEST_LIST_KEY"
+        ) == ["gemma4:31b"]
+        assert route.called
+
+    async def test_list_models_extra_provider_without_listing(self):
+        from jarvis.models.errors import ModelError
+        from jarvis.models.factory import DefaultModelProviderFactory
+
+        factory = DefaultModelProviderFactory(extra_providers={"stub": object()})
+        with pytest.raises(ModelError):
+            await factory.list_models("stub")

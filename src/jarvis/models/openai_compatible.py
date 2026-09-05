@@ -174,6 +174,42 @@ class OpenAICompatibleProvider:
         finally:
             await client.aclose()
 
+    async def list_models(self, *, timeout: float = 10.0) -> list[str]:
+        """Model ids the endpoint serves via `GET {base_url}/models`
+        (ADR 0007). Interactive endpoint — a short timeout, not the chat
+        one."""
+        client = httpx.AsyncClient(timeout=timeout)
+        try:
+            request = client.build_request(
+                "GET", f"{self._base_url}/models", headers=self._headers()
+            )
+            response = await client.send(request)
+            if response.status_code != 200:
+                self._raise_http_error(response.status_code, response.text, "")
+            try:
+                data = response.json()
+            except ValueError as exc:
+                raise ModelStreamError(
+                    f"malformed model-list payload: {exc}", provider=self._name
+                ) from exc
+        except httpx.RequestError as exc:
+            raise ModelConnectionError(
+                f"model listing failed: {exc}", provider=self._name
+            ) from exc
+        finally:
+            await client.aclose()
+        entries = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(entries, list):
+            raise ModelStreamError(
+                "malformed model-list payload: missing 'data' array",
+                provider=self._name,
+            )
+        return sorted(
+            entry["id"]
+            for entry in entries
+            if isinstance(entry, dict) and isinstance(entry.get("id"), str)
+        )
+
     # --- internals ---------------------------------------------------------
 
     def _request_payload(self, request: ModelRequest, *, stream: bool) -> dict[str, Any]:

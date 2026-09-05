@@ -34,6 +34,11 @@ class ModelProvider(Protocol):
         self, request: ModelRequest, *, cancel: CancellationToken | None = None
     ) -> AsyncIterator[StreamDelta]: ...
 
+    async def list_models(self) -> list[str]:
+        """Model ids this endpoint serves (ADR 0007). Raises ModelError on
+        failure — a provider that cannot enumerate says so, never pretends."""
+        ...
+
 
 @runtime_checkable
 class ModelClient(Protocol):
@@ -60,6 +65,18 @@ class ModelProviderFactory(Protocol):
     provider."""
 
     def resolve(self, ref: ModelRef) -> ModelClient: ...
+
+    async def list_models(
+        self,
+        provider: str,
+        *,
+        base_url: str | None = None,
+        api_key_env: str | None = None,
+    ) -> list[str]:
+        """Live catalog for a provider (ADR 0007). Absent base_url/api_key_env
+        fall back to environment defaults. Raises ModelError on unknown
+        provider or failed listing."""
+        ...
 
 
 __all__ = [

@@ -55,17 +55,22 @@ class MockModelProvider:
         default_content: str = "This is a mock response.",
         name: str = "mock",
         capabilities: ModelCapabilities | None = None,
+        models: list[str] | None = None,
     ) -> None:
         self._turns = list(turns or [])
         self.default_content = default_content
         self._name = name
         self.capabilities = capabilities or ModelCapabilities()
+        self.models = list(models) if models is not None else ["mock-small", "mock-large"]
         self.requests: list[ModelRequest] = []
         self.invocations = 0
 
     @property
     def name(self) -> str:
         return self._name
+
+    async def list_models(self) -> list[str]:
+        return list(self.models)
 
     def add_turn(self, scripted: MockTurn) -> None:
         self._turns.append(scripted)
