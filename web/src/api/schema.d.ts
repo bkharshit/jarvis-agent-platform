@@ -69,7 +69,9 @@ export interface paths {
         put?: never;
         /**
          * Run Agent
-         * @description Blocking run — the same AgentRuntime.run() the SSE route drives.
+         * @description Blocking run — enqueue, then wait for the worker's terminal event.
+         *     The subscribe replays anything the worker already wrote, so there is no
+         *     race between enqueueing and listening.
          */
         post: operations["run_agent_v1_agents__agent_id__run_post"];
         delete?: never;
@@ -89,10 +91,10 @@ export interface paths {
         put?: never;
         /**
          * Stream Agent
-         * @description SSE run: subscribe before the run starts, then frame every event.
-         *     Resume with `Last-Event-ID` (durable cursor) plus `run_id` in the body;
-         *     a finished run replays from the DB, a live one from its sink. The stream
-         *     ends with the run's single terminal event.
+         * @description SSE run: enqueue, then frame every event the worker writes. Resume with
+         *     `Last-Event-ID` (durable cursor) plus `run_id` in the body — replay and
+         *     live tail are the same cursor space (PgEventStream tails the DB, so the
+         *     stream survives this process). Ends with the run's single terminal event.
          */
         post: operations["stream_agent_v1_agents__agent_id__stream_post"];
         delete?: never;
@@ -163,8 +165,10 @@ export interface paths {
         put?: never;
         /**
          * Cancel Run
-         * @description Idempotent: triggers the live run's token; a finished run is a no-op
-         *     that reports its current status.
+         * @description Idempotent. A run live in THIS process gets its runtime token; a
+         *     queued or foreign-worker run gets a cross-process cancel request
+         *     (ADR 0008 §6) that the owning worker's heartbeat pops. A finished run is
+         *     a no-op that reports its current status.
          */
         post: operations["cancel_run_v1_executions__run_id__cancel_post"];
         delete?: never;
@@ -699,7 +703,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "running" | "succeeded" | "failed" | "cancelled" | "timed_out";
+            status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "timed_out";
             /**
              * Input
              * @default
@@ -1339,7 +1343,7 @@ export interface operations {
         parameters: {
             query?: {
                 agent_id?: string | null;
-                status?: ("running" | "succeeded" | "failed" | "cancelled" | "timed_out") | null;
+                status?: ("queued" | "running" | "succeeded" | "failed" | "cancelled" | "timed_out") | null;
                 session_id?: string | null;
                 limit?: number;
                 offset?: number;

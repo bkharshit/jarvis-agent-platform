@@ -11,6 +11,7 @@ import { SectionGate } from "@/capabilities/SectionGate";
 
 const STATUS_FILTERS: (ExecutionStatus | "all")[] = [
   "all",
+  "queued",
   "running",
   "succeeded",
   "failed",
@@ -20,6 +21,7 @@ const STATUS_FILTERS: (ExecutionStatus | "all")[] = [
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
+    queued: "bg-neutral-800 text-neutral-300",
     running: "bg-amber-950 text-amber-300",
     succeeded: "bg-green-950 text-green-300",
     failed: "bg-red-950 text-red-300",

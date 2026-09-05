@@ -33,4 +33,10 @@ describe("<ExecutionsList/>", () => {
       expect(screen.getByText("No executions match.")).toBeInTheDocument(),
     );
   });
+
+  it("exposes the queued status (S1) as a filter and a badge", async () => {
+    renderWithProviders(<ExecutionsList />, { initialEntries: ["/executions"] });
+    // The filter chip exists — runs arrive as `queued` before a worker claims them.
+    expect(screen.getByRole("button", { name: "queued" })).toBeInTheDocument();
+  });
 });

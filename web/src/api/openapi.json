@@ -279,7 +279,7 @@
           "agents"
         ],
         "summary": "Run Agent",
-        "description": "Blocking run \u2014 the same AgentRuntime.run() the SSE route drives.",
+        "description": "Blocking run \u2014 enqueue, then wait for the worker's terminal event.\nThe subscribe replays anything the worker already wrote, so there is no\nrace between enqueueing and listening.",
         "operationId": "run_agent_v1_agents__agent_id__run_post",
         "parameters": [
           {
@@ -332,7 +332,7 @@
           "agents"
         ],
         "summary": "Stream Agent",
-        "description": "SSE run: subscribe before the run starts, then frame every event.\nResume with `Last-Event-ID` (durable cursor) plus `run_id` in the body;\na finished run replays from the DB, a live one from its sink. The stream\nends with the run's single terminal event.",
+        "description": "SSE run: enqueue, then frame every event the worker writes. Resume with\n`Last-Event-ID` (durable cursor) plus `run_id` in the body \u2014 replay and\nlive tail are the same cursor space (PgEventStream tails the DB, so the\nstream survives this process). Ends with the run's single terminal event.",
         "operationId": "stream_agent_v1_agents__agent_id__stream_post",
         "parameters": [
           {
@@ -430,6 +430,7 @@
               "anyOf": [
                 {
                   "enum": [
+                    "queued",
                     "running",
                     "succeeded",
                     "failed",
@@ -554,7 +555,7 @@
           "executions"
         ],
         "summary": "Cancel Run",
-        "description": "Idempotent: triggers the live run's token; a finished run is a no-op\nthat reports its current status.",
+        "description": "Idempotent. A run live in THIS process gets its runtime token; a\nqueued or foreign-worker run gets a cross-process cancel request\n(ADR 0008 \u00a76) that the owning worker's heartbeat pops. A finished run is\na no-op that reports its current status.",
         "operationId": "cancel_run_v1_executions__run_id__cancel_post",
         "parameters": [
           {
@@ -2008,6 +2009,7 @@
           "status": {
             "type": "string",
             "enum": [
+              "queued",
               "running",
               "succeeded",
               "failed",
