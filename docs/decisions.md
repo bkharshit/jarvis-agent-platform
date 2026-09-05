@@ -17,7 +17,7 @@
 | 1.5 | **Fully testable with no DB, no network, no LLM.** `MockModelProvider` (scripted turns, failure injection, request recording) + unit suite of 150 tests; integration suite (27 tests) isolated behind the `db` marker. | The runtime is verifiable in seconds from Python; LLM/DB paths are exercised deliberately, not accidentally. |
 | 1.6 (2026-09-04) | **The frontend ships alongside the backend, not after it.** The full product IA (Agents, Workflows, Tools, MCP, Models, Knowledge, Executions, Evaluations, Observability, Plugins, Triggers, Settings — Dify-inspired) is designed up front and ships as the app shell against the Phase 1 API; every remaining section is gated on real backend capability (its roadmap stage), rendered disabled/coming-soon, never faked. Supersedes roadmap stage S5; see F1 in `docs/roadmap.md` and `docs/architecture/frontend-architecture.md`. | IA/routing decisions are cheapest now and most expensive to retrofit; an early shell gives continuous end-to-end visibility and forces API-design feedback early. The capabilities payload (`GET /v1/capabilities`) keeps enablement a backend *fact*, not a frontend promise. Backend stages keep their gates; each stage's last item is enabling its UI section. |
 
-## 2. Formal ADRs (0001–0006)
+## 2. Formal ADRs (0001–0008)
 
 | ADR | Decision (one line) | Key consequences |
 |---|---|---|
@@ -27,6 +27,8 @@
 | [0004](adr/0004-orchestrator-owns-limits.md) | **Orchestrator owns limits; a strategy owns one step** — `strategy.step()` performs at most one model invocation and returns `ToolCallsStep`/`FinishStep`; `AgentRuntime.run()` owns loop, caps, budget, deadline, cancellation, persistence, and terminal emission. | Runaway strategies are structurally impossible; failure classification is centralized; blocking `/run` and `/stream` call the same method (identical event sequences, test-guarded). |
 | [0005](adr/0005-single-openai-compatible-adapter.md) | **One OpenAI-compatible adapter via `base_url` injection** (httpx, no SDKs) + scripted mock provider; `generate()`/`stream()` separate methods; typed error taxonomy with narrow retry (RateLimit + Connection only); capabilities declared per provider. | Serves OpenAI/Ollama/vLLM/LM Studio with one adapter; Ollama's json-mode-only structured output → schema-in-prompt fallback; secrets never enter config (env-var *name* indirection). |
 | [0006](adr/0006-credential-resolution.md) | **Credential resolution: references with optional encrypted storage** (2026-09-05, decision-only — implementation deferred to S2). Agents hold credential *references*, never material; a `CredentialResolver` port owns materialization (env resolver for self-hosted, stored/encrypted resolver for hosted BYOK); credentials are write-only through the API; resolution is tenant-scoped; exact crypto/KMS details deferred to S2. | `api_key_env` unchanged until S2 (no user-facing capability before the tenant model exists); D18 amended with a pointer, not overridden; S2 gains the BYOK work item (resolver port, stored credentials, `credential_ref` migration, tenant scoping, secret-free API responses). |
+| [0007](adr/0007-live-model-listing.md) | **Live model listing** — `list_models` on the provider/factory seam; `GET /v1/models`; agent editor suggests the endpoint's real catalog in a datalist, free text always valid. (2026-09-05) | Registries/capabilities stay registry-derived — live IO never enters them; the catalog is what the endpoint *answered*, not a configured fact. |
+| [0008](adr/0008-distributed-runs.md) | **Distributed runs** — every run is queue-backed (Postgres `SKIP LOCKED` + leases); runs survive the API process; `PgEventStream` (LISTEN/NOTIFY wake-ups over the DB tail) replaces in-route sinks; cross-process cancellation via a `run_cancels` request row the owning worker's heartbeat pops. (2026-09-05) | No dual run-mode: `serve` embeds a worker by default, distributed mode is `JARVIS_EMBEDDED_WORKER=false` + `jarvis worker` processes; the sweeper reaps expired leases (requeue if 0 events, exactly one terminal failure otherwise); `EventStream.subscribe` yields `(cursor, event)` pairs — the one amendment to a frozen port, recorded in the ADR itself. |
 
 ## 3. Implementation decisions (Phase 1 build)
 
@@ -153,6 +155,25 @@ the code.
   it; the agent editor's Model field becomes a datalist-backed combo box
   over the endpoint's real catalog, with free text always valid. The
   capabilities payload stays registry-derived — live IO never enters it.
+- **D26 (2026-09-05) — Queue-always with an embedded worker (S1, ADR 0008).**
+  No dual run-mode: every API run is enqueued and executed by a `Worker`
+  through the same `AgentRuntime`. `serve` embeds a worker by default
+  (`JARVIS_EMBEDDED_WORKER=true`, `JARVIS_WORKER_CONCURRENCY=4`) so one
+  process behaves exactly like Phase 1 from the outside; distributed mode
+  is `JARVIS_EMBEDDED_WORKER=false` plus any number of `jarvis worker`
+  processes. Routes never touch a local sink — they read the run through
+  `PgEventStream` (the DB is the sole source of truth), so streams and
+  blocking runs survive the API process. The CLI still drives the runtime
+  in-process directly (it is a runtime consumer like the tests, not a
+  transport); API clients always queue.
+- **D27 (2026-09-05) — The sweeper reports worker loss as
+  `error_kind="timeout"`** — `RunFailed.error_kind` is a frozen Literal
+  (`max_iterations|timeout|model|tool|output_schema`, ADR 0003); widening
+  it needs an ADR, and "the run died without finishing" is genuinely a
+  timeout-shaped outcome (it did not finish within its claim). The error
+  string carries the specifics: `"worker lost (lease expired) — run did
+  not finish within its claim"`. A new kind (`worker_lost`) would be
+  preferable at the next envelope-revisiting ADR.
 
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 

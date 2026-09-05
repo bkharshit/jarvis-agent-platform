@@ -32,11 +32,12 @@ HTTP already share `AppContainer`).
 
 | Interface | Port | Notes |
 |---|---|---|
-| Model access | `ports/model.py` — `ModelProvider`, `ModelClient`, `ModelProviderFactory` | generate/stream separated; capabilities flags (ADR 0005) |
+| Model access | `ports/model.py` — `ModelProvider`, `ModelClient`, `ModelProviderFactory` | generate/stream separated; capabilities flags; `list_models` (ADR 0005, 0007) |
 | Tools | `ports/tools.py` — `Tool`, `ToolRegistry`, `ToolRuntime` | template-method invoke; MCP later = another Tool family |
 | Strategies | `ports/strategy.py` — `AgentStrategy`, `StepOutcome`, `StrategyRegistry` | one step per call; orchestrator owns the loop (ADR 0004) |
-| Events | `ports/events.py` — `EventSink`, `EventStream` | cursor replay; exactly-one-terminal (ADR 0003) |
+| Events | `ports/events.py` — `EventSink`, `EventStream` | cursor replay; exactly-one-terminal (ADR 0003); `subscribe` yields `(cursor, event)` pairs (ADR 0008 amendment) |
 | Persistence | `ports/repository.py` — `AgentRepo`, `ExecutionRepo`, `ConversationRepo` | Pydantic-over-JSONB (ADR 0002) |
+| Run queue | `ports/queue.py` — `RunQueue`, `RunQueueMessage` | Postgres `SKIP LOCKED` adapter (S1, ADR 0008); Redis later behind the same protocol |
 
 ## What a run looks like
 
@@ -53,8 +54,11 @@ HTTP already share `AppContainer`).
    `sink.finalize()` exactly once
 5. Persist `RunResult` + messages + tool executions
 
-Blocking `/run` and streaming `/stream` execute the **same** method; the SSE
-route subscribes to the sink while the run runs as an asyncio task.
+Blocking `/run` and streaming `/stream` execute the **same** method; since
+S1 the routes enqueue (row + queue message in one transaction) and a
+`Worker` runs that method, streaming events back out of the database via
+`PgEventStream` (LISTEN/NOTIFY wake-ups over the DB tail — the DB is the
+sole source of truth, NOTIFY only wakes).
 
 ## Phase roadmap (summary)
 

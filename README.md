@@ -72,11 +72,11 @@ uv run jarvis doctor --ping-model
 | GET | `/agents` | List agents |
 | GET/PATCH/DELETE | `/agents/{id}` | Read / update (auto-publishes a version) / delete (409 if runs exist) |
 | GET | `/agents/{id}/versions` | Version history (append-only snapshots) |
-| POST | `/agents/{id}/run` | Blocking run → final `RunResult` |
+| POST | `/agents/{id}/run` | Blocking run (queued; waits for the worker) → final `RunResult` |
 | POST | `/agents/{id}/stream` | SSE stream of run events |
 | GET | `/executions` | List runs (`agent_id`, `status`, `session_id`, `limit`, `offset`) |
 | GET | `/executions/{run_id}` | Run + transcript + tool executions |
-| POST | `/executions/{run_id}/cancel` | Idempotent cancel of a live run |
+| POST | `/executions/{run_id}/cancel` | Idempotent cancel — live token in-process, cross-process request row otherwise |
 | GET | `/executions/{run_id}/events` | Event replay: JSON, or SSE with `Accept: text/event-stream` |
 | GET | `/conversations/{agent_id}/{session_id}/messages` | Conversation history |
 | GET | `/capabilities` | Section flags + registry-derived detail the UI renders from |
@@ -102,6 +102,32 @@ curl -N -X POST localhost:8000/v1/agents/{id}/stream \
 ```
 
 Finished runs replay from the database the same way.
+
+### Queue-backed runs and distributed mode (S1, ADR 0008)
+
+Every API run is enqueued in Postgres and executed by a worker; the API
+streams events out of the database, so a run survives the API process.
+`jarvis serve` embeds a worker by default, which is why one process behaves
+like a self-contained system. For distributed mode — several workers behind
+one API, or workers restarted independently:
+
+```bash
+JARVIS_EMBEDDED_WORKER=false uv run jarvis serve   # API only (runs queue up)
+uv run jarvis worker                               # any number of these
+```
+
+Notes:
+
+- A queued run with no worker stays `queued` until one claims it.
+- The worker renews a 15s lease while a run executes. If a worker dies, a
+  sweeper reaps the lease: a run that emitted nothing is requeued (executed
+  again from scratch — safe, it never started); anything else gets exactly
+  one terminal `run.failed` (`error_kind="timeout"`, "worker lost (lease
+  expired)") or is finished from the terminal event the dead worker already
+  wrote. A run is never blindly re-executed.
+- Cancelling a queued or foreign-worker run writes a cancel request the
+  owning worker's heartbeat pops; a run live in the API's own process gets
+  its runtime token directly.
 
 ## Agent definitions (YAML)
 
@@ -145,6 +171,8 @@ alongside it.
 | `JARVIS_RUN_MAX_ITERATIONS` | `8` | Platform run cap (ADR 0004) |
 | `JARVIS_RUN_MAX_TOTAL_TOKENS` | unset | Token budget per run |
 | `JARVIS_RUN_TIMEOUT_SECONDS` | unset | Run deadline |
+| `JARVIS_EMBEDDED_WORKER` | `true` | Embed a queue worker in `serve` (ADR 0008; `false` + `jarvis worker` = distributed mode) |
+| `JARVIS_WORKER_CONCURRENCY` | `4` | Runs a single worker executes concurrently |
 | `JARVIS_HOST` / `JARVIS_PORT` | `127.0.0.1` / `8000` | HTTP bind |
 
 ## Development
