@@ -73,6 +73,7 @@ class AppContainer:
         # execution_events — the stream only tails through it.
         streams = PgEventStream(sessionmaker, settings.database_url)
         streams.replay_cursor_fn(executions.replay_with_cursor)
+        streams.run_status_fn(executions.get)
 
         registry = InMemoryToolRegistry()
         for tool in (CalculatorTool(), CurrentTimeTool(), HttpGetTool()):

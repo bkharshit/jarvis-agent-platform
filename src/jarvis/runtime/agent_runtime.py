@@ -37,7 +37,7 @@ from jarvis.domain.execution import ExecutionCancelled, ExecutionContext, RunRes
 from jarvis.domain.message import Message
 from jarvis.domain.tools import ToolContext, ToolDescriptor
 from jarvis.events.bus import InProcessEventBus, InProcessEventSink
-from jarvis.models.errors import ModelError
+from jarvis.models.errors import ModelAbortedError, ModelError
 from jarvis.ports.model import ModelClient, ModelProviderFactory
 from jarvis.ports.repository import ConversationRepo, ExecutionRepo
 from jarvis.ports.strategy import FinishStep, StepOutcome, StrategyRegistry, ToolCallsStep
@@ -135,6 +135,18 @@ class AgentRuntime:
             result = await self._execute(version, input, ctx, sink, client, agent, started_at)
         except ExecutionCancelled as exc:
             result = await self._terminal_cancelled(ctx, sink, exc, started_at, input)
+        except ModelAbortedError as exc:
+            # An abort is a cancellation, not a failure (D5): the token fired
+            # in the gap between the loop's checkpoint and the invocation —
+            # the provider observed it first. Reclassify by the token's own
+            # reason so the terminal is run.cancelled, never run.failed.
+            result = await self._terminal_cancelled(
+                ctx,
+                sink,
+                ExecutionCancelled(ctx.cancel.reason or str(exc)),
+                started_at,
+                input,
+            )
         except ModelError as exc:
             result = await self._terminal_failed(ctx, sink, str(exc), "model", started_at, input)
         except Exception as exc:  # noqa: BLE001 — the run never crashes callers

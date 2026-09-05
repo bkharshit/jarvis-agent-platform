@@ -20,6 +20,11 @@ ExecutionStatus = Literal[
     "queued", "running", "succeeded", "failed", "cancelled", "timed_out"
 ]
 
+# Statuses a run row can no longer leave (the terminal event's counterpart
+# on the run row itself). Used by subscribers deciding whether a run whose
+# replay came up empty has actually finished.
+TERMINAL_STATUSES: tuple[str, ...] = ("succeeded", "failed", "cancelled", "timed_out")
+
 
 class ExecutionCancelled(Exception):
     """Raised when a run observes its cancellation token.

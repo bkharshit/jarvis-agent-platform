@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 import pytest
 
 from jarvis.domain.events import RunCompleted, RunStarted
+from jarvis.domain.execution import RunResult
 from jarvis.events.bus import InProcessEventSink
 from jarvis.events.pg_notify import PgEventStream, PgNotifier
 
@@ -101,6 +102,35 @@ async def test_resume_yields_only_events_after_last_cursor(container):
     cursors = [c for c, _ in seen]
     assert all(c > cursor_1 for c in cursors)
     assert [t for _, t in seen] == ["run.started", "run.completed"]
+
+
+@pytest.mark.db
+async def test_resume_at_terminal_cursor_ends_immediately(container):
+    """The client consumed the run's terminal event before disconnecting:
+    the reconnect's replay is empty, and the stream must end at once — not
+    poll forever for events that will never come."""
+    run_id = "stream-resume-at-terminal"
+    sink = _sink(container, run_id, notify=True)
+    await sink.append(_started(run_id))
+    terminal_cursor = await sink.finalize(_completed(run_id))
+    # A run row always exists when a route subscribes (404 happens first) —
+    # the empty-batch check reads it to tell "finished" from "nothing new".
+    await container.executions.create_run(
+        RunResult(
+            run_id=run_id,
+            agent_id="a",
+            status="succeeded",
+            finished_at=datetime.now(UTC),
+            event_cursor=terminal_cursor,
+        )
+    )
+
+    stream = container.streams
+    seen = [
+        (cursor, event.type)
+        async for cursor, event in stream.subscribe(run_id, terminal_cursor)
+    ]
+    assert seen == []  # nothing was missed — the empty stream is the answer
 
 
 @pytest.mark.db

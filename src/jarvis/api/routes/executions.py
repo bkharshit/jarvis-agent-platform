@@ -24,11 +24,9 @@ from jarvis.api.schemas import (
 )
 from jarvis.api.sse import SSE_HEADERS, frame
 from jarvis.domain.events import is_terminal
-from jarvis.domain.execution import ExecutionStatus, RunResult
+from jarvis.domain.execution import TERMINAL_STATUSES, ExecutionStatus, RunResult
 
 router = APIRouter(prefix="/executions", tags=["executions"])
-
-_TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "timed_out"}
 
 
 async def _require_run(container: AppContainer, run_id: str) -> RunResult:
@@ -74,7 +72,7 @@ async def cancel_run(run_id: str, container: AppContainer = ContainerDep) -> Can
     (ADR 0008 §6) that the owning worker's heartbeat pops. A finished run is
     a no-op that reports its current status."""
     run = await _require_run(container, run_id)
-    if run.status in _TERMINAL_STATUSES:
+    if run.status in TERMINAL_STATUSES:
         return CancelResult(run_id=run_id, cancelled=False, status=run.status)
     if run.status == "running" and container.runtime.cancel(run_id):
         return CancelResult(run_id=run_id, cancelled=True, status=run.status)

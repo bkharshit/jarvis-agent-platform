@@ -30,7 +30,7 @@ from jarvis.api.sse import SSE_HEADERS, frame, parse_last_event_id
 from jarvis.config import Settings
 from jarvis.domain.agent import AgentDefinition, AgentVersion
 from jarvis.domain.events import is_terminal
-from jarvis.domain.execution import RunResult
+from jarvis.domain.execution import TERMINAL_STATUSES, RunResult
 from jarvis.ports.queue import RunQueueMessage
 from jarvis.runtime.limits import deadline_from_now
 
@@ -39,9 +39,6 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 # Module-level Depends singleton (ruff B008): the container is per-app state,
 # so every route shares this one dependency declaration.
 ContainerDep = Depends(get_container)
-
-# Statuses a run row can no longer leave.
-_TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "timed_out"}
 
 
 async def _require_definition(container: AppContainer, agent_id: str) -> AgentDefinition:
@@ -221,7 +218,7 @@ async def _await_terminal_row(container: AppContainer, run_id: str) -> RunResult
     until it is terminal (bounded; the stream already guaranteed the event)."""
     run = await container.executions.get(run_id)
     for _ in range(100):
-        if run is not None and run.status in _TERMINAL_STATUSES:
+        if run is not None and run.status in TERMINAL_STATUSES:
             return run
         await asyncio.sleep(0.05)
         run = await container.executions.get(run_id)

@@ -129,7 +129,9 @@ async def test_cancel_live_run_is_idempotent(client, container, agent, mock):
 
     # Drain the original stream to its terminal event, then reconnect from 0.
     frames = parse_sse((await stream_task).text)
-    assert frames[-1][1] == "run.cancelled"
+    assert frames[-1][1] == "run.cancelled", (
+        f"terminal was {frames[-1][1]}: {frames[-1][2].get('error')!r}"
+    )
     assert frames[-1][2]["reason"] == "cancelled by user"
 
     resumed = await client.post(

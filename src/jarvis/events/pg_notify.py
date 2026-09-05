@@ -19,11 +19,13 @@ import contextlib
 import json
 import logging
 from collections.abc import AsyncIterator, Callable
+from typing import Any
 
 import asyncpg
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jarvis.domain.events import ExecutionEvent, is_terminal
+from jarvis.domain.execution import TERMINAL_STATUSES
 
 logger = logging.getLogger("jarvis.events")
 
@@ -31,6 +33,7 @@ EVENT_CHANNEL = "jarvis_events"
 # NOTIFY is a wake-up only — a subscriber never depends on receiving one.
 WAKE_TIMEOUT_SECONDS = 1.0
 _REPLAY_CURSOR_FN = Callable[[str, int | None], AsyncIterator[tuple[int, ExecutionEvent]]]
+_RUN_STATUS_FN = Callable[[str], Any]  # async run_id -> RunResult | None
 
 _NotifyPayload = tuple[str, int]  # (run_id, cursor)
 
@@ -83,6 +86,7 @@ class PgEventStream:
     ) -> None:
         self._dsn = _asyncpg_dsn(database_url)
         self._replay_with_cursor: _REPLAY_CURSOR_FN | None = None
+        self._run_status: _RUN_STATUS_FN | None = None
         self._connection: asyncpg.Connection | None = None
         self._subscribers: list[asyncio.Queue[_NotifyPayload]] = []
         self._lock = asyncio.Lock()
@@ -91,6 +95,11 @@ class PgEventStream:
         """Inject the repo's cursor-space replay — the repo stays the one SQL
         owner for `execution_events`."""
         self._replay_with_cursor = fn
+
+    def run_status_fn(self, fn: _RUN_STATUS_FN) -> None:
+        """Inject the repo's run lookup — lets a subscriber whose replay came
+        up empty tell a finished run from a run with nothing new yet."""
+        self._run_status = fn
 
     # --- listener lifecycle ---------------------------------------------------
 
@@ -153,6 +162,16 @@ class PgEventStream:
                         terminal_seen = True
                 if terminal_seen:
                     return
+                if not batch and self._run_status is not None:
+                    # Empty replay: either the run is still live (nothing new
+                    # since `last_cursor`) or the client already consumed the
+                    # terminal event before reconnecting — in which case the
+                    # stream ends now, as a pure replay would have. An unknown
+                    # row keeps waiting: every route path creates the row
+                    # before subscribing (404 happens first).
+                    run = await self._run_status(run_id)
+                    if run is not None and run.status in TERMINAL_STATUSES:
+                        return
                 await self._wait_for_wake(queue, run_id)
                 await self._heal_if_needed()
         finally:
