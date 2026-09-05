@@ -1,22 +1,27 @@
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 
 // The dev proxy is the single seam to the backend — no CORS middleware on
 // the FastAPI app. A separately-deployed frontend (later) will need CORS.
-export default defineConfig({
-  plugins: [react(), tailwindcss()],
-  resolve: {
-    alias: {
-      "@": "/src",
+//
+// The target resolves from: real env vars > web/.env / .env.local
+// (JARVIS_API_URL) > the :8000 default. web/.env is gitignored.
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+  const apiTarget = env.JARVIS_API_URL ?? "http://127.0.0.1:8000";
+  return {
+    plugins: [react(), tailwindcss()],
+    resolve: {
+      alias: {
+        "@": "/src",
+      },
     },
-  },
-  server: {
-    proxy: {
-      // JARVIS_API_URL lets a second backend instance run alongside the
-      // default :8000 (e.g. the e2e smoke on :8001).
-      "/v1": process.env.JARVIS_API_URL ?? "http://127.0.0.1:8000",
-      "/healthz": process.env.JARVIS_API_URL ?? "http://127.0.0.1:8000",
+    server: {
+      proxy: {
+        "/v1": apiTarget,
+        "/healthz": apiTarget,
+      },
     },
-  },
+  };
 });
