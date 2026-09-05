@@ -166,6 +166,25 @@ the code.
   blocking runs survive the API process. The CLI still drives the runtime
   in-process directly (it is a runtime consumer like the tests, not a
   transport); API clients always queue.
+
+  *Load profile on Postgres (the accepted trade, measured against the
+  alternative of a broker):* claim polling is one indexed
+  `SKIP LOCKED` query per 0.5s per worker; the heartbeat is one lease
+  UPDATE + one cancel-pop SELECT per 2s per executing run; the sweeper
+  one SELECT per 30s per worker; `NOTIFY` is fire-and-forget per event.
+  Steady-state queue load is O(workers + concurrent runs) at a few simple
+  row ops per second each. Event appends and message persistence predate
+  S1 (ADR 0002) — the genuinely new load is the subscriber tail (replay
+  per batch, 1s fallback poll only when no notify arrived) and is bounded
+  by the number of live subscribers. The expected scaling ceiling is
+  event write throughput (`text.delta` amplification), addressed by sink
+  coalescing and `execution_events` partitioning/retention — not the
+  queue. *Scale-out plan:* workers scale horizontally today (`SKIP
+  LOCKED` claims need no coordination); when measured load demands it,
+  `SqlRunQueue` is swapped for a broker adapter behind the same
+  `RunQueue` port — wake-ups/claims move, run state and event
+  durability stay in Postgres, so the recovery semantics proven in the
+  S1 walkthrough (`docs/walkthrough-s1.md`) are preserved either way.
 - **D27 (2026-09-05) — The sweeper reports worker loss as
   `error_kind="timeout"`** — `RunFailed.error_kind` is a frozen Literal
   (`max_iterations|timeout|model|tool|output_schema`, ADR 0003); widening
