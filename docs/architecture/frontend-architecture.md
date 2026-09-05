@@ -102,6 +102,54 @@ from the API, never hardcoded); `_`-prefixed runtime state is stripped at
 save; draft-save with a server hash for optimistic concurrency (agent
 editor from F1; canvas at S6).
 
+## Running locally (verified 2026-09-05)
+
+The proxy stays the single seam — there is deliberately **no CORS
+middleware**. Port 8000 is frequently taken on this machine by another
+project, so the verified setup runs the backend on **:8001** and redirects
+the seam with `JARVIS_API_URL` (read by `vite.config.ts`):
+
+```bash
+# 1. Backend — local Postgres (role jarvis/jarvis, db `jarvis`); migrations
+#    apply at startup; mock provider = no network, no API key
+JARVIS_PORT=8001 JARVIS_MODEL_PROVIDER=mock JARVIS_MODEL_NAME=mock-agent \
+  uv run jarvis serve
+
+# 2. Web dev server, proxy pointed at :8001 (default target is 127.0.0.1:8000)
+cd web && JARVIS_API_URL=http://127.0.0.1:8001 npm run dev
+#    → http://localhost:5173
+
+# 3. Gates
+make test        # backend unit suite (no DB, no network, no LLM)
+make web-test    # tsc --noEmit && eslint && vitest
+make web-e2e     # Playwright smoke (see below)
+```
+
+Why each env var: `JARVIS_PORT` keeps JARVIS beside whatever occupies :8000
+instead of killing it; `JARVIS_MODEL_PROVIDER`/`JARVIS_MODEL_NAME` only fill
+provider-less defaults (agent YAML/forms pin their own provider); the mock
+provider makes runs deterministic for the e2e smoke; `JARVIS_API_URL` moves
+the one proxy seam so the browser stays same-origin with the API.
+
+## E2e smoke (Playwright)
+
+`web/playwright.config.ts` starts Vite itself via `webServer` (reusing an
+already-running Vite on :5173 — it must carry the matching
+`JARVIS_API_URL`). The backend is a documented prerequisite:
+
+```bash
+cd web && JARVIS_API_URL=http://127.0.0.1:8001 npx playwright test          # headless
+cd web && JARVIS_API_URL=http://127.0.0.1:8001 npx playwright test --headed # visible browser
+cd web && JARVIS_API_URL=http://127.0.0.1:8001 npx playwright test --trace on
+npx playwright show-trace test-results/*/trace.zip                          # filmstep inspector
+```
+
+The smoke creates a randomized mock `function_calling` agent (**memory on**
+— the runtime creates the `(agent, session)` conversation row only for
+memory-enabled agents), runs it over live SSE, then walks executions detail →
+replay → conversations transcript → a disabled section naming its stage.
+Rows are left behind on purpose. Command specifics also live in `web/README.md`.
+
 ## App structure
 
 ```
