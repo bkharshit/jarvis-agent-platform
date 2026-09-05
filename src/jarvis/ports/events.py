@@ -2,6 +2,9 @@
 
 ADR 0003: `append` assigns the per-run gapless sequence and returns a cursor;
 `finalize` accepts terminal events only, is once-only, and poisons the sink.
+ADR 0008: `EventStream.subscribe` yields `(cursor, event)` pairs — every
+consumer (SSE `Last-Event-ID`) needs the durable global cursor alongside the
+event; cursor semantics themselves are unchanged.
 """
 
 from __future__ import annotations
@@ -35,9 +38,9 @@ class EventStream(Protocol):
 
     def subscribe(
         self, run_id: str, last_cursor: int | None = None
-    ) -> AsyncIterator[ExecutionEvent]:
-        """Yield replayed events after `last_cursor`, then live events,
-        ending with the run's terminal event."""
+    ) -> AsyncIterator[tuple[int, ExecutionEvent]]:
+        """Yield `(durable cursor, event)` pairs after `last_cursor`, then
+        live ones, ending with the run's terminal event."""
         ...
 
     def replay(self, run_id: str, after: int | None = None) -> AsyncIterator[ExecutionEvent]:

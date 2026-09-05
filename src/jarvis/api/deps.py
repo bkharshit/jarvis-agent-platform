@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 
 from jarvis.config import Settings
 from jarvis.events.bus import InProcessEventBus
+from jarvis.events.pg_notify import PgEventStream, PgNotifier
 from jarvis.models.factory import DefaultModelProviderFactory
 from jarvis.persistence.repositories import (
     SqlAgentRepo,
@@ -42,6 +43,8 @@ class AppContainer:
     executions: SqlExecutionRepo
     conversations: SqlConversationRepo
     queue: SqlRunQueue
+    notifier: PgNotifier
+    streams: PgEventStream
     bus: InProcessEventBus
     tools: InMemoryToolRegistry
     models: DefaultModelProviderFactory
@@ -61,6 +64,11 @@ class AppContainer:
         executions = SqlExecutionRepo(sessionmaker)
         conversations = SqlConversationRepo(sessionmaker)
         queue = SqlRunQueue(sessionmaker)
+        notifier = PgNotifier(settings.database_url)
+        # One LISTEN connection; the repo stays the sole SQL owner for
+        # execution_events — the stream only tails through it.
+        streams = PgEventStream(sessionmaker, settings.database_url)
+        streams.replay_cursor_fn(executions.replay_with_cursor)
 
         registry = InMemoryToolRegistry()
         for tool in (CalculatorTool(), CurrentTimeTool(), HttpGetTool()):
@@ -93,6 +101,8 @@ class AppContainer:
             executions=executions,
             conversations=conversations,
             queue=queue,
+            notifier=notifier,
+            streams=streams,
             bus=bus,
             tools=registry,
             models=models,
@@ -102,6 +112,8 @@ class AppContainer:
         )
 
     async def aclose(self) -> None:
+        await self.streams.aclose()
+        await self.notifier.aclose()
         await self.engine.dispose()
 
 

@@ -78,3 +78,9 @@ strict = true
 [[tool.mypy.overrides]]
 module = "jarvis.ports.*"
 strict = true
+
+[[tool.mypy.overrides]]
+# asyncpg ships no py.typed marker; the LISTEN/NOTIFY adapter is the only
+# direct consumer (the SQLAlchemy engine wraps it everywhere else).
+module = "asyncpg"
+ignore_missing_imports = true
