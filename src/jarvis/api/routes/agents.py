@@ -1,8 +1,10 @@
-"""Agents CRUD + blocking run + SSE stream (plan §5).
+"""Agents CRUD + blocking run + SSE stream (plan §5, ADR 0008 runs).
 
 Thin controllers: shape requests into domain calls, map domain outcomes onto
-HTTP. Everything else (versioning, limits, events, persistence) lives in the
-container."""
+HTTP. Every run goes through the queue — the API persists a queued row + a
+queue message in one transaction and streams the run's events out of the
+database (PgEventStream), so runs survive this process. Everything else
+(versioning, limits, events, persistence) lives in the container."""
 
 from __future__ import annotations
 
@@ -27,8 +29,9 @@ from jarvis.api.schemas import (
 from jarvis.api.sse import SSE_HEADERS, frame, parse_last_event_id
 from jarvis.config import Settings
 from jarvis.domain.agent import AgentDefinition, AgentVersion
-from jarvis.domain.execution import ExecutionContext, RunResult
-from jarvis.events.bus import InProcessEventSink
+from jarvis.domain.events import is_terminal
+from jarvis.domain.execution import RunResult
+from jarvis.ports.queue import RunQueueMessage
 from jarvis.runtime.limits import deadline_from_now
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -37,9 +40,8 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 # so every route shares this one dependency declaration.
 ContainerDep = Depends(get_container)
 
-# Strong refs so a streamed run's asyncio.Task can't be garbage-collected
-# mid-run (documented Phase 1 simplification; the sink is never dropped).
-_background_tasks: set[asyncio.Task[RunResult]] = set()
+# Statuses a run row can no longer leave.
+_TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "timed_out"}
 
 
 async def _require_definition(container: AppContainer, agent_id: str) -> AgentDefinition:
@@ -83,22 +85,6 @@ def _definition_from_create(req: AgentUpsertRequest, agent_id: str) -> AgentDefi
             },
         )
     return AgentDefinition(id=agent_id, **payload)
-
-
-def _new_context(
-    settings: Settings, definition: AgentDefinition, version: AgentVersion, req: RunRequest
-) -> ExecutionContext:
-    return ExecutionContext(
-        run_id=str(uuid4()),
-        agent_id=definition.id,
-        agent_version_id=version.id,
-        session_id=req.session_id,
-        user_id=req.user_id,
-        trace_id=str(uuid4()),
-        metadata=dict(req.metadata),
-        variables=dict(req.variables),
-        deadline=deadline_from_now(settings.run_timeout_seconds),
-    )
 
 
 # --- CRUD -------------------------------------------------------------------
@@ -173,18 +159,73 @@ async def delete_agent(
         )
 
 
-# --- runs ---------------------------------------------------------------------
+# --- runs (queued — ADR 0008: the queue is the only execution path) ------------
+
+
+def _queue_message(
+    settings: Settings, definition: AgentDefinition, version: AgentVersion, req: RunRequest
+) -> RunQueueMessage:
+    """Everything a worker needs to execute this run without consulting the
+    requester again; the deadline is absolute so it survives the cross-process
+    hop (ADR 0008 §1)."""
+    return RunQueueMessage(
+        run_id=str(uuid4()),
+        agent_id=definition.id,
+        agent_version_id=version.id,
+        input=req.input,
+        session_id=req.session_id,
+        user_id=req.user_id,
+        trace_id=str(uuid4()),
+        metadata=dict(req.metadata),
+        variables=dict(req.variables),
+        deadline=deadline_from_now(settings.run_timeout_seconds),
+    )
+
+
+def _queued_result(message: RunQueueMessage) -> RunResult:
+    """The execution row as it exists at enqueue time (`status='queued'`)."""
+    return RunResult(
+        run_id=message.run_id,
+        agent_id=message.agent_id,
+        status="queued",
+        input=message.input,
+        agent_version_id=message.agent_version_id,
+        session_id=message.session_id,
+        trace_id=message.trace_id,
+    )
 
 
 @router.post("/{agent_id}/run")
 async def run_agent(
     agent_id: str, req: RunRequest, container: AppContainer = ContainerDep
 ) -> RunResult:
-    """Blocking run — the same AgentRuntime.run() the SSE route drives."""
+    """Blocking run — enqueue, then wait for the worker's terminal event.
+    The subscribe replays anything the worker already wrote, so there is no
+    race between enqueueing and listening."""
     definition = await _require_definition(container, agent_id)
     version = await _require_version(container, agent_id)
-    ctx = _new_context(container.settings, definition, version, req)
-    return await container.runtime.run(version, req.input, ctx)
+    message = _queue_message(container.settings, definition, version, req)
+    await container.executions.create_queued_run(_queued_result(message), message)
+    async for _cursor, _event in container.streams.subscribe(message.run_id):
+        pass  # the stream ends exactly at the terminal event
+    run = await _await_terminal_row(container, message.run_id)
+    if run is None:
+        raise ApiError(
+            500, "internal", f"run {message.run_id!r} never reached a terminal state"
+        )
+    return run
+
+
+async def _await_terminal_row(container: AppContainer, run_id: str) -> RunResult | None:
+    """The terminal event lands moments before finish_run — poll the row
+    until it is terminal (bounded; the stream already guaranteed the event)."""
+    run = await container.executions.get(run_id)
+    for _ in range(100):
+        if run is not None and run.status in _TERMINAL_STATUSES:
+            return run
+        await asyncio.sleep(0.05)
+        run = await container.executions.get(run_id)
+    return None
 
 
 @router.post("/{agent_id}/stream")
@@ -194,56 +235,47 @@ async def stream_agent(
     request: Request,
     container: AppContainer = ContainerDep,
 ) -> StreamingResponse:
-    """SSE run: subscribe before the run starts, then frame every event.
-    Resume with `Last-Event-ID` (durable cursor) plus `run_id` in the body;
-    a finished run replays from the DB, a live one from its sink. The stream
-    ends with the run's single terminal event."""
+    """SSE run: enqueue, then frame every event the worker writes. Resume with
+    `Last-Event-ID` (durable cursor) plus `run_id` in the body — replay and
+    live tail are the same cursor space (PgEventStream tails the DB, so the
+    stream survives this process). Ends with the run's single terminal event."""
     try:
         last_cursor = parse_last_event_id(request.headers.get("last-event-id"))
     except ValueError as exc:
         raise ApiError(400, "validation", f"invalid Last-Event-ID: {exc}") from None
 
     if req.run_id is not None:
-        # A live sink wins: a RUNNING execution row may not be readable yet,
-        # and the sink holds every event with its durable cursor.
-        sink = container.bus.get(req.run_id)
-        if sink is not None:
-            generator = _live_stream(sink, last_cursor)
-        else:
-            run = await container.executions.get(req.run_id)
-            if run is None or run.agent_id != agent_id:
-                raise ApiError(404, "not_found", f"execution {req.run_id!r} not found")
-            generator = _replay_stream(container, req.run_id, last_cursor)
+        run = await container.executions.get(req.run_id)
+        if run is None or run.agent_id != agent_id:
+            raise ApiError(404, "not_found", f"execution {req.run_id!r} not found")
+        generator = _queue_stream(container, req.run_id, last_cursor)
     else:
         definition = await _require_definition(container, agent_id)
         version = await _require_version(container, agent_id)
-        ctx = _new_context(container.settings, definition, version, req)
-        # get_or_create BEFORE the run task so no event can be missed.
-        sink = await container.bus.get_or_create(ctx.run_id)
-        task = asyncio.create_task(container.runtime.run(version, req.input, ctx, sink=sink))
-        _background_tasks.add(task)
-        task.add_done_callback(_background_tasks.discard)
-        generator = _live_stream(sink, last_cursor)
+        message = _queue_message(container.settings, definition, version, req)
+        # Row + message land atomically; subscribe replays anything the
+        # worker emitted before we attached.
+        await container.executions.create_queued_run(_queued_result(message), message)
+        generator = _queue_stream(container, message.run_id, last_cursor)
 
     return StreamingResponse(generator, media_type="text/event-stream", headers=SSE_HEADERS)
 
 
-async def _live_stream(
-    sink: InProcessEventSink, last_cursor: int | None
-) -> AsyncIterator[str]:
-    async for cursor, event in sink.subscribe(last_cursor):
-        yield frame(cursor, event)
-
-
-async def _replay_stream(
+async def _queue_stream(
     container: AppContainer, run_id: str, last_cursor: int | None
 ) -> AsyncIterator[str]:
-    """Finished/foreign run: cursor-space replay from the DB. If the run is
-    not actually finished, the DB holds a prefix — resume then drains only
-    what is persisted, so Phase 1 clients resume finished runs (live runs
-    resume via the in-memory sink above)."""
-    async for cursor, event in container.executions.replay_with_cursor(run_id, last_cursor):
-        yield frame(cursor, event)
+    """Frame every event; hold the terminal frame back until the run row is
+    terminal, so a stream that ends carries the run's final state (the web
+    UI fetches the detail immediately after the stream closes)."""
+    last_frame: str | None = None
+    async for cursor, event in container.streams.subscribe(run_id, last_cursor):
+        if is_terminal(event):
+            last_frame = frame(cursor, event)  # subscribe returns right after
+        else:
+            yield frame(cursor, event)
+    await _await_terminal_row(container, run_id)  # best effort: finish_run catch-up
+    if last_frame is not None:
+        yield last_frame
 
 
 __all__ = ["router"]

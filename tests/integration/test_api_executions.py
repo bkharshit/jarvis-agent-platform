@@ -36,6 +36,36 @@ class _SlowTool(BaseTool):
 
 
 @pytest.mark.db
+async def test_cancel_queued_run_never_reaches_the_runtime(client, container, agent, mock):
+    """Cancelling a queued run writes the cross-process request (ADR 0008 §6);
+    the worker pops it before the runtime is ever invoked."""
+    from jarvis.api.routes.agents import _queue_message, _queued_result
+    from jarvis.api.schemas import RunRequest
+    from jarvis.models.mock import turn
+
+    mock.add_turn(turn("never reached"))
+    definition = await container.agents.get(agent.id)
+    assert definition is not None
+    version = await container.agents.latest_version(agent.id)
+    assert version is not None
+    message = _queue_message(container.settings, definition, version, RunRequest(input="go"))
+    await container.executions.create_queued_run(_queued_result(message), message)
+
+    cancel = await client.post(f"/v1/executions/{message.run_id}/cancel")
+    assert cancel.status_code == 200
+    assert cancel.json()["cancelled"] is True
+
+    for _ in range(200):  # the embedded worker fast-fails the pre-cancelled run
+        detail = (await client.get(f"/v1/executions/{message.run_id}")).json()
+        if detail["run"]["status"] == "cancelled":
+            break
+        await asyncio.sleep(0.05)
+    assert detail["run"]["status"] == "cancelled"
+    events = (await client.get(f"/v1/executions/{message.run_id}/events")).json()
+    assert [e["event"]["type"] for e in events["events"]] == ["run.cancelled"]
+
+
+@pytest.mark.db
 async def test_executions_list_filters(client, agent, mock):
     from jarvis.models.mock import turn
 

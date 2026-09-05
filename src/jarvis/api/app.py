@@ -32,6 +32,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         container = AppContainer.from_settings(app.state.settings)
         app.state.container = container
+        # Embedded worker by default (ADR 0008): one process behaves like
+        # Phase 1 from the outside. Distributed mode: JARVIS_EMBEDDED_WORKER=
+        # false here plus any number of `jarvis worker` processes.
+        if container.settings.embedded_worker:
+            await container.start_worker()
         try:
             yield
         finally:

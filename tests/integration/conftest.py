@@ -91,6 +91,9 @@ async def _truncate(container: AppContainer) -> None:
 async def container(mock: MockModelProvider):
     container = AppContainer.from_settings(Settings(), mock_provider=mock)
     await _truncate(container)
+    # ASGITransport skips the lifespan, so the embedded worker is started
+    # here — the routes are queue-backed (ADR 0008) and runs need a worker.
+    await container.start_worker()
     yield container
     await container.aclose()
 
