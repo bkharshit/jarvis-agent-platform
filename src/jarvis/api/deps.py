@@ -22,6 +22,7 @@ from jarvis.persistence.repositories import (
     SqlAgentRepo,
     SqlConversationRepo,
     SqlExecutionRepo,
+    SqlRunQueue,
 )
 from jarvis.runtime.agent_runtime import AgentRuntime
 from jarvis.runtime.limits import RunLimits
@@ -40,6 +41,7 @@ class AppContainer:
     agents: SqlAgentRepo
     executions: SqlExecutionRepo
     conversations: SqlConversationRepo
+    queue: SqlRunQueue
     bus: InProcessEventBus
     tools: InMemoryToolRegistry
     models: DefaultModelProviderFactory
@@ -58,6 +60,7 @@ class AppContainer:
         agents = SqlAgentRepo(sessionmaker)
         executions = SqlExecutionRepo(sessionmaker)
         conversations = SqlConversationRepo(sessionmaker)
+        queue = SqlRunQueue(sessionmaker)
 
         registry = InMemoryToolRegistry()
         for tool in (CalculatorTool(), CurrentTimeTool(), HttpGetTool()):
@@ -89,6 +92,7 @@ class AppContainer:
             agents=agents,
             executions=executions,
             conversations=conversations,
+            queue=queue,
             bus=bus,
             tools=registry,
             models=models,

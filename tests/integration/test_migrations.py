@@ -21,6 +21,8 @@ EXPECTED_TABLES = {
     "messages",
     "tool_executions",
     "execution_events",
+    "run_queue",
+    "run_cancels",
 }
 
 

@@ -68,9 +68,16 @@ class RunQueue(Protocol):
         owning worker's heartbeat pops it)."""
         ...
 
-    async def sweep(self) -> list[str]:
-        """Reap expired leases; returns the run_ids acted on (requeued or
-        terminal-failed — adapter's policy, see ADR 0008 §3)."""
+    async def sweep(self, expired_before: datetime) -> list[str]:
+        """Return run_ids whose claim lease expired before `expired_before`.
+        The caller decides the outcome — requeue when the run emitted no
+        events, exactly-one-terminal-failure otherwise (ADR 0008 §3) — and
+        acts via `requeue`/`ack`."""
+        ...
+
+    async def requeue(self, run_id: str) -> None:
+        """Put a claimed message back to pending (crashed worker, no events
+        emitted — safe to re-execute from scratch)."""
         ...
 
 

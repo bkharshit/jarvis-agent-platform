@@ -9,12 +9,13 @@ event sink uses that value as the SSE Last-Event-ID (ADR 0003).
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import uuid4
 
 from pydantic import TypeAdapter
-from sqlalchemy import ColumnElement, func, select
+from sqlalchemy import ColumnElement, delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -34,8 +35,11 @@ from jarvis.persistence.models import (
     ConversationRow,
     ExecutionEventRow,
     MessageRow,
+    RunCancelRow,
+    RunQueueRow,
     ToolExecutionRow,
 )
+from jarvis.ports.queue import RunQueueMessage
 
 _EVENT_ADAPTER: TypeAdapter[ExecutionEvent] = TypeAdapter(ExecutionEvent)
 
@@ -239,6 +243,70 @@ class SqlAgentRepo:
 class SqlExecutionRepo:
     def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
         self._sessionmaker = sessionmaker
+
+    async def create_queued_run(self, result: RunResult, message: RunQueueMessage) -> None:
+        """Execution row (`status='queued'`) + queue message in ONE
+        transaction (ADR 0008 §2) — a message can never dangle without its
+        row. The runtime flips the row to running when a worker claims it."""
+        if result.status != "queued" or message.run_id != result.run_id:
+            raise ValueError("create_queued_run requires a matching queued RunResult")
+        async with self._sessionmaker() as session:
+            session.add(self._run_row(result))
+            session.add(
+                RunQueueRow(
+                    run_id=message.run_id, payload=message.model_dump(mode="json")
+                )
+            )
+            await session.commit()
+
+    async def mark_running(self, run_id: str, started_at: datetime) -> None:
+        """queued → running when a worker claims the message (re-claims of a
+        requeued run are a no-op — the row is already running)."""
+        async with self._sessionmaker() as session:
+            await session.execute(
+                update(AgentExecutionRow)
+                .where(AgentExecutionRow.id == run_id, AgentExecutionRow.status == "queued")
+                .values(status="running", started_at=started_at)
+            )
+            await session.commit()
+
+    async def count_events(self, run_id: str) -> int:
+        async with self._sessionmaker() as session:
+            return (
+                await session.execute(
+                    select(func.count())
+                    .select_from(ExecutionEventRow)
+                    .where(ExecutionEventRow.execution_id == run_id)
+                )
+            ).scalar_one()
+
+    async def next_event_sequence(self, run_id: str) -> int:
+        """The sequence a new event for this run must carry (the sweeper
+        appends a terminal event at max+1 after a worker died)."""
+        async with self._sessionmaker() as session:
+            current = (
+                await session.execute(
+                    select(func.max(ExecutionEventRow.sequence)).where(
+                        ExecutionEventRow.execution_id == run_id
+                    )
+                )
+            ).scalar_one_or_none()
+        return 0 if current is None else current + 1
+
+    async def latest_event(self, run_id: str) -> tuple[int, ExecutionEvent] | None:
+        """The run's highest-sequence event with its durable cursor."""
+        async with self._sessionmaker() as session:
+            row = (
+                await session.execute(
+                    select(ExecutionEventRow)
+                    .where(ExecutionEventRow.execution_id == run_id)
+                    .order_by(ExecutionEventRow.sequence.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        if row is None:
+            return None
+        return row.cursor, _EVENT_ADAPTER.validate_python(row.payload)
 
     async def create_run(self, result: RunResult) -> None:
         async with self._sessionmaker() as session:
@@ -555,9 +623,129 @@ class SqlConversationRepo:
         return [SqlExecutionRepo._load_message(row) for row in rows]
 
 
+class SqlRunQueue:
+    """Postgres run queue (ADR 0008 §2-3): `SKIP LOCKED` claims, worker
+    leases, idempotent cancel requests.
+
+    The sweep *decides nothing* — it returns expired run_ids and the worker
+    policy requeues (0 events) or terminal-fails (any events) via
+    `requeue`/`ack`, so two workers racing on the same expired lease both
+    see the message claimed until a decision is recorded."""
+
+    def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
+        self._sessionmaker = sessionmaker
+
+    async def enqueue(self, message: RunQueueMessage) -> None:
+        async with self._sessionmaker() as session:
+            session.add(
+                RunQueueRow(run_id=message.run_id, payload=message.model_dump(mode="json"))
+            )
+            await session.commit()
+
+    async def claim(self, worker_id: str, lease: timedelta) -> RunQueueMessage | None:
+        """One statement: pick the oldest pending message, lock it
+        (SKIP LOCKED — a competing claimant moves on), mark claimed with a
+        lease, return its payload."""
+        now = _now()
+        next_pending = (
+            select(RunQueueRow.id)
+            .where(RunQueueRow.status == "pending")
+            .order_by(RunQueueRow.id)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+            .scalar_subquery()
+        )
+        claim = (
+            update(RunQueueRow)
+            .where(RunQueueRow.id == next_pending)
+            .values(
+                status="claimed",
+                claimed_by=worker_id,
+                claimed_at=now,
+                lease_until=now + lease,
+            )
+            .returning(RunQueueRow.payload)
+        )
+        async with self._sessionmaker() as session:
+            payload = (await session.execute(claim)).scalar_one_or_none()
+            await session.commit()
+        return RunQueueMessage.model_validate(payload) if payload is not None else None
+
+    async def ack(self, run_id: str) -> None:
+        async with self._sessionmaker() as session:
+            await session.execute(
+                update(RunQueueRow)
+                .where(RunQueueRow.run_id == run_id)
+                .values(status="done")
+            )
+            await session.commit()
+
+    async def renew(self, run_id: str, worker_id: str, lease: timedelta) -> bool:
+        """Extend the lease iff still claimed by *this* worker — False means
+        the lease was lost and the worker must stop the run."""
+        async with self._sessionmaker() as session:
+            result = await session.execute(
+                update(RunQueueRow)
+                .where(
+                    RunQueueRow.run_id == run_id,
+                    RunQueueRow.status == "claimed",
+                    RunQueueRow.claimed_by == worker_id,
+                )
+                .values(lease_until=_now() + lease)
+                .returning(RunQueueRow.id)
+            )
+            renewed = result.scalar_one_or_none() is not None
+            await session.commit()
+        return renewed
+
+    async def requeue(self, run_id: str) -> None:
+        async with self._sessionmaker() as session:
+            await session.execute(
+                update(RunQueueRow)
+                .where(RunQueueRow.run_id == run_id, RunQueueRow.status == "claimed")
+                .values(status="pending", claimed_by=None, claimed_at=None, lease_until=None)
+            )
+            await session.commit()
+
+    async def pending_cancel(self, run_id: str) -> str | None:
+        """Atomic pop: delete the cancel request and return its reason."""
+        async with self._sessionmaker() as session:
+            reason = (
+                await session.execute(
+                    delete(RunCancelRow)
+                    .where(RunCancelRow.run_id == run_id)
+                    .returning(RunCancelRow.reason)
+                )
+            ).scalar_one_or_none()
+            await session.commit()
+        return reason
+
+    async def request_cancel(self, run_id: str, reason: str) -> None:
+        async with self._sessionmaker() as session:
+            await session.execute(
+                pg_insert(RunCancelRow)
+                .values(run_id=run_id, reason=reason)
+                .on_conflict_do_nothing(index_elements=[RunCancelRow.run_id])
+            )
+            await session.commit()
+
+    async def sweep(self, expired_before: datetime) -> list[str]:
+        async with self._sessionmaker() as session:
+            rows = (
+                await session.execute(
+                    select(RunQueueRow.run_id).where(
+                        RunQueueRow.status == "claimed",
+                        RunQueueRow.lease_until < expired_before,
+                    )
+                )
+            ).scalars()
+            return list(rows)
+
+
 __all__ = [
     "SqlAgentRepo",
     "SqlConversationRepo",
     "SqlExecutionRepo",
+    "SqlRunQueue",
     "create_sessionmaker",
 ]
