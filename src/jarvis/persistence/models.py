@@ -25,7 +25,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-EXECUTION_STATUSES = ("running", "succeeded", "failed", "cancelled", "timed_out")
+EXECUTION_STATUSES = ("queued", "running", "succeeded", "failed", "cancelled", "timed_out")
 MESSAGE_ROLES = ("system", "developer", "user", "assistant", "tool")
 
 

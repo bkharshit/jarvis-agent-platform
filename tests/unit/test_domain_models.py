@@ -174,3 +174,8 @@ class TestRunResult:
         assert result.iterations == 0
         assert result.event_cursor is None
         assert result.finished_at is None
+
+    def test_queued_status_is_valid(self):
+        # S1: runs are enqueued before a worker claims them.
+        result = RunResult(run_id="r", agent_id="a", status="queued")
+        assert result.status == "queued"

@@ -16,7 +16,9 @@ class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-ExecutionStatus = Literal["running", "succeeded", "failed", "cancelled", "timed_out"]
+ExecutionStatus = Literal[
+    "queued", "running", "succeeded", "failed", "cancelled", "timed_out"
+]
 
 
 class ExecutionCancelled(Exception):
