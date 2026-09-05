@@ -17,7 +17,7 @@
 | 1.5 | **Fully testable with no DB, no network, no LLM.** `MockModelProvider` (scripted turns, failure injection, request recording) + unit suite of 150 tests; integration suite (27 tests) isolated behind the `db` marker. | The runtime is verifiable in seconds from Python; LLM/DB paths are exercised deliberately, not accidentally. |
 | 1.6 (2026-09-04) | **The frontend ships alongside the backend, not after it.** The full product IA (Agents, Workflows, Tools, MCP, Models, Knowledge, Executions, Evaluations, Observability, Plugins, Triggers, Settings — Dify-inspired) is designed up front and ships as the app shell against the Phase 1 API; every remaining section is gated on real backend capability (its roadmap stage), rendered disabled/coming-soon, never faked. Supersedes roadmap stage S5; see F1 in `docs/roadmap.md` and `docs/architecture/frontend-architecture.md`. | IA/routing decisions are cheapest now and most expensive to retrofit; an early shell gives continuous end-to-end visibility and forces API-design feedback early. The capabilities payload (`GET /v1/capabilities`) keeps enablement a backend *fact*, not a frontend promise. Backend stages keep their gates; each stage's last item is enabling its UI section. |
 
-## 2. Formal ADRs (0001–0005)
+## 2. Formal ADRs (0001–0006)
 
 | ADR | Decision (one line) | Key consequences |
 |---|---|---|
@@ -26,6 +26,7 @@
 | [0003](adr/0003-event-envelope-and-terminal-semantics.md) | **One event envelope + exactly-one-terminal semantics** — `{event_id, run_id, sequence, created_at, type}`, per-run gapless sink-assigned `sequence`; exactly one terminal event per run; the global `execution_events.cursor` BIGSERIAL doubles as the SSE `Last-Event-ID`. | Any run is reconstructible by sequence replay; only the orchestrator may `finalize()`; queue-backed sinks keep the same contract. |
 | [0004](adr/0004-orchestrator-owns-limits.md) | **Orchestrator owns limits; a strategy owns one step** — `strategy.step()` performs at most one model invocation and returns `ToolCallsStep`/`FinishStep`; `AgentRuntime.run()` owns loop, caps, budget, deadline, cancellation, persistence, and terminal emission. | Runaway strategies are structurally impossible; failure classification is centralized; blocking `/run` and `/stream` call the same method (identical event sequences, test-guarded). |
 | [0005](adr/0005-single-openai-compatible-adapter.md) | **One OpenAI-compatible adapter via `base_url` injection** (httpx, no SDKs) + scripted mock provider; `generate()`/`stream()` separate methods; typed error taxonomy with narrow retry (RateLimit + Connection only); capabilities declared per provider. | Serves OpenAI/Ollama/vLLM/LM Studio with one adapter; Ollama's json-mode-only structured output → schema-in-prompt fallback; secrets never enter config (env-var *name* indirection). |
+| [0006](adr/0006-credential-resolution.md) | **Credential resolution: references with optional encrypted storage** (2026-09-05, decision-only — implementation deferred to S2). Agents hold credential *references*, never material; a `CredentialResolver` port owns materialization (env resolver for self-hosted, stored/encrypted resolver for hosted BYOK); credentials are write-only through the API; resolution is tenant-scoped; exact crypto/KMS details deferred to S2. | `api_key_env` unchanged until S2 (no user-facing capability before the tenant model exists); D18 amended with a pointer, not overridden; S2 gains the BYOK work item (resolver port, stored credentials, `credential_ref` migration, tenant scoping, secret-free API responses). |
 
 ## 3. Implementation decisions (Phase 1 build)
 
@@ -118,7 +119,11 @@ the code.
 - **D18 — Secrets are referenced, never stored.** `api_key_env` names an
   environment variable (ADR 0005); `Settings.model_api_key_env` follows the
   same pattern; per-agent `ModelRef` carries `base_url`/`api_key_env`
-  overrides.
+  overrides. *(Amended 2026-09-05: ADR 0006 records the decision-only
+  future direction — S2 adds optional encrypted BYOK credential storage
+  behind a `CredentialResolver` port, with tenant-scoped authorization and
+  write-only APIs. Everything an agent persists stays a reference, never
+  material. Current behavior is unchanged until S2.)*
 - **D19 — `JARVIS_MODEL_PROVIDER` is a fallback default, not an override.**
   An agent definition pins its own `model.provider`; the env var only fills
   provider-less defaults. (Discovered in CLI smoke — mock smoke needs a YAML

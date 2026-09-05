@@ -154,13 +154,39 @@ middleware is the only injection point.
 - Tool-level secrets stay behind `ToolContext` + `ToolDescriptor.annotations`
   (already the sanctioned place per Phase 1).
 
+**BYOK credentials (ADR 0006 — decision recorded 2026-09-05, implemented
+here):** tenant-scoped LLM credentials land in this stage, not before it —
+a stored credential without a tenant ownership model has no owner. S2
+introduces:
+
+- a `CredentialResolver` abstraction in `ports/` behind
+  `ModelProviderFactory` (the single seam between "what an agent
+  references" and "how the key materializes");
+- stored, encrypted-at-rest credentials (hosted/BYOK), one table owned
+  by tenant;
+- environment-variable credential references for self-hosted compatibility
+  (`api_key_env` semantics preserved; env stays the self-hosted default);
+- the `api_key_env` → `credential_ref` (env | stored) migration over agent
+  version snapshots — references only, never plaintext;
+- BYOK credential API + UI (write-only: plaintext enters via
+  create/update, is never returned by GET, never logged, never
+  snapshotted);
+- tenant-scoped credential authorization at the repository/resolution
+  boundary (a credential id alone is never sufficient authorization);
+- security integration tests asserting no submitted secret appears in any
+  GET response, snapshot, or log.
+
+Exact encryption/KMS details are deliberately unspecified here (ADR 0006
+defers them to this stage's implementation plan).
+
 **Acceptance:** a tenant cannot read or run another tenant's agents or
 executions (404, not 403 — no existence leak); anonymous mode remains a
 config choice for local dev; all Phase 1 tests pass with a single shared
 tenant.
 
 **UI enablement:** the **Settings** section flips on (login, API keys,
-tenant members); the shell drops its anonymous-mode notice.
+tenant members, credential management); the shell drops its
+anonymous-mode notice.
 
 ---
 
