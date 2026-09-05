@@ -80,11 +80,20 @@ def mock() -> MockModelProvider:
 
 
 async def _truncate(container: AppContainer) -> None:
-    from jarvis.persistence.models import Base
+    from jarvis.persistence.models import DEFAULT_TENANT, Base
 
     async with container.engine.begin() as conn:
         for table in reversed(Base.metadata.sorted_tables):
             await conn.execute(text(f'TRUNCATE TABLE "{table.name}" CASCADE'))
+        # The default tenant is environmental seed data (migration 0004) —
+        # NOT NULL tenant_id FKs on executions/conversations need it back.
+        await conn.execute(
+            text(
+                "INSERT INTO tenants (id, name, created_at) "
+                "VALUES (:id, 'Default', now()) ON CONFLICT (id) DO NOTHING"
+            ),
+            {"id": DEFAULT_TENANT},
+        )
 
 
 @pytest_asyncio.fixture

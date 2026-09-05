@@ -261,11 +261,7 @@ class SqlExecutionRepo:
             raise ValueError("create_queued_run requires a matching queued RunResult")
         async with self._sessionmaker() as session:
             session.add(self._run_row(result))
-            session.add(
-                RunQueueRow(
-                    run_id=message.run_id, payload=message.model_dump(mode="json")
-                )
-            )
+            session.add(RunQueueRow(run_id=message.run_id, payload=message.model_dump(mode="json")))
             await session.commit()
 
     async def mark_running(self, run_id: str, started_at: datetime) -> None:
@@ -675,9 +671,7 @@ class SqlRunQueue:
 
     async def enqueue(self, message: RunQueueMessage) -> None:
         async with self._sessionmaker() as session:
-            session.add(
-                RunQueueRow(run_id=message.run_id, payload=message.model_dump(mode="json"))
-            )
+            session.add(RunQueueRow(run_id=message.run_id, payload=message.model_dump(mode="json")))
             await session.commit()
 
     async def claim(self, worker_id: str, lease: timedelta) -> RunQueueMessage | None:
@@ -712,9 +706,7 @@ class SqlRunQueue:
     async def ack(self, run_id: str) -> None:
         async with self._sessionmaker() as session:
             await session.execute(
-                update(RunQueueRow)
-                .where(RunQueueRow.run_id == run_id)
-                .values(status="done")
+                update(RunQueueRow).where(RunQueueRow.run_id == run_id).values(status="done")
             )
             await session.commit()
 

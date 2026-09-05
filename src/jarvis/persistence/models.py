@@ -28,6 +28,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 EXECUTION_STATUSES = ("queued", "running", "succeeded", "failed", "cancelled", "timed_out")
 MESSAGE_ROLES = ("system", "developer", "user", "assistant", "tool")
 QUEUE_STATUSES = ("pending", "claimed", "done")
+USER_ROLES = ("owner", "admin", "member")
+DEFAULT_TENANT = "default"
 
 
 def _now() -> datetime:
@@ -46,6 +48,11 @@ class AgentRow(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # NULL = platform-shared (visible to every tenant, ADR 0009 §4);
+    # single-tenant/anonymous agents are shared.
+    tenant_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("tenants.id"), nullable=True, index=True
+    )
     current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now
@@ -85,6 +92,14 @@ class AgentExecutionRow(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     agent_id: Mapped[str] = mapped_column(String, nullable=False)
     agent_version_id: Mapped[str] = mapped_column(String, nullable=False)
+    tenant_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("tenants.id"),
+        nullable=False,
+        default=DEFAULT_TENANT,
+        server_default=DEFAULT_TENANT,
+        index=True,
+    )
     session_id: Mapped[str | None] = mapped_column(String, nullable=True)
     user_id: Mapped[str | None] = mapped_column(String, nullable=True)
     trace_id: Mapped[str] = mapped_column(String, nullable=False, default="")
@@ -152,12 +167,109 @@ class RunCancelRow(Base):
     )
 
 
+class TenantRow(Base):
+    __tablename__ = "tenants"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+
+
+class UserRow(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(
+        String, ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    email: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    display_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # scrypt hash string (stdlib, format-versioned); NULL = keys-only user.
+    password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    role: Mapped[str] = mapped_column(String, nullable=False, default="member")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+
+
+class SessionRow(Base):
+    """Server-side session (ADR 0009 §2): only the token hash is stored —
+    revocation is a DELETE, expiry a column."""
+
+    __tablename__ = "sessions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+
+
+class ApiKeyRow(Base):
+    """API key metadata. Only the SHA-256 hash and a display prefix are
+    stored — plaintext is returned exactly once at creation."""
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(
+        String, ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    key_hash: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    key_prefix: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CredentialRow(Base):
+    """Stored (BYOK) credential. `ciphertext` is the AES-GCM envelope
+    {v, key_id, nonce, ct} — there is no plaintext column to leak
+    (ADR 0006 §7)."""
+
+    __tablename__ = "credentials"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(
+        String, ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    ciphertext: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_by: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ConversationRow(Base):
     __tablename__ = "conversations"
     __table_args__ = (UniqueConstraint("agent_id", "session_id", name="uq_conversation"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     agent_id: Mapped[str] = mapped_column(String, nullable=False)
+    tenant_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("tenants.id"),
+        nullable=False,
+        default=DEFAULT_TENANT,
+        server_default=DEFAULT_TENANT,
+        index=True,
+    )
     session_id: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now
@@ -236,11 +348,18 @@ __all__ = [
     "AgentExecutionRow",
     "AgentRow",
     "AgentVersionRow",
+    "ApiKeyRow",
     "Base",
     "ConversationRow",
+    "CredentialRow",
+    "DEFAULT_TENANT",
     "ExecutionEventRow",
     "MessageRow",
     "RunCancelRow",
     "RunQueueRow",
+    "SessionRow",
+    "TenantRow",
     "ToolExecutionRow",
+    "USER_ROLES",
+    "UserRow",
 ]

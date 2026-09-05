@@ -23,6 +23,11 @@ EXPECTED_TABLES = {
     "execution_events",
     "run_queue",
     "run_cancels",
+    "tenants",
+    "users",
+    "sessions",
+    "api_keys",
+    "credentials",
 }
 
 
@@ -56,10 +61,7 @@ def test_migrations_up_down_up() -> None:
         try:
             async with engine.connect() as conn:
                 rows = await conn.execute(
-                    text(
-                        "SELECT unnest(enum_range(NULL::execution_status))"
-                        "::text ORDER BY 1"
-                    )
+                    text("SELECT unnest(enum_range(NULL::execution_status))::text ORDER BY 1")
                 )
                 return [row[0] for row in rows]
         finally:
