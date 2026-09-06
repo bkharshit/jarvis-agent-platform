@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from jarvis.config import Settings
 from jarvis.events.bus import InProcessEventBus
 from jarvis.events.pg_notify import PgEventStream, PgNotifier
+from jarvis.models.credentials import DefaultCredentialResolver
 from jarvis.models.factory import DefaultModelProviderFactory
 from jarvis.persistence.repositories import (
     SqlAgentRepo,
@@ -85,7 +86,11 @@ class AppContainer:
         # execution_events.cursor (SSE Last-Event-ID, ADR 0003). Sinks are
         # never dropped in Phase 1 — /stream resume relies on them.
         bus = InProcessEventBus(persist=executions.append_event)
-        models = DefaultModelProviderFactory(mock_provider=mock_provider)
+        models = DefaultModelProviderFactory(
+            mock_provider=mock_provider,
+            # Env-only for now; the stored-credential backend (S2) composes in.
+            credential_resolver=DefaultCredentialResolver(),
+        )
         strategies = DefaultStrategyRegistry()
         runtime = AgentRuntime(
             strategies=strategies,

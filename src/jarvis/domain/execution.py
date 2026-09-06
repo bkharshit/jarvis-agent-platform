@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from jarvis.domain.auth import Principal
 from jarvis.domain.message import Usage
 
 
@@ -83,6 +84,7 @@ class ExecutionContext:
     agent_id: str
     agent_version_id: str
     tenant_id: str | None = None  # stamped from the principal (S2, ADR 0009 §6)
+    principal: Principal | None = None  # for principal-aware model resolution
     session_id: str | None = None
     user_id: str | None = None
     trace_id: str = ""

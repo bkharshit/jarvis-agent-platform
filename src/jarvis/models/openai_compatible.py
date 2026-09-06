@@ -69,21 +69,23 @@ class OpenAICompatibleProvider:
     def for_ref(cls, ref: ModelRef, **kwargs: Any) -> OpenAICompatibleProvider:
         base_url = ref.base_url or "https://api.openai.com/v1"
         credential = ref.credential_ref
-        if credential is None:
-            return cls(base_url=base_url, **kwargs)
-        if isinstance(credential, EnvCredentialRef):
-            # D18 preserved: lazy env-var indirection — the key is read from
-            # the process environment at request time, never at construction.
-            return cls(base_url=base_url, api_key_env=credential.env_var, **kwargs)
+        if credential is None or isinstance(credential, EnvCredentialRef):
+            # D18 preserved for env refs: lazy env-var indirection — the key
+            # is read from the process environment at request time, never at
+            # construction. (No credential_ref → no auth header, as before.)
+            api_key_env = credential.env_var if credential else None
+            return cls(base_url=base_url, api_key_env=api_key_env, **kwargs)
         # Stored credentials materialize through the CredentialResolver
-        # (ADR 0006) — the factory passes `api_key=` material. Without a
-        # resolver this deployment cannot serve stored refs: fail loudly.
-        raise ModelAuthError(
-            "stored credential reference cannot be resolved — "
-            "stored credentials are not available in this deployment",
-            provider=ref.provider,
-            model=ref.model,
-        )
+        # (ADR 0006) — the factory passes `api_key=` material. Direct
+        # for_ref calls without material fail loudly.
+        if kwargs.get("api_key") is None:
+            raise ModelAuthError(
+                "stored credential reference cannot be resolved — "
+                "stored credentials are not available in this deployment",
+                provider=ref.provider,
+                model=ref.model,
+            )
+        return cls(base_url=base_url, **kwargs)
 
     def _headers(self) -> dict[str, str]:
         api_key = self._api_key

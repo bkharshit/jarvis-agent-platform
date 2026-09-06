@@ -9,7 +9,7 @@ import httpx
 import pytest
 import respx
 
-from jarvis.domain.agent import ModelRef
+from jarvis.domain.agent import EnvCredentialRef, ModelRef
 from jarvis.domain.execution import CancellationToken
 from jarvis.domain.message import Message, ToolCall
 from jarvis.domain.tools import ToolDescriptor
@@ -352,7 +352,9 @@ class TestFactory:
         )
         factory = DefaultModelProviderFactory()
         assert await factory.list_models(
-            "openai_compatible", base_url=BASE, api_key_env="TEST_LIST_KEY"
+            "openai_compatible",
+            base_url=BASE,
+            credential_ref=EnvCredentialRef(type="env", env_var="TEST_LIST_KEY"),
         ) == ["gemma4:31b"]
         assert route.called
 

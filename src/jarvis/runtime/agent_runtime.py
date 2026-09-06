@@ -113,7 +113,7 @@ class AgentRuntime:
         started_at = datetime.now(UTC)
         self._live_tokens[ctx.run_id] = ctx
         sink = sink or await self._bus.get_or_create(ctx.run_id)
-        client = self._models.resolve(agent.model)
+        client = self._models.resolve(agent.model, principal=ctx.principal)
 
         if self._executions is not None:
             # A RUNNING row exists from the first event — /executions/{id}/cancel

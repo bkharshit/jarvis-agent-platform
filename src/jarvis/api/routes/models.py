@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, Query
 from jarvis.api.deps import AppContainer, get_container
 from jarvis.api.errors import ApiError
 from jarvis.api.schemas import ModelListResponse
+from jarvis.domain.agent import EnvCredentialRef
 from jarvis.models.errors import ModelAuthError, ModelConnectionError, ModelError
 
 router = APIRouter(tags=["models"])
@@ -28,6 +29,9 @@ async def list_models(
     base_url: str | None = Query(None),
     api_key_env: str | None = Query(None),
 ) -> ModelListResponse:
+    # `api_key_env` still names an environment variable (D18); stored-credential
+    # listing rides the principal-aware AuthContext in S2's API commit.
+    credential_ref = EnvCredentialRef(type="env", env_var=api_key_env) if api_key_env else None
     # D19 semantics: the environment default fills an absent base_url (mock
     # serves no endpoint, so it reports none).
     effective_base_url = base_url
@@ -35,7 +39,7 @@ async def list_models(
         effective_base_url = container.settings.model_base_url
     try:
         models = await container.models.list_models(
-            provider, base_url=effective_base_url, api_key_env=api_key_env
+            provider, base_url=effective_base_url, credential_ref=credential_ref
         )
     except ModelConnectionError as exc:
         raise ApiError(502, "model_unreachable", exc.message) from exc

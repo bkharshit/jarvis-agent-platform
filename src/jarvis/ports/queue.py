@@ -15,9 +15,17 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from jarvis.domain.auth import Principal
+
 
 class RunQueueMessage(BaseModel):
-    """One unit of work: execute `agent_version_id` with `input`."""
+    """One unit of work: execute `agent_version_id` with `input`.
+
+    The message is the run's trust boundary (ADR 0008): a worker never
+    consults the requester. S2 (ADR 0009 §6): tenant identity rides the
+    message — `tenant_id` scopes the run row and credential resolution;
+    `principal` is the enqueue-time requester for principal-aware model
+    resolution (stored credentials resolve tenant-scoped)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -25,6 +33,8 @@ class RunQueueMessage(BaseModel):
     agent_id: str
     agent_version_id: str
     input: str
+    tenant_id: str | None = None
+    principal: Principal | None = None
     session_id: str | None = None
     user_id: str | None = None
     trace_id: str = ""
