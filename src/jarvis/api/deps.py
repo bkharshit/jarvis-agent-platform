@@ -21,6 +21,7 @@ from jarvis.events.bus import InProcessEventBus
 from jarvis.events.pg_notify import PgEventStream, PgNotifier
 from jarvis.models.credentials import DefaultCredentialResolver
 from jarvis.models.factory import DefaultModelProviderFactory
+from jarvis.models.stored import DatabaseStoredResolver
 from jarvis.persistence.repositories import (
     SqlAgentRepo,
     SqlAuthRepo,
@@ -89,10 +90,13 @@ class AppContainer:
         # execution_events.cursor (SSE Last-Event-ID, ADR 0003). Sinks are
         # never dropped in Phase 1 — /stream resume relies on them.
         bus = InProcessEventBus(persist=executions.append_event)
+        # The stored-credential backend (S2, ADR 0006) composes into the
+        # same resolver seam; env refs keep resolving exactly as before.
         models = DefaultModelProviderFactory(
             mock_provider=mock_provider,
-            # Env-only for now; the stored-credential backend (S2) composes in.
-            credential_resolver=DefaultCredentialResolver(),
+            credential_resolver=DefaultCredentialResolver(
+                stored_resolver=DatabaseStoredResolver(sessionmaker, settings)
+            ),
         )
         strategies = DefaultStrategyRegistry()
         runtime = AgentRuntime(

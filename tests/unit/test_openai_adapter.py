@@ -321,7 +321,7 @@ class TestFactory:
         from jarvis.models.mock import MockModelProvider
 
         factory = DefaultModelProviderFactory()
-        client = factory.resolve(ModelRef(provider="mock", model="m1"))
+        client = await factory.resolve(ModelRef(provider="mock", model="m1"))
         result = await client.generate(
             ModelRequest(model="", messages=[Message(role="user", content="hi")])
         )
@@ -332,7 +332,7 @@ class TestFactory:
         from jarvis.models.factory import DefaultModelProviderFactory
 
         factory = DefaultModelProviderFactory()
-        client = factory.resolve(
+        client = await factory.resolve(
             ModelRef(provider="openai_compatible", model="gpt-x", base_url=BASE)
         )
         assert client.ref.model == "gpt-x"

@@ -34,7 +34,7 @@ def _stub_container(
     caps = capabilities or ModelCapabilities()
 
     class _StubFactory:
-        def resolve(self, ref: object) -> SimpleNamespace:
+        async def resolve(self, ref: object) -> SimpleNamespace:
             return SimpleNamespace(capabilities=caps)
 
     return SimpleNamespace(
@@ -45,21 +45,21 @@ def _stub_container(
     )
 
 
-def test_all_twelve_sections_present() -> None:
-    response = build_capabilities(_stub_container(strategies=["react"], builtins=[]))
+async def test_all_twelve_sections_present() -> None:
+    response = await build_capabilities(_stub_container(strategies=["react"], builtins=[]))
     assert set(response.sections) == EXPECTED_SECTIONS
 
 
-def test_every_disabled_section_names_its_stage() -> None:
-    response = build_capabilities(_stub_container(strategies=[], builtins=[]))
+async def test_every_disabled_section_names_its_stage() -> None:
+    response = await build_capabilities(_stub_container(strategies=[], builtins=[]))
     for key, section in response.sections.items():
         if not section.enabled:
             assert section.stage, f"disabled section {key!r} must name its stage"
             assert section.summary, f"disabled section {key!r} must carry a summary"
 
 
-def test_agents_detail_mirrors_strategy_registry() -> None:
-    response = build_capabilities(
+async def test_agents_detail_mirrors_strategy_registry() -> None:
+    response = await build_capabilities(
         _stub_container(strategies=["function_calling", "react"], builtins=[])
     )
     detail = response.sections["agents"].detail
@@ -67,20 +67,20 @@ def test_agents_detail_mirrors_strategy_registry() -> None:
     assert detail["strategies"] == ["function_calling", "react"]
 
 
-def test_tools_detail_mirrors_tool_registry() -> None:
+async def test_tools_detail_mirrors_tool_registry() -> None:
     descriptor = ToolDescriptor(name="calculator", description="Evaluate arithmetic", parameters={})
-    response = build_capabilities(_stub_container(strategies=[], builtins=[descriptor]))
+    response = await build_capabilities(_stub_container(strategies=[], builtins=[descriptor]))
     detail = response.sections["tools"].detail
     assert detail is not None
     assert detail["builtins"] == [descriptor.model_dump()]
     assert detail["mcp"] == {"enabled": False, "stage": "S4"}
 
 
-def test_models_detail_mirrors_providers_and_settings() -> None:
+async def test_models_detail_mirrors_providers_and_settings() -> None:
     capabilities = ModelCapabilities(
         streaming=True, function_calling=False, structured_output="json_mode"
     )
-    response = build_capabilities(
+    response = await build_capabilities(
         _stub_container(strategies=[], builtins=[], capabilities=capabilities)
     )
     detail = response.sections["models"].detail

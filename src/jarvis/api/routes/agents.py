@@ -131,7 +131,12 @@ async def update_agent(
     payload = req.model_dump(exclude_unset=True)
     if not payload:
         return await _detail(auth, definition)
-    updated = definition.model_copy(update={**payload, "updated_at": datetime.now(UTC)})
+    # Rebuild through model_validate: model_dump deep-dumps nested models
+    # (model/strategy/memory → dicts), and model_copy does not re-validate —
+    # the updated definition must hold typed fields, not raw dicts.
+    updated = AgentDefinition.model_validate(
+        {**definition.model_dump(), **payload, "updated_at": datetime.now(UTC)}
+    )
     try:
         version = await auth.agents.update_and_publish(updated)
     except IntegrityError:

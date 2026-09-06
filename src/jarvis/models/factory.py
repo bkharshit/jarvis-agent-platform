@@ -39,13 +39,17 @@ class DefaultModelProviderFactory:
         self._extra = dict(extra_providers or {})
         self._credentials = credential_resolver or DefaultCredentialResolver()
 
-    def resolve(self, ref: ModelRef, *, principal: Principal | None = None) -> BoundModelClient:
+    async def resolve(
+        self, ref: ModelRef, *, principal: Principal | None = None
+    ) -> BoundModelClient:
+        # Async: stored references resolve through the DB-backed credential
+        # backend (S2, ADR 0009 §7) — resolution is IO, so the seam is too.
         if ref.provider == "mock":
             provider: Any = self._mock or MockModelProvider()
         elif ref.provider in self._extra:
             provider = self._extra[ref.provider]
         elif isinstance(ref.credential_ref, StoredCredentialRef):
-            provider = self._resolve_with_material(ref, ref.credential_ref, principal)
+            provider = await self._resolve_with_material(ref, ref.credential_ref, principal)
         elif ref.provider == "openai_compatible" or ref.base_url:
             provider = OpenAICompatibleProvider.for_ref(ref, api_key=self._api_key_override)
         else:
@@ -56,7 +60,7 @@ class DefaultModelProviderFactory:
             )
         return BoundModelClient(provider, ref)
 
-    def _resolve_with_material(
+    async def _resolve_with_material(
         self,
         ref: ModelRef,
         credential: StoredCredentialRef,
@@ -72,7 +76,7 @@ class DefaultModelProviderFactory:
                 model=ref.model,
             )
         try:
-            resolved = self._credentials.resolve(principal, credential)
+            resolved = await self._credentials.resolve(principal, credential)
         except CredentialError as exc:
             raise ModelAuthError(exc.message, provider=ref.provider, model=ref.model) from exc
         if not isinstance(resolved, ResolvedMaterial):
@@ -107,7 +111,7 @@ class DefaultModelProviderFactory:
             api_key_env = None
             if credential_ref is not None:
                 try:
-                    resolved = self._credentials.resolve(principal, credential_ref)
+                    resolved = await self._credentials.resolve(principal, credential_ref)
                 except CredentialError as exc:
                     raise ModelAuthError(exc.message, provider=provider) from exc
                 if isinstance(resolved, ResolvedMaterial):

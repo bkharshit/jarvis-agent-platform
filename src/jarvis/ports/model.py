@@ -67,7 +67,9 @@ class ModelProviderFactory(Protocol):
     CredentialResolver; `principal` threads tenant context through the
     resolve path — stored credentials resolve tenant-scoped)."""
 
-    def resolve(self, ref: ModelRef, *, principal: Principal | None = None) -> ModelClient: ...
+    async def resolve(
+        self, ref: ModelRef, *, principal: Principal | None = None
+    ) -> ModelClient: ...
 
     async def list_models(
         self,

@@ -137,6 +137,102 @@ class WhoamiResponse(_Model):
     role: str | None = None
 
 
+class MemberCreate(_Model):
+    """POST /members. `password` is optional — a keys-only member carries no
+    password hash and cannot log in until one is set."""
+
+    email: str
+    password: str | None = None
+    display_name: str = ""
+    role: str = "member"
+
+
+class MemberPatch(_Model):
+    display_name: str | None = None
+    role: str | None = None
+
+
+class MemberOut(_Model):
+    """A member of the tenant — deliberately no password_hash field; the
+    scrypt string never crosses the API."""
+
+    id: str
+    tenant_id: str
+    email: str
+    display_name: str = ""
+    role: str
+    created_at: datetime | None = None
+
+
+class MemberList(_Model):
+    items: list[MemberOut]
+
+
+class ApiKeyCreate(_Model):
+    name: str = Field(min_length=1)
+
+
+class ApiKeyOut(_Model):
+    """Metadata only — no plaintext, no hash; `key_prefix` is display form."""
+
+    id: str
+    tenant_id: str
+    user_id: str
+    name: str
+    key_prefix: str
+    created_at: datetime | None = None
+    last_used_at: datetime | None = None
+    revoked_at: datetime | None = None
+
+
+class ApiKeyList(_Model):
+    items: list[ApiKeyOut]
+
+
+class ApiKeyCreated(_Model):
+    """Create-time response: the ONLY response that ever carries the
+    plaintext key (`plaintext`), alongside its stored metadata."""
+
+    id: str
+    name: str
+    key_prefix: str
+    plaintext: str
+    created_at: datetime | None = None
+
+
+class CredentialCreate(_Model):
+    """POST /credentials — `secret` is the BYOK key material. It is
+    encrypted server-side and never stored or returned in plaintext
+    (ADR 0006 §7)."""
+
+    name: str = Field(min_length=1)
+    provider: str = Field(min_length=1)
+    secret: str = Field(min_length=1)
+
+
+class CredentialPatch(_Model):
+    name: str | None = None
+    secret: str | None = None
+
+
+class CredentialOut(_Model):
+    """Metadata only — NO ciphertext, NO secret. The AES-GCM envelope never
+    crosses the API (ADR 0006 §7)."""
+
+    id: str
+    tenant_id: str
+    name: str
+    provider: str
+    created_by: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    revoked_at: datetime | None = None
+
+
+class CredentialList(_Model):
+    items: list[CredentialOut]
+
+
 class SectionCapability(_Model):
     """One IA section's enablement fact (F1). Disabled sections always carry
     the `stage` that will enable them; `detail` carries derived facts

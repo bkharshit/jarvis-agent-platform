@@ -24,9 +24,16 @@ BASE = "http://localhost:9999/v1"
 def _stub_container(settings: Settings | None = None) -> SimpleNamespace:
     from jarvis.models.factory import DefaultModelProviderFactory
 
+    # /models only touches `settings`, `models`, and the anonymous Principal;
+    # the AuthContext build reads the repo attributes (never used on this
+    # route), so they exist as None placeholders.
     return SimpleNamespace(
         settings=settings or Settings(),
         models=DefaultModelProviderFactory(),
+        agents=None,
+        executions=None,
+        conversations=None,
+        auth=None,
     )
 
 

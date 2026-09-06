@@ -21,17 +21,17 @@ from jarvis.ports.credential import (
 
 
 class StoredResolver(Protocol):
-    """The stored-credential backend (lands with the credentials table):
+    """The stored-credential backend (the credentials table, S2):
     tenant-scoped by contract — it resolves only credentials owned by
-    `principal.tenant_id`."""
+    `principal.tenant_id`. Async: resolution reads the credential row."""
 
-    def resolve(self, principal: Principal, ref: StoredCredentialRef) -> ResolvedMaterial: ...
+    async def resolve(self, principal: Principal, ref: StoredCredentialRef) -> ResolvedMaterial: ...
 
 
 class EnvCredentialResolver:
     """Self-hosted default: env references only, no storage anywhere."""
 
-    def resolve(
+    async def resolve(
         self, principal: Principal | None, ref: EnvCredentialRef | StoredCredentialRef
     ) -> ResolvedCredential:
         if isinstance(ref, EnvCredentialRef):
@@ -49,7 +49,7 @@ class DefaultCredentialResolver:
         # The stored backend composes in with the credentials table (S2).
         self._stored = stored_resolver
 
-    def resolve(
+    async def resolve(
         self, principal: Principal | None, ref: EnvCredentialRef | StoredCredentialRef
     ) -> ResolvedCredential:
         if isinstance(ref, EnvCredentialRef):
@@ -61,7 +61,7 @@ class DefaultCredentialResolver:
                 "a principal is required to resolve a stored credential — "
                 "a credential id alone is never sufficient authorization"
             )
-        return self._stored.resolve(principal, ref)
+        return await self._stored.resolve(principal, ref)
 
 
 __all__ = ["DefaultCredentialResolver", "EnvCredentialResolver", "StoredResolver"]

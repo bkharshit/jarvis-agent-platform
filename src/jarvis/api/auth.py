@@ -26,6 +26,7 @@ from jarvis.api.deps import AppContainer, get_container
 from jarvis.api.errors import ApiError
 from jarvis.domain.auth import Principal, UserAccount
 from jarvis.persistence.models import DEFAULT_TENANT
+from jarvis.persistence.repositories import SqlAuthRepo
 from jarvis.persistence.scoped import (
     TenantScopedAgents,
     TenantScopedConversations,
@@ -44,13 +45,16 @@ ContainerDep = Depends(get_container)
 @dataclass
 class AuthContext:
     """The per-request identity bundle routes consume instead of
-    `container.*` for tenant-owned data."""
+    `container.*` for tenant-owned data. `repo` is the raw auth repo — every
+    user/api-key/credential call on it takes the principal's tenant_id
+    explicitly, so scoping stays visible at the call site."""
 
     principal: Principal
     user: UserAccount | None  # None for the anonymous principal
     agents: TenantScopedAgents
     executions: TenantScopedExecutions
     conversations: TenantScopedConversations
+    repo: SqlAuthRepo
 
     @classmethod
     def build(
@@ -65,6 +69,7 @@ class AuthContext:
             agents=TenantScopedAgents(container.agents, principal.tenant_id),
             executions=TenantScopedExecutions(container.executions, principal.tenant_id),
             conversations=TenantScopedConversations(container.conversations, principal.tenant_id),
+            repo=container.auth,
         )
 
 

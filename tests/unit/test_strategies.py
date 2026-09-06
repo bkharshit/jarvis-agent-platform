@@ -24,8 +24,8 @@ def _ctx(run_id="r1", **kw) -> ExecutionContext:
     return ExecutionContext(run_id=run_id, agent_id="a1", agent_version_id="v1", **kw)
 
 
-def _client(provider) -> object:
-    return DefaultModelProviderFactory(mock_provider=provider).resolve(
+async def _client(provider) -> object:
+    return await DefaultModelProviderFactory(mock_provider=provider).resolve(
         ModelRef(provider="mock", model="mock-1")
     )
 
@@ -38,7 +38,7 @@ class TestFunctionCalling:
         strategy = FunctionCallingStrategy()
         sink = InProcessEventSink("r1")
         step = await strategy.step(
-            _ctx(), [Message(role="user", content="x")], _client(provider), TOOLS, sink
+            _ctx(), [Message(role="user", content="x")], await _client(provider), TOOLS, sink
         )
         assert step.kind == "tool_calls"
         assert step.tool_calls[0].name == "calculator"
@@ -48,7 +48,7 @@ class TestFunctionCalling:
         strategy = FunctionCallingStrategy()
         sink = InProcessEventSink("r1")
         step = await strategy.step(
-            _ctx(), [Message(role="user", content="x")], _client(provider), [], sink
+            _ctx(), [Message(role="user", content="x")], await _client(provider), [], sink
         )
         assert step.kind == "finish"
         assert step.assistant_message.text == "All done"
@@ -62,7 +62,7 @@ class TestFunctionCalling:
         await strategy.step(
             ctx,
             [Message(role="user", content="x")],
-            _client(provider),
+            await _client(provider),
             [],
             InProcessEventSink("r1"),
         )
@@ -79,7 +79,7 @@ class TestFunctionCalling:
         strategy = FunctionCallingStrategy()
         sink = InProcessEventSink("r1")
         step = await strategy.step(
-            _ctx(), [Message(role="user", content="x")], _client(provider), [], sink
+            _ctx(), [Message(role="user", content="x")], await _client(provider), [], sink
         )
         assert step.kind == "finish"
         attempts = [e.attempt for e in sink.events if e.type == "model.invocation.started"]
@@ -97,7 +97,7 @@ class TestFunctionCalling:
             await strategy.step(
                 _ctx(),
                 [Message(role="user", content="x")],
-                _client(provider),
+                await _client(provider),
                 [],
                 InProcessEventSink("r1"),
             )
@@ -114,7 +114,7 @@ class TestFunctionCalling:
             await strategy.step(
                 _ctx(),
                 [Message(role="user", content="x")],
-                _client(provider),
+                await _client(provider),
                 [],
                 InProcessEventSink("r1"),
             )
@@ -143,7 +143,7 @@ class TestFunctionCalling:
         sink = InProcessEventSink("r1")
         ctx = _ctx()
         step = await strategy.step(
-            ctx, [Message(role="user", content="x")], _client(provider), TOOLS, sink
+            ctx, [Message(role="user", content="x")], await _client(provider), TOOLS, sink
         )
         assert step.kind == "tool_calls"
         assert step.tool_calls == [ToolCall(id="c1", name="calculator", arguments={"e": 1})]
@@ -161,7 +161,7 @@ class TestFunctionCalling:
         strategy = FunctionCallingStrategy()
         sink = InProcessEventSink("r1")
         step = await strategy.step(
-            _ctx(), [Message(role="user", content="x")], _client(provider), [], sink
+            _ctx(), [Message(role="user", content="x")], await _client(provider), [], sink
         )
         assert step.kind == "finish"
         assert [e.type for e in sink.events] == [
@@ -178,7 +178,7 @@ class TestFunctionCalling:
         await strategy.step(
             ctx,
             [Message(role="user", content="x")],
-            _client(provider),
+            await _client(provider),
             [],
             InProcessEventSink("r1"),
         )
@@ -196,7 +196,7 @@ class TestFunctionCalling:
         await strategy.step(
             ctx,
             [Message(role="user", content="x")],
-            _client(provider),
+            await _client(provider),
             [],
             InProcessEventSink("r1"),
         )
@@ -208,7 +208,7 @@ class TestFunctionCalling:
         await strategy.step(
             _ctx(),
             [Message(role="user", content="x")],
-            _client(provider),
+            await _client(provider),
             [],
             InProcessEventSink("r1"),
         )
@@ -229,7 +229,7 @@ class TestReAct:
         step = await strategy.step(
             _ctx(),
             [Message(role="user", content="x")],
-            _client(provider),
+            await _client(provider),
             TOOLS,
             InProcessEventSink("r1"),
         )
@@ -243,7 +243,7 @@ class TestReAct:
         step = await strategy.step(
             _ctx(),
             [Message(role="user", content="x")],
-            _client(provider),
+            await _client(provider),
             TOOLS,
             InProcessEventSink("r1"),
         )
@@ -255,7 +255,7 @@ class TestReAct:
         step = await strategy.step(
             _ctx(),
             [Message(role="user", content="x")],
-            _client(provider),
+            await _client(provider),
             TOOLS,
             InProcessEventSink("r1"),
         )
@@ -273,7 +273,7 @@ class TestReAct:
         step = await strategy.step(
             _ctx(),
             [Message(role="user", content="x")],
-            _client(provider),
+            await _client(provider),
             TOOLS,
             InProcessEventSink("r1"),
         )
@@ -291,7 +291,7 @@ class TestReAct:
         step = await strategy.step(
             _ctx(),
             [Message(role="user", content="x")],
-            _client(provider),
+            await _client(provider),
             [],
             InProcessEventSink("r1"),
         )

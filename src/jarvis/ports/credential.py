@@ -64,9 +64,13 @@ class CredentialResolver(Protocol):
 
     `principal=None` is valid only for env references (which carry no
     ownership) — stored references require a principal and resolve
-    tenant-scoped, never across tenants."""
+    tenant-scoped, never across tenants. Resolution is async: the stored
+    backend (S2) reads the tenant-scoped credential row from the DB
+    (ADR 0009 §7)."""
 
-    def resolve(self, principal: Principal | None, ref: CredentialRef) -> ResolvedCredential: ...
+    async def resolve(
+        self, principal: Principal | None, ref: CredentialRef
+    ) -> ResolvedCredential: ...
 
 
 __all__ = [

@@ -103,8 +103,12 @@ tenant isolation, and BYOK credentials (ADR 0006) in one stage.
   `ConversationRepo.get_or_create` gains an optional keyword-only
   `tenant_id` (the runtime stamps the conversation's owning tenant from
   `ctx.tenant_id`; `None` keeps the pre-S2 default-tenant behavior —
-  additive, no existing caller breaks). All four are pre-declared here per
-  CLAUDE.md rule 7 — no silent contract drift.
+  additive, no existing caller breaks). One further, deliberate signature
+  change: `ModelProviderFactory.resolve` and `CredentialResolver.resolve`
+  become **async** — stored credentials resolve through the database
+  (SqlAuthRepo), so the seam is IO and must await; env references are
+  unchanged in behavior (still lazy D18 indirection, no IO). All are
+  pre-declared here per CLAUDE.md rule 7 — no silent contract drift.
 - Migration 0004 adds `tenants`, `users`, `sessions`, `api_keys`,
   `credentials`, and `tenant_id` columns with a default-tenant backfill;
   a follow-up migration rewrites `agent_versions.snapshot` model refs.

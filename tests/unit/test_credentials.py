@@ -1,6 +1,7 @@
 """Credential resolution (S2, ADR 0006): env refs stay lazy (D18), stored
 refs are principal-required and tenant-scoped, and the factory maps
-CredentialError onto the ModelError taxonomy so a run never raises past D5."""
+CredentialError onto the ModelError taxonomy so a run never raises past D5.
+Resolution is async end-to-end (the stored backend reads the DB)."""
 
 from __future__ import annotations
 
@@ -17,53 +18,53 @@ _PRINCIPAL = Principal(tenant_id="t1", user_id="u1", mode="session")
 
 
 class TestEnvCredentialResolver:
-    def test_env_ref_resolves_lazily(self):
-        resolved = EnvCredentialResolver().resolve(
+    async def test_env_ref_resolves_lazily(self):
+        resolved = await EnvCredentialResolver().resolve(
             None, EnvCredentialRef(type="env", env_var="OPENAI_API_KEY")
         )
         assert resolved == ResolvedEnv(type="env", env_var="OPENAI_API_KEY")
 
-    def test_stored_ref_unavailable(self):
+    async def test_stored_ref_unavailable(self):
         with pytest.raises(CredentialError):
-            EnvCredentialResolver().resolve(
+            await EnvCredentialResolver().resolve(
                 _PRINCIPAL, StoredCredentialRef(type="stored", credential_id="c1")
             )
 
 
 class TestDefaultCredentialResolver:
-    def test_env_ref_without_principal(self):
-        resolved = DefaultCredentialResolver().resolve(
+    async def test_env_ref_without_principal(self):
+        resolved = await DefaultCredentialResolver().resolve(
             None, EnvCredentialRef(type="env", env_var="K")
         )
         assert isinstance(resolved, ResolvedEnv)
 
-    def test_stored_ref_without_backend(self):
+    async def test_stored_ref_without_backend(self):
         with pytest.raises(CredentialError):
-            DefaultCredentialResolver().resolve(
+            await DefaultCredentialResolver().resolve(
                 _PRINCIPAL, StoredCredentialRef(type="stored", credential_id="c1")
             )
 
-    def test_stored_ref_requires_principal(self):
+    async def test_stored_ref_requires_principal(self):
         class Stored:
-            def resolve(self, principal, ref):  # pragma: no cover - guards below
+            async def resolve(self, principal, ref):  # pragma: no cover - guards below
                 raise AssertionError("must not be reached without a principal")
 
         with pytest.raises(CredentialError):
-            DefaultCredentialResolver(stored_resolver=Stored()).resolve(
+            await DefaultCredentialResolver(stored_resolver=Stored()).resolve(
                 None, StoredCredentialRef(type="stored", credential_id="c1")
             )
 
-    def test_stored_ref_delegates_to_backend(self):
+    async def test_stored_ref_delegates_to_backend(self):
         seen = {}
 
         class Stored:
-            def resolve(self, principal, ref):
+            async def resolve(self, principal, ref):
                 seen["principal"], seen["ref"] = principal, ref
                 from jarvis.ports.credential import ResolvedMaterial
 
                 return ResolvedMaterial(type="material", value="sk-live")
 
-        resolved = DefaultCredentialResolver(stored_resolver=Stored()).resolve(
+        resolved = await DefaultCredentialResolver(stored_resolver=Stored()).resolve(
             _PRINCIPAL, StoredCredentialRef(type="stored", credential_id="c1")
         )
         assert resolved.value == "sk-live"
@@ -80,46 +81,46 @@ class TestFactoryCredentialThreading:
             credential_ref=credential_ref,
         )
 
-    def test_env_ref_keeps_lazy_env_indirection(self):
+    async def test_env_ref_keeps_lazy_env_indirection(self):
         factory = DefaultModelProviderFactory()
-        client = factory.resolve(self._ref(EnvCredentialRef(type="env", env_var="K1")))
+        client = await factory.resolve(self._ref(EnvCredentialRef(type="env", env_var="K1")))
         assert client._provider._api_key_env == "K1"
         assert client._provider._api_key is None
 
-    def test_stored_ref_without_principal_is_auth_error(self):
+    async def test_stored_ref_without_principal_is_auth_error(self):
         factory = DefaultModelProviderFactory()
         with pytest.raises(ModelAuthError):
-            factory.resolve(self._ref(StoredCredentialRef(type="stored", credential_id="c1")))
+            await factory.resolve(self._ref(StoredCredentialRef(type="stored", credential_id="c1")))
 
-    def test_stored_ref_without_stored_backend_is_auth_error(self):
+    async def test_stored_ref_without_stored_backend_is_auth_error(self):
         factory = DefaultModelProviderFactory()
         with pytest.raises(ModelAuthError):
-            factory.resolve(
+            await factory.resolve(
                 self._ref(StoredCredentialRef(type="stored", credential_id="c1")),
                 principal=_PRINCIPAL,
             )
 
-    def test_stored_ref_materializes_through_resolver(self):
+    async def test_stored_ref_materializes_through_resolver(self):
         from jarvis.ports.credential import ResolvedMaterial
 
         class Stored:
-            def resolve(self, principal, ref):
+            async def resolve(self, principal, ref):
                 return ResolvedMaterial(type="material", value="sk-live")
 
         factory = DefaultModelProviderFactory(
             credential_resolver=DefaultCredentialResolver(stored_resolver=Stored())
         )
-        client = factory.resolve(
+        client = await factory.resolve(
             self._ref(StoredCredentialRef(type="stored", credential_id="c1")),
             principal=_PRINCIPAL,
         )
         # Material lives only inside the per-resolve provider instance.
         assert client._provider._api_key == "sk-live"
 
-    def test_credential_error_maps_to_auth_error(self):
+    async def test_credential_error_maps_to_auth_error(self):
         factory = DefaultModelProviderFactory()  # env-only resolver
         with pytest.raises(ModelAuthError):
-            factory.resolve(
+            await factory.resolve(
                 self._ref(StoredCredentialRef(type="stored", credential_id="c1")),
                 principal=_PRINCIPAL,
             )

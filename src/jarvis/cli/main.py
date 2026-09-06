@@ -208,7 +208,7 @@ def doctor(
                 credential_ref=EnvCredentialRef(type="env", env_var=settings.model_api_key_env),
             )
             try:
-                client = container.models.resolve(ref)
+                client = await container.models.resolve(ref)
                 request = ModelRequest(model=ref.model, messages=[user_message("Reply with: ok")])
                 response = await client.generate(request)
                 model_note = f"[green]ok[/green]: {response.message.text[:80]!r}"

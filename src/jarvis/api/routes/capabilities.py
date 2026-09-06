@@ -9,6 +9,7 @@ envelope), so it can never lie about what exists.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -50,14 +51,14 @@ _SECTION_FLAGS: dict[str, dict[str, Any]] = {
     "observability": {"enabled": False, "stage": "S7", "summary": "Traces and spans"},
     "plugins": {"enabled": False, "stage": "S3", "summary": "Strategy plugins and discovery"},
     "triggers": {"enabled": False, "stage": "S13", "summary": "Cron, webhook, and event rules"},
-    "settings": {"enabled": False, "stage": "S2", "summary": "Auth, tenants, API keys"},
+    "settings": {"enabled": True, "summary": "Auth, tenants, API keys, BYOK credentials"},
 }
 
 
-def _model_providers_detail(container: AppContainer) -> dict[str, Any]:
+async def _model_providers_detail(container: AppContainer) -> dict[str, Any]:
     providers: list[dict[str, Any]] = []
     for name, description in _PROVIDER_DESCRIPTIONS.items():
-        client = container.models.resolve(ModelRef(provider=name, model="capabilities-probe"))
+        client = await container.models.resolve(ModelRef(provider=name, model="capabilities-probe"))
         providers.append(
             {
                 "name": name,
@@ -76,9 +77,25 @@ def _model_providers_detail(container: AppContainer) -> dict[str, Any]:
     }
 
 
-def build_capabilities(container: AppContainer) -> CapabilitiesResponse:
-    """Pure builder — no IO beyond reading registries, so unit tests can pass
-    a stub container."""
+def _settings_detail(container: AppContainer) -> dict[str, Any]:
+    """Auth facts and whether BYOK storage is configured — the env-var NAME
+    is settings, only presence of the key value is reported (never values)."""
+    settings = container.settings
+    return {
+        "auth_mode": settings.auth_mode,
+        "credentials": {
+            "available": bool(
+                settings.credentials_master_key_env
+                and os.environ.get(settings.credentials_master_key_env)
+            ),
+        },
+    }
+
+
+async def build_capabilities(container: AppContainer) -> CapabilitiesResponse:
+    """Builder — the only IO is the provider capability probe (the models
+    factory resolve is async, ADR 0009 §7); unit tests pass a stub
+    container with an async stub factory."""
     sections: dict[str, SectionCapability] = {}
     for key, flags in _SECTION_FLAGS.items():
         detail: dict[str, Any] | None = None
@@ -90,7 +107,9 @@ def build_capabilities(container: AppContainer) -> CapabilitiesResponse:
                 "mcp": {"enabled": False, "stage": "S4"},
             }
         elif key == "models":
-            detail = _model_providers_detail(container)
+            detail = await _model_providers_detail(container)
+        elif key == "settings":
+            detail = _settings_detail(container)
         sections[key] = SectionCapability(detail=detail, **flags)
     return CapabilitiesResponse(sections=sections)
 
@@ -99,7 +118,7 @@ def build_capabilities(container: AppContainer) -> CapabilitiesResponse:
 async def capabilities(
     container: AppContainer = ContainerDep,
 ) -> CapabilitiesResponse:
-    return build_capabilities(container)
+    return await build_capabilities(container)
 
 
 __all__ = ["build_capabilities", "router"]
