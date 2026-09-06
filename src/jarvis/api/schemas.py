@@ -116,6 +116,27 @@ class CancelResult(_Model):
     status: str
 
 
+class LoginRequest(_Model):
+    """Body for /auth/login. Plain string email — validation parity with
+    members invites, no email-validator dependency."""
+
+    email: str
+    password: str = Field(min_length=1)
+
+
+class WhoamiResponse(_Model):
+    """GET /auth/whoami — the acting principal. `mode` mirrors
+    domain.auth.AuthMode; `email`/`display_name` are None/"" for the
+    anonymous principal."""
+
+    tenant_id: str
+    mode: str
+    user_id: str | None = None
+    email: str | None = None
+    display_name: str = ""
+    role: str | None = None
+
+
 class SectionCapability(_Model):
     """One IA section's enablement fact (F1). Disabled sections always carry
     the `stage` that will enable them; `detail` carries derived facts

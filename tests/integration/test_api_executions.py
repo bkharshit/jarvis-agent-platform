@@ -8,6 +8,7 @@ import asyncio
 import pytest
 
 from jarvis.domain.agent import ToolBinding
+from jarvis.domain.auth import Principal
 from jarvis.domain.message import ToolCall
 from jarvis.domain.tools import ToolContext, ToolDescriptor
 from jarvis.tools.base import BaseTool
@@ -48,7 +49,13 @@ async def test_cancel_queued_run_never_reaches_the_runtime(client, container, ag
     assert definition is not None
     version = await container.agents.latest_version(agent.id)
     assert version is not None
-    message = _queue_message(container.settings, definition, version, RunRequest(input="go"))
+    message = _queue_message(
+        container.settings,
+        definition,
+        version,
+        RunRequest(input="go"),
+        Principal(tenant_id="default", mode="anonymous"),
+    )
     await container.executions.create_queued_run(_queued_result(message), message)
 
     cancel = await client.post(f"/v1/executions/{message.run_id}/cancel")

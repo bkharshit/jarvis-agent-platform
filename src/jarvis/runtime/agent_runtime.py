@@ -125,6 +125,7 @@ class AgentRuntime:
                     status="running",
                     input=input,
                     agent_version_id=ctx.agent_version_id,
+                    tenant_id=ctx.tenant_id,
                     session_id=ctx.session_id,
                     trace_id=ctx.trace_id,
                     started_at=started_at,
@@ -415,7 +416,9 @@ class AgentRuntime:
     ) -> tuple[list[Message], str | None]:
         if not agent.memory.enabled or not ctx.session_id or self._conversations is None:
             return [], None
-        conversation_id = await self._conversations.get_or_create(agent.id, ctx.session_id)
+        conversation_id = await self._conversations.get_or_create(
+            agent.id, ctx.session_id, tenant_id=ctx.tenant_id
+        )
         history = await self._conversations.history(conversation_id)
         return history, conversation_id
 
@@ -543,6 +546,7 @@ class AgentRuntime:
             status=status,  # type: ignore[arg-type]
             input=result_input,
             agent_version_id=ctx.agent_version_id,
+            tenant_id=ctx.tenant_id,
             session_id=ctx.session_id,
             trace_id=ctx.trace_id,
             final_message=final_message,

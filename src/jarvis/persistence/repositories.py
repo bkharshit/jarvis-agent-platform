@@ -36,6 +36,7 @@ from jarvis.domain.execution import ExecutionStatus, RunResult
 from jarvis.domain.message import Message
 from jarvis.domain.tools import ToolResult
 from jarvis.persistence.models import (
+    DEFAULT_TENANT,
     AgentExecutionRow,
     AgentRow,
     AgentVersionRow,
@@ -72,13 +73,25 @@ def _uuid() -> str:
     return str(uuid4())
 
 
+def _shared_visible(
+    column: InstrumentedAttribute[str | None], tenant_id: str
+) -> ColumnElement[bool]:
+    """Rows the tenant may see: its own, or platform-shared (NULL). SQL
+    `IN (t, NULL)` never matches NULL — this must be an explicit OR."""
+    return (column == tenant_id) | column.is_(None)
+
+
 class SqlAgentRepo:
     """Agents with append-only version history (snapshot-vs-reference)."""
 
     def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
         self._sessionmaker = sessionmaker
 
-    async def create(self, definition: AgentDefinition) -> AgentDefinition:
+    async def create(
+        self, definition: AgentDefinition, *, tenant_id: str | None = None
+    ) -> AgentDefinition:
+        """`tenant_id=None` keeps the agent platform-shared (visible to and
+        editable by every tenant) — the pre-S2 behavior."""
         version = AgentVersion(
             id=_uuid(),
             agent_id=definition.id,
@@ -93,35 +106,44 @@ class SqlAgentRepo:
                     name=definition.name,
                     description=definition.description,
                     current_version=1,
+                    tenant_id=tenant_id,
                 )
             )
             session.add(self._version_row(version))
             await session.commit()
         return definition
 
-    async def get(self, agent_id: str) -> AgentDefinition | None:
+    async def get(self, agent_id: str, *, tenant_id: str | None = None) -> AgentDefinition | None:
         async with self._sessionmaker() as session:
-            row = await session.get(AgentRow, agent_id)
+            row = await self._visible_row(session, agent_id, tenant_id)
             if row is None:
                 return None
             snapshot = await self._snapshot_for(session, row)
         return AgentDefinition.model_validate(snapshot)
 
-    async def get_by_name(self, name: str) -> AgentDefinition | None:
+    async def get_by_name(
+        self, name: str, *, tenant_id: str | None = None
+    ) -> AgentDefinition | None:
         async with self._sessionmaker() as session:
-            row = (
-                await session.execute(select(AgentRow).where(AgentRow.name == name))
-            ).scalar_one_or_none()
+            query = select(AgentRow).where(AgentRow.name == name)
+            if tenant_id is not None:
+                query = query.where(_shared_visible(AgentRow.tenant_id, tenant_id))
+            row = (await session.execute(query)).scalar_one_or_none()
             if row is None:
                 return None
             snapshot = await self._snapshot_for(session, row)
         return AgentDefinition.model_validate(snapshot)
 
-    async def list_agents(self, limit: int = 50, offset: int = 0) -> list[AgentDefinition]:
+    async def list_agents(
+        self, limit: int = 50, offset: int = 0, *, tenant_id: str | None = None
+    ) -> list[AgentDefinition]:
         async with self._sessionmaker() as session:
+            query = select(AgentRow)
+            if tenant_id is not None:
+                query = query.where(_shared_visible(AgentRow.tenant_id, tenant_id))
             rows = (
                 await session.execute(
-                    select(AgentRow).order_by(AgentRow.created_at).limit(limit).offset(offset)
+                    query.order_by(AgentRow.created_at).limit(limit).offset(offset)
                 )
             ).scalars()
             agents = []
@@ -131,11 +153,11 @@ class SqlAgentRepo:
         return agents
 
     async def update_and_publish(
-        self, definition: AgentDefinition, label: str = ""
+        self, definition: AgentDefinition, label: str = "", *, tenant_id: str | None = None
     ) -> AgentVersion:
         """Update mutable fields and append a new immutable snapshot."""
         async with self._sessionmaker() as session:
-            row = await session.get(AgentRow, definition.id)
+            row = await self._visible_row(session, definition.id, tenant_id)
             if row is None:
                 raise LookupError(f"agent {definition.id} not found")
             next_version = row.current_version + 1
@@ -153,16 +175,11 @@ class SqlAgentRepo:
             await session.commit()
         return version
 
-    async def get_version(self, agent_id: str, version: int) -> AgentVersion | None:
+    async def get_version(
+        self, agent_id: str, version: int, *, tenant_id: str | None = None
+    ) -> AgentVersion | None:
         async with self._sessionmaker() as session:
-            row = (
-                await session.execute(
-                    select(AgentVersionRow).where(
-                        AgentVersionRow.agent_id == agent_id,
-                        AgentVersionRow.version == version,
-                    )
-                )
-            ).scalar_one_or_none()
+            row = await self._visible_version_row(session, agent_id, version, tenant_id)
             if row is None:
                 return None
             return self._load_version(row)
@@ -176,37 +193,44 @@ class SqlAgentRepo:
                 return None
             return self._load_version(row)
 
-    async def latest_version(self, agent_id: str) -> AgentVersion | None:
+    async def latest_version(
+        self, agent_id: str, *, tenant_id: str | None = None
+    ) -> AgentVersion | None:
         async with self._sessionmaker() as session:
+            query = (
+                select(AgentVersionRow)
+                .join(AgentRow, AgentRow.id == AgentVersionRow.agent_id)
+                .where(AgentVersionRow.agent_id == agent_id)
+            )
+            if tenant_id is not None:
+                query = query.where(_shared_visible(AgentRow.tenant_id, tenant_id))
             row = (
-                await session.execute(
-                    select(AgentVersionRow)
-                    .where(AgentVersionRow.agent_id == agent_id)
-                    .order_by(AgentVersionRow.version.desc())
-                    .limit(1)
-                )
+                await session.execute(query.order_by(AgentVersionRow.version.desc()).limit(1))
             ).scalar_one_or_none()
             if row is None:
                 return None
             return self._load_version(row)
 
-    async def list_versions(self, agent_id: str) -> list[AgentVersion]:
+    async def list_versions(
+        self, agent_id: str, *, tenant_id: str | None = None
+    ) -> list[AgentVersion]:
         async with self._sessionmaker() as session:
-            rows = (
-                await session.execute(
-                    select(AgentVersionRow)
-                    .where(AgentVersionRow.agent_id == agent_id)
-                    .order_by(AgentVersionRow.version)
-                )
-            ).scalars()
+            query = (
+                select(AgentVersionRow)
+                .join(AgentRow, AgentRow.id == AgentVersionRow.agent_id)
+                .where(AgentVersionRow.agent_id == agent_id)
+            )
+            if tenant_id is not None:
+                query = query.where(_shared_visible(AgentRow.tenant_id, tenant_id))
+            rows = (await session.execute(query.order_by(AgentVersionRow.version))).scalars()
             return [self._load_version(row) for row in rows]
 
-    async def delete(self, agent_id: str) -> bool:
+    async def delete(self, agent_id: str, *, tenant_id: str | None = None) -> bool:
         """False if the agent has executions (caller maps to 409)."""
         if await self.has_executions(agent_id):
             return False
         async with self._sessionmaker() as session:
-            row = await session.get(AgentRow, agent_id)
+            row = await self._visible_row(session, agent_id, tenant_id)
             if row is None:
                 return False
             await session.delete(row)  # versions cascade
@@ -225,6 +249,32 @@ class SqlAgentRepo:
         return row is not None
 
     # --- helpers -----------------------------------------------------------
+
+    @staticmethod
+    async def _visible_row(
+        session: AsyncSession, agent_id: str, tenant_id: str | None
+    ) -> AgentRow | None:
+        """The agent row if visible to the tenant: owned, platform-shared
+        (NULL), or — unscoped — simply existing."""
+        if tenant_id is None:
+            return await session.get(AgentRow, agent_id)
+        query = select(AgentRow).where(
+            AgentRow.id == agent_id, _shared_visible(AgentRow.tenant_id, tenant_id)
+        )
+        return (await session.execute(query)).scalar_one_or_none()
+
+    @staticmethod
+    async def _visible_version_row(
+        session: AsyncSession, agent_id: str, version: int, tenant_id: str | None
+    ) -> AgentVersionRow | None:
+        query = (
+            select(AgentVersionRow)
+            .join(AgentRow, AgentRow.id == AgentVersionRow.agent_id)
+            .where(AgentVersionRow.agent_id == agent_id, AgentVersionRow.version == version)
+        )
+        if tenant_id is not None:
+            query = query.where(_shared_visible(AgentRow.tenant_id, tenant_id))
+        return (await session.execute(query)).scalar_one_or_none()
 
     @staticmethod
     async def _snapshot_for(session: AsyncSession, row: AgentRow) -> dict[str, Any]:
@@ -337,6 +387,7 @@ class SqlExecutionRepo:
                     id=row.id,
                     agent_id=row.agent_id,
                     agent_version_id=row.agent_version_id,
+                    tenant_id=row.tenant_id,
                     session_id=row.session_id,
                     user_id=row.user_id,
                     trace_id=row.trace_id,
@@ -377,9 +428,19 @@ class SqlExecutionRepo:
                 row.event_cursor = result.event_cursor
             await session.commit()
 
-    async def get(self, run_id: str) -> RunResult | None:
+    async def get(self, run_id: str, *, tenant_id: str | None = None) -> RunResult | None:
         async with self._sessionmaker() as session:
-            row = await session.get(AgentExecutionRow, run_id)
+            if tenant_id is None:
+                row = await session.get(AgentExecutionRow, run_id)
+            else:
+                row = (
+                    await session.execute(
+                        select(AgentExecutionRow).where(
+                            AgentExecutionRow.id == run_id,
+                            AgentExecutionRow.tenant_id == tenant_id,
+                        )
+                    )
+                ).scalar_one_or_none()
             if row is None:
                 return None
             return self._load_run(row)
@@ -391,8 +452,12 @@ class SqlExecutionRepo:
         session_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        *,
+        tenant_id: str | None = None,
     ) -> list[RunResult]:
         query = select(AgentExecutionRow)
+        if tenant_id is not None:
+            query = query.where(AgentExecutionRow.tenant_id == tenant_id)
         if agent_id is not None:
             query = query.where(AgentExecutionRow.agent_id == agent_id)
         if status is not None:
@@ -534,6 +599,9 @@ class SqlExecutionRepo:
             id=result.run_id,
             agent_id=result.agent_id,
             agent_version_id=result.agent_version_id,
+            # NULL would fall back to the column's 'default' — stamp the
+            # principal's tenant explicitly (S2).
+            tenant_id=result.tenant_id or DEFAULT_TENANT,
             session_id=result.session_id,
             trace_id=result.trace_id,
             status=result.status,
@@ -558,6 +626,7 @@ class SqlExecutionRepo:
             status=cast(ExecutionStatus, row.status),
             input=row.input,
             agent_version_id=row.agent_version_id,
+            tenant_id=row.tenant_id,
             session_id=row.session_id,
             trace_id=row.trace_id,
             final_message=row.output,
@@ -600,34 +669,43 @@ class SqlConversationRepo:
     def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
         self._sessionmaker = sessionmaker
 
-    async def get_or_create(self, agent_id: str, session_id: str) -> str:
+    async def get_or_create(
+        self, agent_id: str, session_id: str, *, tenant_id: str | None = None
+    ) -> str:
+        """`tenant_id=None` stamps the default tenant — the pre-S2 behavior;
+        the runtime passes `ctx.tenant_id` once the worker threads it."""
+        effective = tenant_id or DEFAULT_TENANT
         async with self._sessionmaker() as session:
             row = (
                 await session.execute(
                     select(ConversationRow).where(
                         ConversationRow.agent_id == agent_id,
                         ConversationRow.session_id == session_id,
+                        ConversationRow.tenant_id == effective,
                     )
                 )
             ).scalar_one_or_none()
             if row is not None:
                 return row.id
-            row = ConversationRow(id=_uuid(), agent_id=agent_id, session_id=session_id)
+            row = ConversationRow(
+                id=_uuid(), agent_id=agent_id, session_id=session_id, tenant_id=effective
+            )
             session.add(row)
             await session.commit()
             return row.id
 
-    async def find(self, agent_id: str, session_id: str) -> str | None:
+    async def find(
+        self, agent_id: str, session_id: str, *, tenant_id: str | None = None
+    ) -> str | None:
         """Look up without creating — the read-side pair of get_or_create."""
         async with self._sessionmaker() as session:
-            return (
-                await session.execute(
-                    select(ConversationRow.id).where(
-                        ConversationRow.agent_id == agent_id,
-                        ConversationRow.session_id == session_id,
-                    )
-                )
-            ).scalar_one_or_none()
+            query = select(ConversationRow.id).where(
+                ConversationRow.agent_id == agent_id,
+                ConversationRow.session_id == session_id,
+            )
+            if tenant_id is not None:
+                query = query.where(ConversationRow.tenant_id == tenant_id)
+            return (await session.execute(query)).scalar_one_or_none()
 
     async def append_message(
         self, conversation_id: str, message: Message, run_id: str | None = None
@@ -655,8 +733,20 @@ class SqlConversationRepo:
             await session.commit()
         return next_seq
 
-    async def history(self, conversation_id: str, limit: int | None = None) -> list[Message]:
+    async def history(
+        self, conversation_id: str, limit: int | None = None, *, tenant_id: str | None = None
+    ) -> list[Message]:
         query = select(MessageRow).where(MessageRow.conversation_id == conversation_id)
+        if tenant_id is not None:
+            # the conversation must belong to the tenant (parent-row check)
+            query = query.where(
+                MessageRow.conversation_id.in_(
+                    select(ConversationRow.id).where(
+                        ConversationRow.id == conversation_id,
+                        ConversationRow.tenant_id == tenant_id,
+                    )
+                )
+            )
         if limit is not None:
             # window from the END of the conversation (most recent N)
             query = query.order_by(MessageRow.sequence.desc()).limit(limit)

@@ -84,7 +84,12 @@ class ExecutionRepo(Protocol):
 
 
 class ConversationRepo(Protocol):
-    async def get_or_create(self, agent_id: str, session_id: str) -> str: ...
+    async def get_or_create(
+        self, agent_id: str, session_id: str, *, tenant_id: str | None = None
+    ) -> str:
+        """`tenant_id` stamps the owning tenant (S2, ADR 0009); None keeps
+        the pre-S2 default-tenant behavior."""
+        ...
 
     async def find(self, agent_id: str, session_id: str) -> str | None:
         """Look up without creating — the read-side pair of get_or_create."""

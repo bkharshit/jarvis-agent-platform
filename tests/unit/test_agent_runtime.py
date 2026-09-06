@@ -67,7 +67,7 @@ class _RecordingRepo:
         self.tool_executions.append((run_id, result))
 
     # ConversationRepo
-    async def get_or_create(self, agent_id, session_id):
+    async def get_or_create(self, agent_id, session_id, *, tenant_id=None):
         return f"{agent_id}:{session_id}"
 
     async def append_message(self, conversation_id, message, run_id=None):

@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import IntegrityError
 
+from jarvis.api.auth import AuthContext, AuthDep
 from jarvis.api.deps import AppContainer, get_container
 from jarvis.api.errors import ApiError
 from jarvis.api.schemas import (
@@ -29,8 +30,10 @@ from jarvis.api.schemas import (
 from jarvis.api.sse import SSE_HEADERS, frame, parse_last_event_id
 from jarvis.config import Settings
 from jarvis.domain.agent import AgentDefinition, AgentVersion
+from jarvis.domain.auth import Principal
 from jarvis.domain.events import is_terminal
 from jarvis.domain.execution import TERMINAL_STATUSES, RunResult
+from jarvis.persistence.scoped import TenantScopedExecutions
 from jarvis.ports.queue import RunQueueMessage
 from jarvis.runtime.limits import deadline_from_now
 
@@ -41,22 +44,22 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 ContainerDep = Depends(get_container)
 
 
-async def _require_definition(container: AppContainer, agent_id: str) -> AgentDefinition:
-    definition = await container.agents.get(agent_id)
+async def _require_definition(auth: AuthContext, agent_id: str) -> AgentDefinition:
+    definition = await auth.agents.get(agent_id)
     if definition is None:
         raise ApiError(404, "not_found", f"agent {agent_id!r} not found")
     return definition
 
 
-async def _require_version(container: AppContainer, agent_id: str) -> AgentVersion:
-    version = await container.agents.latest_version(agent_id)
+async def _require_version(auth: AuthContext, agent_id: str) -> AgentVersion:
+    version = await auth.agents.latest_version(agent_id)
     if version is None:
         raise ApiError(404, "not_found", f"agent {agent_id!r} has no published version")
     return version
 
 
-async def _detail(container: AppContainer, definition: AgentDefinition) -> AgentDetail:
-    versions = await container.agents.list_versions(definition.id)
+async def _detail(auth: AuthContext, definition: AgentDefinition) -> AgentDetail:
+    versions = await auth.agents.list_versions(definition.id)
     return AgentDetail(
         definition=definition,
         versions=[
@@ -88,37 +91,33 @@ def _definition_from_create(req: AgentUpsertRequest, agent_id: str) -> AgentDefi
 
 
 @router.post("", status_code=201)
-async def create_agent(
-    req: AgentUpsertRequest, container: AppContainer = ContainerDep
-) -> AgentDetail:
+async def create_agent(req: AgentUpsertRequest, auth: AuthContext = AuthDep) -> AgentDetail:
     definition = _definition_from_create(req, agent_id=str(uuid4()))
     try:
-        await container.agents.create(definition)
+        await auth.agents.create(definition)
     except IntegrityError:
         raise ApiError(409, "conflict", f"agent name {definition.name!r} already exists") from None
-    return await _detail(container, definition)
+    return await _detail(auth, definition)
 
 
 @router.get("")
-async def list_agents(
-    limit: int = 50, offset: int = 0, container: AppContainer = ContainerDep
-) -> AgentList:
-    items = await container.agents.list_agents(limit=limit, offset=offset)
+async def list_agents(limit: int = 50, offset: int = 0, auth: AuthContext = AuthDep) -> AgentList:
+    items = await auth.agents.list_agents(limit=limit, offset=offset)
     return AgentList(items=items)
 
 
 @router.get("/{agent_id}")
-async def get_agent(agent_id: str, container: AppContainer = ContainerDep) -> AgentDetail:
-    definition = await _require_definition(container, agent_id)
-    return await _detail(container, definition)
+async def get_agent(agent_id: str, auth: AuthContext = AuthDep) -> AgentDetail:
+    definition = await _require_definition(auth, agent_id)
+    return await _detail(auth, definition)
 
 
 @router.get("/{agent_id}/versions/{version}")
 async def get_agent_version(
-    agent_id: str, version: int, container: AppContainer = ContainerDep
+    agent_id: str, version: int, auth: AuthContext = AuthDep
 ) -> AgentVersion:
-    await _require_definition(container, agent_id)
-    snapshot = await container.agents.get_version(agent_id, version)
+    await _require_definition(auth, agent_id)
+    snapshot = await auth.agents.get_version(agent_id, version)
     if snapshot is None:
         raise ApiError(404, "not_found", f"version {version} of agent {agent_id!r} not found")
     return snapshot
@@ -126,24 +125,24 @@ async def get_agent_version(
 
 @router.patch("/{agent_id}")
 async def update_agent(
-    agent_id: str, req: AgentUpsertRequest, container: AppContainer = ContainerDep
+    agent_id: str, req: AgentUpsertRequest, auth: AuthContext = AuthDep
 ) -> AgentDetail:
-    definition = await _require_definition(container, agent_id)
+    definition = await _require_definition(auth, agent_id)
     payload = req.model_dump(exclude_unset=True)
     if not payload:
-        return await _detail(container, definition)
+        return await _detail(auth, definition)
     updated = definition.model_copy(update={**payload, "updated_at": datetime.now(UTC)})
     try:
-        version = await container.agents.update_and_publish(updated)
+        version = await auth.agents.update_and_publish(updated)
     except IntegrityError:
         raise ApiError(409, "conflict", f"agent name {updated.name!r} already exists") from None
-    return await _detail(container, version.snapshot)
+    return await _detail(auth, version.snapshot)
 
 
 @router.delete("/{agent_id}", status_code=204)
-async def delete_agent(agent_id: str, container: AppContainer = ContainerDep) -> None:
-    await _require_definition(container, agent_id)
-    deleted = await container.agents.delete(agent_id)
+async def delete_agent(agent_id: str, auth: AuthContext = AuthDep) -> None:
+    await _require_definition(auth, agent_id)
+    deleted = await auth.agents.delete(agent_id)
     if not deleted:
         raise ApiError(409, "conflict", f"agent {agent_id!r} has executions; delete refused")
 
@@ -152,15 +151,23 @@ async def delete_agent(agent_id: str, container: AppContainer = ContainerDep) ->
 
 
 def _queue_message(
-    settings: Settings, definition: AgentDefinition, version: AgentVersion, req: RunRequest
+    settings: Settings,
+    definition: AgentDefinition,
+    version: AgentVersion,
+    req: RunRequest,
+    principal: Principal,
 ) -> RunQueueMessage:
     """Everything a worker needs to execute this run without consulting the
     requester again; the deadline is absolute so it survives the cross-process
-    hop (ADR 0008 §1)."""
+    hop (ADR 0008 §1). The principal rides along for tenant-scoped model
+    resolution (stored credentials) — the queue is a trust boundary (ADR
+    0008), so workers may trust it."""
     return RunQueueMessage(
         run_id=str(uuid4()),
         agent_id=definition.id,
         agent_version_id=version.id,
+        tenant_id=principal.tenant_id,
+        principal=principal,
         input=req.input,
         session_id=req.session_id,
         user_id=req.user_id,
@@ -179,6 +186,7 @@ def _queued_result(message: RunQueueMessage) -> RunResult:
         status="queued",
         input=message.input,
         agent_version_id=message.agent_version_id,
+        tenant_id=message.tenant_id,
         session_id=message.session_id,
         trace_id=message.trace_id,
     )
@@ -186,32 +194,36 @@ def _queued_result(message: RunQueueMessage) -> RunResult:
 
 @router.post("/{agent_id}/run")
 async def run_agent(
-    agent_id: str, req: RunRequest, container: AppContainer = ContainerDep
+    agent_id: str,
+    req: RunRequest,
+    auth: AuthContext = AuthDep,
+    container: AppContainer = ContainerDep,
 ) -> RunResult:
     """Blocking run — enqueue, then wait for the worker's terminal event.
     The subscribe replays anything the worker already wrote, so there is no
     race between enqueueing and listening."""
-    definition = await _require_definition(container, agent_id)
-    version = await _require_version(container, agent_id)
-    message = _queue_message(container.settings, definition, version, req)
-    await container.executions.create_queued_run(_queued_result(message), message)
+    definition = await _require_definition(auth, agent_id)
+    version = await _require_version(auth, agent_id)
+    message = _queue_message(container.settings, definition, version, req, auth.principal)
+    await auth.executions.create_queued_run(_queued_result(message), message)
     async for _cursor, _event in container.streams.subscribe(message.run_id):
         pass  # the stream ends exactly at the terminal event
-    run = await _await_terminal_row(container, message.run_id)
+    run = await _await_terminal_row(auth.executions, message.run_id)
     if run is None:
         raise ApiError(500, "internal", f"run {message.run_id!r} never reached a terminal state")
     return run
 
 
-async def _await_terminal_row(container: AppContainer, run_id: str) -> RunResult | None:
+async def _await_terminal_row(executions: TenantScopedExecutions, run_id: str) -> RunResult | None:
     """The terminal event lands moments before finish_run — poll the row
-    until it is terminal (bounded; the stream already guaranteed the event)."""
-    run = await container.executions.get(run_id)
+    until it is terminal (bounded; the stream already guaranteed the event).
+    `executions` is the caller's (tenant-scoped) execution view."""
+    run = await executions.get(run_id)
     for _ in range(100):
         if run is not None and run.status in TERMINAL_STATUSES:
             return run
         await asyncio.sleep(0.05)
-        run = await container.executions.get(run_id)
+        run = await executions.get(run_id)
     return None
 
 
@@ -220,6 +232,7 @@ async def stream_agent(
     agent_id: str,
     req: RunRequest,
     request: Request,
+    auth: AuthContext = AuthDep,
     container: AppContainer = ContainerDep,
 ) -> StreamingResponse:
     """SSE run: enqueue, then frame every event the worker writes. Resume with
@@ -232,24 +245,27 @@ async def stream_agent(
         raise ApiError(400, "validation", f"invalid Last-Event-ID: {exc}") from None
 
     if req.run_id is not None:
-        run = await container.executions.get(req.run_id)
+        run = await auth.executions.get(req.run_id)
         if run is None or run.agent_id != agent_id:
             raise ApiError(404, "not_found", f"execution {req.run_id!r} not found")
-        generator = _queue_stream(container, req.run_id, last_cursor)
+        generator = _queue_stream(container, auth.executions, req.run_id, last_cursor)
     else:
-        definition = await _require_definition(container, agent_id)
-        version = await _require_version(container, agent_id)
-        message = _queue_message(container.settings, definition, version, req)
+        definition = await _require_definition(auth, agent_id)
+        version = await _require_version(auth, agent_id)
+        message = _queue_message(container.settings, definition, version, req, auth.principal)
         # Row + message land atomically; subscribe replays anything the
         # worker emitted before we attached.
-        await container.executions.create_queued_run(_queued_result(message), message)
-        generator = _queue_stream(container, message.run_id, last_cursor)
+        await auth.executions.create_queued_run(_queued_result(message), message)
+        generator = _queue_stream(container, auth.executions, message.run_id, last_cursor)
 
     return StreamingResponse(generator, media_type="text/event-stream", headers=SSE_HEADERS)
 
 
 async def _queue_stream(
-    container: AppContainer, run_id: str, last_cursor: int | None
+    container: AppContainer,
+    executions: TenantScopedExecutions,
+    run_id: str,
+    last_cursor: int | None,
 ) -> AsyncIterator[str]:
     """Frame every event; hold the terminal frame back until the run row is
     terminal, so a stream that ends carries the run's final state (the web
@@ -260,7 +276,7 @@ async def _queue_stream(
             last_frame = frame(cursor, event)  # subscribe returns right after
         else:
             yield frame(cursor, event)
-    await _await_terminal_row(container, run_id)  # best effort: finish_run catch-up
+    await _await_terminal_row(executions, run_id)  # best effort: finish_run catch-up
     if last_frame is not None:
         yield last_frame
 

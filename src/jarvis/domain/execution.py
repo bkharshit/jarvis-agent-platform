@@ -113,6 +113,9 @@ class RunResult(_Model):
     status: ExecutionStatus
     input: str = ""
     agent_version_id: str = ""
+    # Owning tenant, stamped from the principal at enqueue time and carried
+    # through the worker's terminal writes (S2, ADR 0009 §6).
+    tenant_id: str | None = None
     session_id: str | None = None
     trace_id: str = ""
     final_message: str | None = None
