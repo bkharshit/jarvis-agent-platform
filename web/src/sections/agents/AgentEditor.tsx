@@ -4,6 +4,7 @@ import { useNavigate, useParams } from "react-router";
 import { ApiError, fieldErrors } from "@/api/errors";
 import { useAgent, useCreateAgent, useUpdateAgent } from "@/api/queries/agents";
 import { useModelList } from "@/api/queries/models";
+import { useCredentials } from "@/api/queries/settings";
 import {
   builtinTools,
   modelDefaults,
@@ -73,6 +74,10 @@ function AgentEditorForm() {
       : modelList.isError
         ? "request failed"
         : null;
+
+  // S2: stored credentials are picked by name, not pasted as ids — same
+  // tenant-scoped listing the Settings panel uses (ADR 0006).
+  const credentials = useCredentials();
   const providerDescription = modelProviders(capabilities.data).find(
     (info) => info.name === draft?.model.provider,
   )?.description;
@@ -243,20 +248,54 @@ function AgentEditorForm() {
                 <option value="env">Environment variable</option>
                 <option value="stored">Stored credential (BYOK)</option>
               </select>
-              {draft.model.credential_kind !== "" && (
+              {draft.model.credential_kind === "env" && (
                 <input
                   id="model-credential-value"
+                  aria-label="Environment variable name"
                   className={`${inputClass} mt-1`}
                   value={draft.model.credential_value}
-                  placeholder={
-                    draft.model.credential_kind === "env"
-                      ? "OPENAI_API_KEY"
-                      : "credential id (Settings → Credentials)"
-                  }
+                  placeholder="OPENAI_API_KEY"
                   onChange={(e) =>
                     update({ model: { ...draft.model, credential_value: e.target.value } })
                   }
                 />
+              )}
+              {draft.model.credential_kind === "stored" && credentials.isError && (
+                <input
+                  id="model-credential-value"
+                  aria-label="Stored credential id"
+                  className={`${inputClass} mt-1`}
+                  value={draft.model.credential_value}
+                  placeholder="credential id (Settings → Credentials)"
+                  onChange={(e) =>
+                    update({ model: { ...draft.model, credential_value: e.target.value } })
+                  }
+                />
+              )}
+              {draft.model.credential_kind === "stored" && !credentials.isError && (
+                <>
+                  <select
+                    id="model-credential-value"
+                    aria-label="Stored credential"
+                    className={`${inputClass} mt-1`}
+                    value={draft.model.credential_value}
+                    onChange={(e) =>
+                      update({ model: { ...draft.model, credential_value: e.target.value } })
+                    }
+                  >
+                    <option value="">Select a stored credential…</option>
+                    {(credentials.data ?? []).map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.provider})
+                      </option>
+                    ))}
+                  </select>
+                  {(credentials.data ?? []).length === 0 && (
+                    <p className="mt-1 text-xs text-amber-400">
+                      No stored credentials yet — create one in Settings → Credentials.
+                    </p>
+                  )}
+                </>
               )}
               <p className="mt-1 text-xs text-neutral-500">
                 {draft.model.credential_kind === "stored"

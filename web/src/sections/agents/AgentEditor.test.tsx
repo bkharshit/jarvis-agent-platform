@@ -3,7 +3,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
-import { agentFixture, envelope } from "@/test/handlers";
+import { agentFixture, credentialFixture, envelope } from "@/test/handlers";
 import { server } from "@/test/msw";
 import { renderWithProviders } from "@/test/render";
 
@@ -108,6 +108,57 @@ describe("<AgentEditor/> creating", () => {
     await user.type(await screen.findByLabelText("Name"), "Duplicate");
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("agent name already exists")).toBeInTheDocument();
+  });
+});
+
+describe("<AgentEditor/> credential binding (S2)", () => {
+  it("picks a stored credential by name and saves its id as the credential_ref", async () => {
+    const user = userEvent.setup();
+    const posted = capturePost();
+    posted.capture();
+
+    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    await user.type(await screen.findByLabelText("Name"), "BYOK bound");
+    await user.selectOptions(screen.getByLabelText("Credential (optional)"), "stored");
+    // the dropdown lists the tenant's credentials — name + provider, value = id
+    await user.selectOptions(
+      screen.getByLabelText("Stored credential"),
+      credentialFixture.id,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(posted.state.body).not.toBeNull());
+    const raw = JSON.parse(JSON.stringify(posted.state.body));
+    expect(raw.model.credential_ref).toEqual({
+      type: "stored",
+      credential_id: credentialFixture.id,
+    });
+  });
+
+  it("points at Settings when the tenant has no stored credentials yet", async () => {
+    server.use(http.get("/v1/credentials", () => HttpResponse.json({ items: [] })));
+    const user = userEvent.setup();
+    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    await screen.findByLabelText("Name");
+    await user.selectOptions(screen.getByLabelText("Credential (optional)"), "stored");
+    expect(
+      await screen.findByText(/No stored credentials yet — create one in Settings/),
+    ).toBeInTheDocument();
+  });
+
+  it("falls back to a raw credential-id input when the listing fails", async () => {
+    server.use(
+      http.get("/v1/credentials", () =>
+        HttpResponse.json(envelope("internal", "internal server error"), { status: 500 }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    await screen.findByLabelText("Name");
+    await user.selectOptions(screen.getByLabelText("Credential (optional)"), "stored");
+    const fallback = screen.getByLabelText("Stored credential id");
+    await user.type(fallback, "a01fa02c-53de-4b4e-a27d-46fbf210ea41");
+    expect(fallback).toHaveValue("a01fa02c-53de-4b4e-a27d-46fbf210ea41");
   });
 });
 
