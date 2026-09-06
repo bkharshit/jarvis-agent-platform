@@ -22,6 +22,14 @@ class Settings(BaseSettings):
     model_api_key_env: str = "OPENAI_API_KEY"
     model_name: str = "gpt-4o-mini"
 
+    # --- auth & tenancy (S2, ADR 0009) -----------------------------------
+    # `anonymous` keeps local dev and the CLI friction-free (a fixed default
+    # tenant, full access); `required` rejects unauthenticated requests.
+    auth_mode: str = "anonymous"  # anonymous | required
+    # Name of the env var holding the base64url 32-byte BYOK master key —
+    # the *value* never enters configuration (D18 pattern).
+    credentials_master_key_env: str = "JARVIS_CREDENTIALS_MASTER_KEY"
+
     # --- orchestrator limits (ADR 0004: the orchestrator owns limits) ----
     run_max_iterations: int = 8
     run_max_total_tokens: int | None = None
