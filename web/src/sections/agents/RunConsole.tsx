@@ -17,7 +17,10 @@ import {
 
 // Run console: live SSE with cancel and Last-Event-ID resume (decision 3).
 // A stream end is never treated as completion — only a terminal event (or
-// an explicit Resume after `disconnected`) resolves the run.
+// an explicit Resume after `disconnected`) resolves the run. A pause (S10)
+// also ends the stream: the pause card collects the human's answer, POSTs
+// /executions/{id}/resume (blocking), then re-attaches the stream at the
+// last cursor so the resumed segment replays into the same timeline.
 
 const STATUS_LABEL: Record<string, string> = {
   connecting: "Connecting…",
@@ -34,6 +37,10 @@ function RunConsoleInner() {
   const [sessionId, setSessionId] = useState("");
   const [streamStatus, setStreamStatus] = useState<StreamStatus | null>(null);
   const [starting, setStarting] = useState(false);
+  /** A resume POST is in flight (it blocks until the segment ends). */
+  const [answering, setAnswering] = useState(false);
+  /** The pending answer text for a question pause. */
+  const [answer, setAnswer] = useState("");
 
   const apply = useRunConsoleStore((s) => s.apply);
   const settle = useRunConsoleStore((s) => s.settle);
@@ -44,6 +51,7 @@ function RunConsoleInner() {
   const runError = useRunConsoleStore((s) => s.error);
   const usage = useRunConsoleStore((s) => s.usage);
   const runId = useRunConsoleStore((s) => s.runId);
+  const pause = useRunConsoleStore((s) => s.pause);
 
   // Refs the connector reads at (re)connect time — no stale closures.
   const handleRef = useRef<RunStreamHandle | null>(null);
@@ -60,6 +68,7 @@ function RunConsoleInner() {
   function onFrame(frame: { id: number | null; event: string; data: string }) {
     if (frame.id !== null) lastEventIdRef.current = frame.id;
     const event = JSON.parse(frame.data) as WireEvent;
+    if (event.type === "run.started") runIdRef.current = event.run_id;
     apply(event, frame.id);
   }
 
@@ -93,6 +102,24 @@ function RunConsoleInner() {
     connect();
   }
 
+  async function sendResume(body: { content?: string; tool_approval?: boolean }) {
+    if (runId === null) return;
+    setAnswering(true);
+    setAnswer("");
+    try {
+      // Blocking: the route returns once the resumed segment ends (it may
+      // pause again). The stream is re-attached afterwards at the pause
+      // cursor so the segment's events replay into the timeline (deduped).
+      await client.POST("/v1/executions/{run_id}/resume", {
+        params: { path: { run_id: runId } },
+        body,
+      });
+      connect();
+    } finally {
+      setAnswering(false);
+    }
+  }
+
   function cancelRun() {
     if (runId === null) return;
     void client.POST("/v1/executions/{run_id}/cancel", {
@@ -108,7 +135,7 @@ function RunConsoleInner() {
         : streamStatus.status === "error"
           ? `${STATUS_LABEL.error}: ${streamStatus.message}`
           : STATUS_LABEL[streamStatus.status];
-  const runActive = status === "running" || starting;
+  const runActive = status === "running" || status === "awaiting_input" || starting;
   const canResume = streamStatus?.status === "disconnected";
 
   return (
@@ -140,7 +167,7 @@ function RunConsoleInner() {
           >
             {runActive ? "Running…" : "Run"}
           </button>
-          {runId !== null && status === "running" && (
+          {runId !== null && (status === "running" || status === "awaiting_input") && (
             <button
               type="button"
               onClick={cancelRun}
@@ -169,6 +196,77 @@ function RunConsoleInner() {
       <div className="mt-6">
         <EventTimeline items={items} />
       </div>
+
+      {status === "awaiting_input" && pause && (
+        <div className="mt-4 rounded border border-violet-800 bg-violet-950/40 p-4" data-testid="pause-card">
+          <p className="text-xs text-violet-300">Waiting for your input{answering ? " — resuming…" : ""}</p>
+          {pause.question !== null && (
+            <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-100">{pause.question}</p>
+          )}
+          {pause.pendingCalls.length > 0 && (
+            <ul className="mt-2 space-y-2">
+              {pause.pendingCalls.map((call) => (
+                <li
+                  key={call.id}
+                  className="flex items-center justify-between gap-3 rounded border border-neutral-800 bg-neutral-900 px-3 py-2"
+                  data-testid={`pending-call-${call.id}`}
+                >
+                  <span className="min-w-0 text-sm text-neutral-200">
+                    <span className="font-medium">{call.name}</span>{" "}
+                    <span className="break-all font-mono text-xs text-neutral-400">
+                      {JSON.stringify(call.arguments)}
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 gap-2">
+                    <button
+                      type="button"
+                      disabled={answering}
+                      onClick={() => void sendResume({ tool_approval: true })}
+                      className="cursor-pointer rounded border border-green-800 px-3 py-1 text-xs text-green-300 hover:bg-green-950 disabled:cursor-not-allowed disabled:text-neutral-600"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      disabled={answering}
+                      onClick={() => void sendResume({ tool_approval: false })}
+                      className="cursor-pointer rounded border border-red-800 px-3 py-1 text-xs text-red-300 hover:bg-red-950 disabled:cursor-not-allowed disabled:text-neutral-600"
+                    >
+                      Reject
+                    </button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {pause.pendingCalls.length === 0 && pause.question !== null && (
+            <form
+              className="mt-3 flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (answer.trim() === "") return;
+                void sendResume({ content: answer });
+              }}
+            >
+              <input
+                aria-label="Your answer"
+                className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+                value={answer}
+                disabled={answering}
+                onChange={(e) => setAnswer(e.target.value)}
+                placeholder="Your answer…"
+              />
+              <button
+                type="submit"
+                disabled={answering || answer.trim() === ""}
+                className="cursor-pointer rounded bg-neutral-100 px-4 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:cursor-not-allowed disabled:text-neutral-500"
+              >
+                Send answer
+              </button>
+            </form>
+          )}
+        </div>
+      )}
 
       {status === "completed" && finalMessage !== null && (
         <div className="mt-4 rounded border border-green-900 bg-green-950/40 p-4" data-testid="final-message">

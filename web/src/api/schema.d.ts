@@ -69,9 +69,11 @@ export interface paths {
         put?: never;
         /**
          * Run Agent
-         * @description Blocking run — enqueue, then wait for the worker's terminal event.
-         *     The subscribe replays anything the worker already wrote, so there is no
-         *     race between enqueueing and listening.
+         * @description Blocking run — enqueue, then wait for the worker's segment to end. The
+         *     subscribe replays anything the worker already wrote, so there is no race
+         *     between enqueueing and listening. A pause (S10) ends the segment like a
+         *     terminal: the route returns the awaiting_input row and the client
+         *     resumes with POST /executions/{id}/resume.
          */
         post: operations["run_agent_v1_agents__agent_id__run_post"];
         delete?: never;
@@ -94,7 +96,9 @@ export interface paths {
          * @description SSE run: enqueue, then frame every event the worker writes. Resume with
          *     `Last-Event-ID` (durable cursor) plus `run_id` in the body — replay and
          *     live tail are the same cursor space (PgEventStream tails the DB, so the
-         *     stream survives this process). Ends with the run's single terminal event.
+         *     stream survives this process). Ends with the segment's last event
+         *     (terminal or pause, S10): a pause closes the stream and the client
+         *     resumes with POST /executions/{id}/resume.
          */
         post: operations["stream_agent_v1_agents__agent_id__stream_post"];
         delete?: never;
@@ -218,10 +222,36 @@ export interface paths {
          * Cancel Run
          * @description Idempotent. A run live in THIS process gets its runtime token; a
          *     queued or foreign-worker run gets a cross-process cancel request
-         *     (ADR 0008 §6) that the owning worker's heartbeat pops. A finished run is
-         *     a no-op that reports its current status.
+         *     (ADR 0008 §6) that the owning worker's heartbeat pops. A paused run
+         *     (S10) is finished directly — no heartbeat holds it — on the same
+         *     append-terminal-and-finish path the reaper uses, so cancelling an
+         *     awaiting_input run is immediate, not cooperative. A finished run is a
+         *     no-op that reports its current status.
          */
         post: operations["cancel_run_v1_executions__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/executions/{run_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume Run
+         * @description Human-in-the-loop resume (S10, ADR 0010 §4): merge the answer into
+         *     the paused run's queue payload and block until the resumed segment ends
+         *     (like /run). A segment can pause again — the route then returns the
+         *     still-awaiting row and the client answers the next question.
+         */
+        post: operations["resume_run_v1_executions__run_id__resume_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -646,7 +676,7 @@ export interface components {
             /** Cursor */
             cursor: number;
             /** Event */
-            event: components["schemas"]["RunStarted"] | components["schemas"]["IterationStarted"] | components["schemas"]["ModelInvocationStarted"] | components["schemas"]["TextDelta"] | components["schemas"]["ModelInvocationCompleted"] | components["schemas"]["ToolCallRequested"] | components["schemas"]["ToolCallStarted"] | components["schemas"]["ToolCallCompleted"] | components["schemas"]["ToolCallFailed"] | components["schemas"]["IterationCompleted"] | components["schemas"]["RunCompleted"] | components["schemas"]["RunFailed"] | components["schemas"]["RunCancelled"];
+            event: components["schemas"]["RunStarted"] | components["schemas"]["IterationStarted"] | components["schemas"]["ModelInvocationStarted"] | components["schemas"]["TextDelta"] | components["schemas"]["ModelInvocationCompleted"] | components["schemas"]["ToolCallRequested"] | components["schemas"]["ToolCallStarted"] | components["schemas"]["ToolCallCompleted"] | components["schemas"]["ToolCallFailed"] | components["schemas"]["IterationCompleted"] | components["schemas"]["RunAwaitingInput"] | components["schemas"]["RunCompleted"] | components["schemas"]["RunFailed"] | components["schemas"]["RunCancelled"];
         };
         /**
          * EnvCredentialRef
@@ -937,6 +967,60 @@ export interface components {
             /** Credential Ref */
             credential_ref?: (components["schemas"]["EnvCredentialRef"] | components["schemas"]["StoredCredentialRef"]) | null;
         };
+        /**
+         * ResumeBody
+         * @description Body for POST /executions/{id}/resume (S10, ADR 0010 §4): an
+         *     ask_human pause answers with `content`; a tool-approval pause answers
+         *     with `tool_approval`. Exactly one is present — `kind` says which.
+         */
+        ResumeBody: {
+            /** Content */
+            content?: string | null;
+            /** Tool Approval */
+            tool_approval?: boolean | null;
+        };
+        /**
+         * RunAwaitingInput
+         * @description The run paused for a human decision. NOT terminal — exactly-one-
+         *     terminal still holds for the whole run; the pause ends one *segment* of
+         *     the gapless sequence (no non-terminal event may follow it within a
+         *     segment; the next event belongs to the resumed segment).
+         */
+        RunAwaitingInput: {
+            /** Event Id */
+            event_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "run.awaiting_input";
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "tool_approval" | "strategy";
+            /**
+             * Question
+             * @default
+             */
+            question: string;
+            /** Pending Calls */
+            pending_calls?: components["schemas"]["ToolCall"][];
+            /**
+             * Awaiting Until
+             * Format: date-time
+             */
+            awaiting_until: string;
+        };
         /** RunCancelled */
         RunCancelled: {
             /** Event Id */
@@ -1043,7 +1127,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "timed_out";
+            status: "queued" | "running" | "awaiting_input" | "succeeded" | "failed" | "cancelled" | "timed_out";
             /**
              * Input
              * @default
@@ -1793,7 +1877,7 @@ export interface operations {
         parameters: {
             query?: {
                 agent_id?: string | null;
-                status?: ("queued" | "running" | "succeeded" | "failed" | "cancelled" | "timed_out") | null;
+                status?: ("queued" | "running" | "awaiting_input" | "succeeded" | "failed" | "cancelled" | "timed_out") | null;
                 session_id?: string | null;
                 limit?: number;
                 offset?: number;
@@ -1873,6 +1957,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CancelResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resume_run_v1_executions__run_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResumeBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunResult"];
                 };
             };
             /** @description Validation Error */

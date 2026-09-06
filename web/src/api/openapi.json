@@ -279,7 +279,7 @@
           "agents"
         ],
         "summary": "Run Agent",
-        "description": "Blocking run \u2014 enqueue, then wait for the worker's terminal event.\nThe subscribe replays anything the worker already wrote, so there is no\nrace between enqueueing and listening.",
+        "description": "Blocking run \u2014 enqueue, then wait for the worker's segment to end. The\nsubscribe replays anything the worker already wrote, so there is no race\nbetween enqueueing and listening. A pause (S10) ends the segment like a\nterminal: the route returns the awaiting_input row and the client\nresumes with POST /executions/{id}/resume.",
         "operationId": "run_agent_v1_agents__agent_id__run_post",
         "parameters": [
           {
@@ -332,7 +332,7 @@
           "agents"
         ],
         "summary": "Stream Agent",
-        "description": "SSE run: enqueue, then frame every event the worker writes. Resume with\n`Last-Event-ID` (durable cursor) plus `run_id` in the body \u2014 replay and\nlive tail are the same cursor space (PgEventStream tails the DB, so the\nstream survives this process). Ends with the run's single terminal event.",
+        "description": "SSE run: enqueue, then frame every event the worker writes. Resume with\n`Last-Event-ID` (durable cursor) plus `run_id` in the body \u2014 replay and\nlive tail are the same cursor space (PgEventStream tails the DB, so the\nstream survives this process). Ends with the segment's last event\n(terminal or pause, S10): a pause closes the stream and the client\nresumes with POST /executions/{id}/resume.",
         "operationId": "stream_agent_v1_agents__agent_id__stream_post",
         "parameters": [
           {
@@ -508,6 +508,7 @@
                   "enum": [
                     "queued",
                     "running",
+                    "awaiting_input",
                     "succeeded",
                     "failed",
                     "cancelled",
@@ -631,7 +632,7 @@
           "executions"
         ],
         "summary": "Cancel Run",
-        "description": "Idempotent. A run live in THIS process gets its runtime token; a\nqueued or foreign-worker run gets a cross-process cancel request\n(ADR 0008 \u00a76) that the owning worker's heartbeat pops. A finished run is\na no-op that reports its current status.",
+        "description": "Idempotent. A run live in THIS process gets its runtime token; a\nqueued or foreign-worker run gets a cross-process cancel request\n(ADR 0008 \u00a76) that the owning worker's heartbeat pops. A paused run\n(S10) is finished directly \u2014 no heartbeat holds it \u2014 on the same\nappend-terminal-and-finish path the reaper uses, so cancelling an\nawaiting_input run is immediate, not cooperative. A finished run is a\nno-op that reports its current status.",
         "operationId": "cancel_run_v1_executions__run_id__cancel_post",
         "parameters": [
           {
@@ -651,6 +652,59 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CancelResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/executions/{run_id}/resume": {
+      "post": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Resume Run",
+        "description": "Human-in-the-loop resume (S10, ADR 0010 \u00a74): merge the answer into\nthe paused run's queue payload and block until the resumed segment ends\n(like /run). A segment can pause again \u2014 the route then returns the\nstill-awaiting row and the client answers the next question.",
+        "operationId": "resume_run_v1_executions__run_id__resume_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResumeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResult"
                 }
               }
             }
@@ -1972,6 +2026,9 @@
                 "$ref": "#/components/schemas/IterationCompleted"
               },
               {
+                "$ref": "#/components/schemas/RunAwaitingInput"
+              },
+              {
                 "$ref": "#/components/schemas/RunCompleted"
               },
               {
@@ -1989,6 +2046,7 @@
                 "iteration.started": "#/components/schemas/IterationStarted",
                 "model.invocation.completed": "#/components/schemas/ModelInvocationCompleted",
                 "model.invocation.started": "#/components/schemas/ModelInvocationStarted",
+                "run.awaiting_input": "#/components/schemas/RunAwaitingInput",
                 "run.cancelled": "#/components/schemas/RunCancelled",
                 "run.completed": "#/components/schemas/RunCompleted",
                 "run.failed": "#/components/schemas/RunFailed",
@@ -2723,6 +2781,105 @@
         "title": "ModelRef",
         "description": "Reference to a model. `credential_ref` is a *reference* (env-var name\nor stored credential id) \u2014 credential material never enters the domain,\na snapshot, or an API response (ADR 0006 \u00a71)."
       },
+      "ResumeBody": {
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "tool_approval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Approval"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ResumeBody",
+        "description": "Body for POST /executions/{id}/resume (S10, ADR 0010 \u00a74): an\nask_human pause answers with `content`; a tool-approval pause answers\nwith `tool_approval`. Exactly one is present \u2014 `kind` says which."
+      },
+      "RunAwaitingInput": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "type": {
+            "type": "string",
+            "const": "run.awaiting_input",
+            "title": "Type",
+            "default": "run.awaiting_input"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "tool_approval",
+              "strategy"
+            ],
+            "title": "Reason"
+          },
+          "question": {
+            "type": "string",
+            "title": "Question",
+            "default": ""
+          },
+          "pending_calls": {
+            "items": {
+              "$ref": "#/components/schemas/ToolCall"
+            },
+            "type": "array",
+            "title": "Pending Calls"
+          },
+          "awaiting_until": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Awaiting Until"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "run_id",
+          "reason",
+          "awaiting_until"
+        ],
+        "title": "RunAwaitingInput",
+        "description": "The run paused for a human decision. NOT terminal \u2014 exactly-one-\nterminal still holds for the whole run; the pause ends one *segment* of\nthe gapless sequence (no non-terminal event may follow it within a\nsegment; the next event belongs to the resumed segment)."
+      },
       "RunCancelled": {
         "properties": {
           "event_id": {
@@ -2964,6 +3121,7 @@
             "enum": [
               "queued",
               "running",
+              "awaiting_input",
               "succeeded",
               "failed",
               "cancelled",

@@ -4,15 +4,19 @@ import {
   useExecutions,
   type ExecutionStatus,
 } from "@/api/queries/executions";
+import { humanInTheLoop } from "@/capabilities/detail";
+import { useCapabilities } from "@/capabilities/useCapabilities";
 import { SectionGate } from "@/capabilities/SectionGate";
 
 // Executions list — real payload rows only. The agent filter arrives as
-// ?agent= from the agents section's Runs tab.
+// ?agent= from the agents section's Runs tab. The awaiting-input inbox
+// (S10) is gated on the backend's executions.detail.human_in_the_loop.
 
 const STATUS_FILTERS: (ExecutionStatus | "all")[] = [
   "all",
   "queued",
   "running",
+  "awaiting_input",
   "succeeded",
   "failed",
   "cancelled",
@@ -23,6 +27,7 @@ function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
     queued: "bg-neutral-800 text-neutral-300",
     running: "bg-amber-950 text-amber-300",
+    awaiting_input: "bg-violet-950 text-violet-300",
     succeeded: "bg-green-950 text-green-300",
     failed: "bg-red-950 text-red-300",
     cancelled: "bg-neutral-800 text-neutral-300",
@@ -35,10 +40,35 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function AwaitingInputInbox() {
+  const { data: runs } = useExecutions({ status: "awaiting_input" });
+  if (runs === undefined || runs.length === 0) return null;
+  return (
+    <div className="mt-6 rounded border border-violet-900 bg-violet-950/30 p-4" data-testid="awaiting-input-inbox">
+      <h2 className="text-sm font-medium text-violet-300">Awaiting input</h2>
+      <ul className="mt-2 space-y-1">
+        {runs.map((run) => (
+          <li key={run.run_id} className="flex items-center justify-between gap-4 text-sm">
+            <Link
+              to={`/executions/${run.run_id}`}
+              className="font-mono text-xs text-neutral-100 underline-offset-2 hover:underline"
+            >
+              {run.run_id.slice(0, 12)}…
+            </Link>
+            <span className="truncate font-mono text-xs text-neutral-400">{run.input}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function ExecutionsListInner() {
   const [searchParams, setSearchParams] = useSearchParams();
   const agentFilter = searchParams.get("agent");
   const statusFilter = searchParams.get("status");
+  const { data: capabilities } = useCapabilities();
+  const inboxEnabled = humanInTheLoop(capabilities);
   const { data: runs, isPending, isError, error } = useExecutions({
     agent: agentFilter,
     status: (statusFilter as ExecutionStatus | null) ?? null,
@@ -77,6 +107,8 @@ function ExecutionsListInner() {
 
       {isPending && <p className="mt-10 text-sm text-neutral-400">Loading executions…</p>}
       {isError && <p className="mt-10 text-sm text-red-400">{error.message}</p>}
+
+      {inboxEnabled && <AwaitingInputInbox />}
 
       {runs && (runs.length === 0 ? (
         <p className="mt-10 text-sm text-neutral-400">No executions match.</p>

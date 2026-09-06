@@ -234,7 +234,7 @@ export const handlers = [
     return HttpResponse.json({
       sections: {
         agents: { enabled: true, summary: "Create, version, and run agents", detail: { strategies: ["react", "function_calling"] } },
-        executions: { enabled: true, summary: "Browse runs" },
+        executions: { enabled: true, summary: "Browse runs", detail: { human_in_the_loop: true } },
         conversations: { enabled: true, summary: "Per-session history" },
         tools: {
           enabled: true,

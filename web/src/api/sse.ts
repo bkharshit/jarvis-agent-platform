@@ -1,9 +1,10 @@
 // SSE client (decision 3). POST /stream cannot use EventSource, so frames
 // come off a fetch ReadableStream. Wire format (ADR 0003): one frame per
 // event — `id: <durable cursor>`, `event: <type>`, `data: <event JSON>` —
-// plus `: keep-alive` comment frames. A stream end without a terminal event
-// is NOT completion: reconnect 3× (300ms/1s/3s), then park in `disconnected`
-// and let the user Resume (the server replays from the DB).
+// plus `: keep-alive` comment frames. A stream end at a terminal or a pause
+// (S10) is a segment end; anything else reconnects 3× (300ms/1s/3s), then
+// parks in `disconnected` and lets the user Resume (the server replays from
+// the DB).
 
 export interface SseFrame {
   /** Durable cursor (Last-Event-ID space), when the frame carries an id. */
@@ -66,6 +67,11 @@ export const TERMINAL_EVENT_TYPES = new Set([
   "run.cancelled",
 ]);
 
+/** S10 (ADR 0010): a pause ends a SEGMENT, not the run — but it ends the
+ * stream exactly like a terminal (the client answers via
+ * POST /executions/{id}/resume and re-attaches with Last-Event-ID). */
+export const PAUSE_EVENT_TYPES = new Set(["run.awaiting_input"]);
+
 const RECONNECT_DELAYS_MS = [300, 1000, 3000];
 
 export interface RunStreamOptions {
@@ -107,10 +113,12 @@ async function runLoop(
     try {
       const done = await connectOnce(agentId, options, controller.signal);
       if (done) {
+        // Segment end (terminal or pause) — the stream is finished for now;
+        // a pause is completed upstream via the resume route, not a reconnect.
         options.onStatus({ status: "finished" });
         return;
       }
-      // Stream closed without a terminal event.
+      // Stream closed without a segment end.
     } catch (err) {
       if (controller.signal.aborted) return;
       options.onStatus({
@@ -162,16 +170,23 @@ async function connectOnce(
   const parser = new FrameParser();
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let terminal = false;
+  let segmentEnd = false;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
     for (const frame of parser.parse(decoder.decode(value, { stream: true }))) {
       options.onFrame(frame);
-      if (TERMINAL_EVENT_TYPES.has(frame.event)) terminal = true;
+      // A terminal OR a pause ends this stream — neither is reconnected
+      // (a pause needs the human's answer, not a reconnect).
+      if (
+        TERMINAL_EVENT_TYPES.has(frame.event) ||
+        PAUSE_EVENT_TYPES.has(frame.event)
+      ) {
+        segmentEnd = true;
+      }
     }
   }
-  return terminal;
+  return segmentEnd;
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {

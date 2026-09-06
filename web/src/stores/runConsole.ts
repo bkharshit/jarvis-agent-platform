@@ -15,9 +15,24 @@ export type UsageView = components["schemas"]["Usage"];
 export type RunStatus =
   | "idle"
   | "running"
+  | "awaiting_input"
   | "completed"
   | "failed"
   | "cancelled";
+
+/** S10: what the run needs from the human — a question to answer, or gated
+ * tool calls to approve/refuse (both, for a batch that asks). */
+export interface PendingCallView {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+export interface PauseView {
+  reason: "tool_approval" | "strategy";
+  question: string | null;
+  pendingCalls: PendingCallView[];
+}
 
 export interface ToolCardView {
   kind: "tool";
@@ -63,6 +78,8 @@ export interface RunConsoleState {
   error: { message: string; kind?: string } | null;
   usage: UsageView | null;
   iterations: number | null;
+  /** S10: non-null while status is awaiting_input — the human's decision. */
+  pause: PauseView | null;
   seenEventIds: ReadonlySet<string>;
 }
 
@@ -78,6 +95,7 @@ export function initialRunConsoleState(): RunConsoleState {
     error: null,
     usage: null,
     iterations: null,
+    pause: null,
     seenEventIds: new Set(),
   };
 }
@@ -110,6 +128,9 @@ export function applyEvent(
     ...state,
     seenEventIds,
     ...(cursor !== null ? { lastEventId: cursor } : {}),
+    // S10: any event after a pause proves the run moved on — the answer was
+    // consumed; terminal cases below override the status again.
+    ...(state.status === "awaiting_input" ? { status: "running", pause: null } : {}),
   };
 
   switch (event.type) {
@@ -130,6 +151,26 @@ export function applyEvent(
     }
     case "iteration.completed":
       return base;
+    case "run.awaiting_input": {
+      // S10: the pause ends the segment — flush any pending assistant text,
+      // surface the question/approval cards, and park until the human answers.
+      const flushed = flushPending(base);
+      const pause: PauseView = {
+        reason: event.reason,
+        question: event.question === "" ? null : event.question,
+        pendingCalls: (event.pending_calls ?? []).map((call) => ({
+          id: call.id,
+          name: call.name,
+          arguments: call.arguments ?? {},
+        })),
+      };
+      return {
+        ...flushed,
+        status: "awaiting_input",
+        pause,
+        pendingText: "",
+      };
+    }
     case "model.invocation.started":
       return base;
     case "model.invocation.completed":

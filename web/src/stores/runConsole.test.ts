@@ -161,4 +161,73 @@ describe("applyEvent", () => {
     expect(cancelled.status).toBe("cancelled");
     expect(cancelled.error?.message).toBe("user requested");
   });
+
+  it("surfaces the pause view on run.awaiting_input (S10)", () => {
+    const paused = apply(
+      initialRunConsoleState(),
+      started(),
+      ev({ type: "text.delta", text: "let me ask first…" }),
+      ev({
+        type: "run.awaiting_input",
+        reason: "strategy",
+        question: "what is your name?",
+        awaiting_until: "2026-09-07T00:00:00Z",
+      }),
+    );
+    expect(paused.status).toBe("awaiting_input");
+    expect(paused.pause).toEqual({
+      reason: "strategy",
+      question: "what is your name?",
+      pendingCalls: [],
+    });
+    // pending assistant text is folded into the timeline, never lost
+    expect(paused.pendingText).toBe("");
+    expect(paused.items.some((i) => i.kind === "message" && i.text === "let me ask first…")).toBe(true);
+  });
+
+  it("carries gated tool calls in the pause view", () => {
+    const paused = apply(
+      initialRunConsoleState(),
+      started(),
+      ev({ type: "tool.call.requested", tool_call_id: "t1", name: "http_get", arguments: { url: "https://x" } }),
+      ev({
+        type: "run.awaiting_input",
+        reason: "tool_approval",
+        question: "",
+        pending_calls: [{ id: "t1", name: "http_get", arguments: { url: "https://x" } }],
+        awaiting_until: "2026-09-07T00:00:00Z",
+      }),
+    );
+    expect(paused.status).toBe("awaiting_input");
+    expect(paused.pause).toEqual({
+      reason: "tool_approval",
+      question: null, // empty question renders as none
+      pendingCalls: [{ id: "t1", name: "http_get", arguments: { url: "https://x" } }],
+    });
+  });
+
+  it("clears the pause when the resumed segment's events arrive", () => {
+    const paused = apply(
+      initialRunConsoleState(),
+      started(),
+      ev({ type: "run.awaiting_input", reason: "strategy", question: "q?", awaiting_until: "2026-09-07T00:00:00Z" }),
+    );
+    const resumed = apply(paused, ev({ type: "iteration.started", iteration: 2 }));
+    expect(resumed.status).toBe("running");
+    expect(resumed.pause).toBeNull();
+
+    // …and a second pause parks the run again
+    const pausedAgain = apply(
+      resumed,
+      ev({ type: "run.awaiting_input", reason: "tool_approval", question: "", pending_calls: [], awaiting_until: "2026-09-07T00:00:00Z" }),
+    );
+    expect(pausedAgain.status).toBe("awaiting_input");
+
+    // …and the terminal wins over a stale awaiting_input state
+    const done = apply(
+      pausedAgain,
+      ev({ type: "run.completed", final_message: "done", total_usage: { input_tokens: 1, output_tokens: 1 }, iterations: 1 }),
+    );
+    expect(done.status).toBe("completed");
+  });
 });

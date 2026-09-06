@@ -132,3 +132,10 @@ export function settingsFacts(capabilities: Capabilities | undefined): SettingsF
     credentialsAvailable: credentials?.available === true,
   };
 }
+
+/** S10: human-in-the-loop is live on the backend — pause frames, the
+ * resume route, and the awaiting-input inbox are real. */
+export function humanInTheLoop(capabilities: Capabilities | undefined): boolean {
+  const detail = asRecord(capabilities?.sections.executions?.detail);
+  return detail?.human_in_the_loop === true;
+}
