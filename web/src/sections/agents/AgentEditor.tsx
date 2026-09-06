@@ -14,6 +14,7 @@ import {
 import { useCapabilities } from "@/capabilities/useCapabilities";
 import { SectionGate } from "@/capabilities/SectionGate";
 import { toSavePayload, useEditorStore } from "@/stores/editorStore";
+import type { CredentialKind } from "@/stores/editorStore";
 import { toast } from "@/stores/toast";
 
 // Full AgentDefinition editor. Strategy picker and tool bindings come from
@@ -63,7 +64,8 @@ function AgentEditorForm() {
   const modelList = useModelList(
     draft?.model.provider ?? "",
     draft?.model.base_url ?? "",
-    draft?.model.api_key_env ?? "",
+    // The env-var name is only meaningful for an env credential ref (S2).
+    draft?.model.credential_kind === "env" ? draft.model.credential_value : "",
   );
   const listingError =
     modelList.isError && modelList.error instanceof ApiError
@@ -222,16 +224,44 @@ function AgentEditorForm() {
               />
             </div>
             <div>
-              <label htmlFor="model-api-key-env" className={labelClass}>API key env var (optional)</label>
-              <input
-                id="model-api-key-env"
+              <label htmlFor="model-credential-kind" className={labelClass}>Credential (optional)</label>
+              <select
+                id="model-credential-kind"
                 className={inputClass}
-                value={draft.model.api_key_env}
-                placeholder="OPENAI_API_KEY"
-                onChange={(e) => update({ model: { ...draft.model, api_key_env: e.target.value } })}
-              />
+                value={draft.model.credential_kind}
+                onChange={(e) =>
+                  update({
+                    model: {
+                      ...draft.model,
+                      credential_kind: e.target.value as CredentialKind,
+                      credential_value: "",
+                    },
+                  })
+                }
+              >
+                <option value="">Provider default (no credential ref)</option>
+                <option value="env">Environment variable</option>
+                <option value="stored">Stored credential (BYOK)</option>
+              </select>
+              {draft.model.credential_kind !== "" && (
+                <input
+                  id="model-credential-value"
+                  className={`${inputClass} mt-1`}
+                  value={draft.model.credential_value}
+                  placeholder={
+                    draft.model.credential_kind === "env"
+                      ? "OPENAI_API_KEY"
+                      : "credential id (Settings → Credentials)"
+                  }
+                  onChange={(e) =>
+                    update({ model: { ...draft.model, credential_value: e.target.value } })
+                  }
+                />
+              )}
               <p className="mt-1 text-xs text-neutral-500">
-                Names an environment variable — the key itself is never stored.
+                {draft.model.credential_kind === "stored"
+                  ? "References a BYOK credential owned by your tenant — the secret itself never enters the definition (ADR 0006)."
+                  : "Names an environment variable — the key itself is never stored."}
               </p>
             </div>
           </div>

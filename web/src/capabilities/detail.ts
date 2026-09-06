@@ -116,3 +116,19 @@ export function modelDefaults(capabilities: Capabilities | undefined): ModelDefa
     base_url: typeof defaults.base_url === "string" ? defaults.base_url : null,
   };
 }
+
+export interface SettingsFacts {
+  /** "anonymous" (local single-user) | "required" — a backend config fact. */
+  authMode: string;
+  /** Whether BYOK storage (the master key) is configured on the backend. */
+  credentialsAvailable: boolean;
+}
+
+export function settingsFacts(capabilities: Capabilities | undefined): SettingsFacts {
+  const detail = asRecord(capabilities?.sections.settings?.detail);
+  const credentials = detail ? asRecord(detail.credentials) : null;
+  return {
+    authMode: detail && typeof detail.auth_mode === "string" ? detail.auth_mode : "anonymous",
+    credentialsAvailable: credentials?.available === true,
+  };
+}

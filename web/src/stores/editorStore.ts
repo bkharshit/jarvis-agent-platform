@@ -18,10 +18,19 @@ export interface ToolDraft {
   config: string; // JSON text; "" = {}
 }
 
+/** Which credential_ref kind the model binds to; "" = no credential_ref. */
+export type CredentialKind = "" | "env" | "stored";
+
 export interface AgentDraft {
   name: string;
   description: string;
-  model: { provider: string; model: string; base_url: string; api_key_env: string };
+  model: {
+    provider: string;
+    model: string;
+    base_url: string;
+    credential_kind: CredentialKind;
+    credential_value: string; // env var name, or stored credential id
+  };
   system_prompt: string;
   user_prompt_template: string;
   tools: ToolDraft[];
@@ -43,6 +52,16 @@ interface EditorState {
   update: (patch: Partial<AgentDraft>) => void;
 }
 
+/** Split the credential_ref union into form fields (S2: env | stored). */
+function credentialFromRef(
+  ref: AgentDefinition["model"]["credential_ref"],
+): { credential_kind: CredentialKind; credential_value: string } {
+  if (!ref) return { credential_kind: "", credential_value: "" };
+  return ref.type === "env"
+    ? { credential_kind: "env", credential_value: ref.env_var }
+    : { credential_kind: "stored", credential_value: ref.credential_id };
+}
+
 function draftFromDefinition(definition: AgentDefinition): AgentDraft {
   return {
     name: definition.name,
@@ -51,7 +70,7 @@ function draftFromDefinition(definition: AgentDefinition): AgentDraft {
       provider: definition.model.provider,
       model: definition.model.model,
       base_url: definition.model.base_url ?? "",
-      api_key_env: definition.model.api_key_env ?? "",
+      ...credentialFromRef(definition.model.credential_ref),
     },
     system_prompt: definition.system_prompt,
     user_prompt_template: definition.user_prompt_template ?? "",
@@ -162,17 +181,35 @@ export function toSavePayload(draft: AgentDraft): SavePayload {
     bindings.push(result.binding!);
   }
 
+  // credential_ref (S2 union): "" kind = omitted entirely; a kind with an
+  // empty value is a form error, not a half-written ref.
+  const credentialKind = draft.model.credential_kind;
+  const credentialValue = draft.model.credential_value.trim();
+  if (credentialKind !== "" && credentialValue === "") {
+    return {
+      body: {},
+      error:
+        credentialKind === "env"
+          ? "credential: name the environment variable"
+          : "credential: paste the stored credential id (Settings → Credentials)",
+    };
+  }
+  const credentialRef =
+    credentialKind === "env"
+      ? ({ type: "env", env_var: credentialValue } as const)
+      : credentialKind === "stored"
+        ? ({ type: "stored", credential_id: credentialValue } as const)
+        : undefined;
+
   const body: AgentUpsert = {
     name: draft.name.trim(),
     description: draft.description,
     model: {
       provider: draft.model.provider.trim(),
       model: draft.model.model.trim(),
-      // Empty optional strings are omitted, not nulled (PATCH hazard).
+      // Empty optionals are omitted, not nulled (PATCH hazard).
       ...(draft.model.base_url.trim() !== "" ? { base_url: draft.model.base_url.trim() } : {}),
-      ...(draft.model.api_key_env.trim() !== ""
-        ? { api_key_env: draft.model.api_key_env.trim() }
-        : {}),
+      ...(credentialRef !== undefined ? { credential_ref: credentialRef } : {}),
     },
     system_prompt: draft.system_prompt,
     ...(draft.user_prompt_template.trim() !== ""

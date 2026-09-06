@@ -103,6 +103,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Login */
+        post: operations["login_v1_auth_login_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Logout */
+        post: operations["logout_v1_auth_logout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/whoami": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whoami */
+        get: operations["whoami_v1_auth_whoami_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/capabilities": {
         parameters: {
             query?: never;
@@ -192,6 +243,116 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/v1/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Members */
+        get: operations["list_members_v1_members_get"];
+        put?: never;
+        /** Create Member */
+        post: operations["create_member_v1_members_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/members/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Member */
+        delete: operations["delete_member_v1_members__user_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Member */
+        patch: operations["update_member_v1_members__user_id__patch"];
+        trace?: never;
+    };
+    "/v1/api-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Api Keys */
+        get: operations["list_api_keys_v1_api_keys_get"];
+        put?: never;
+        /** Create Api Key */
+        post: operations["create_api_key_v1_api_keys_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/api-keys/{key_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke Api Key
+         * @description Idempotent-by-id: revoking an already-revoked key is a no-op.
+         */
+        delete: operations["revoke_api_key_v1_api_keys__key_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Credentials */
+        get: operations["list_credentials_v1_credentials_get"];
+        put?: never;
+        /** Create Credential */
+        post: operations["create_credential_v1_credentials_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/credentials/{credential_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke Credential */
+        delete: operations["revoke_credential_v1_credentials__credential_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Credential */
+        patch: operations["update_credential_v1_credentials__credential_id__patch"];
         trace?: never;
     };
     "/v1/conversations/{agent_id}/{session_id}/messages": {
@@ -362,6 +523,55 @@ export interface components {
              */
             created_at?: string;
         };
+        /** ApiKeyCreate */
+        ApiKeyCreate: {
+            /** Name */
+            name: string;
+        };
+        /**
+         * ApiKeyCreated
+         * @description Create-time response: the ONLY response that ever carries the
+         *     plaintext key (`plaintext`), alongside its stored metadata.
+         */
+        ApiKeyCreated: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Key Prefix */
+            key_prefix: string;
+            /** Plaintext */
+            plaintext: string;
+            /** Created At */
+            created_at?: string | null;
+        };
+        /** ApiKeyList */
+        ApiKeyList: {
+            /** Items */
+            items: components["schemas"]["ApiKeyOut"][];
+        };
+        /**
+         * ApiKeyOut
+         * @description Metadata only — no plaintext, no hash; `key_prefix` is display form.
+         */
+        ApiKeyOut: {
+            /** Id */
+            id: string;
+            /** Tenant Id */
+            tenant_id: string;
+            /** User Id */
+            user_id: string;
+            /** Name */
+            name: string;
+            /** Key Prefix */
+            key_prefix: string;
+            /** Created At */
+            created_at?: string | null;
+            /** Last Used At */
+            last_used_at?: string | null;
+            /** Revoked At */
+            revoked_at?: string | null;
+        };
         /** CancelResult */
         CancelResult: {
             /** Run Id */
@@ -379,6 +589,55 @@ export interface components {
             };
         };
         /**
+         * CredentialCreate
+         * @description POST /credentials — `secret` is the BYOK key material. It is
+         *     encrypted server-side and never stored or returned in plaintext
+         *     (ADR 0006 §7).
+         */
+        CredentialCreate: {
+            /** Name */
+            name: string;
+            /** Provider */
+            provider: string;
+            /** Secret */
+            secret: string;
+        };
+        /** CredentialList */
+        CredentialList: {
+            /** Items */
+            items: components["schemas"]["CredentialOut"][];
+        };
+        /**
+         * CredentialOut
+         * @description Metadata only — NO ciphertext, NO secret. The AES-GCM envelope never
+         *     crosses the API (ADR 0006 §7).
+         */
+        CredentialOut: {
+            /** Id */
+            id: string;
+            /** Tenant Id */
+            tenant_id: string;
+            /** Name */
+            name: string;
+            /** Provider */
+            provider: string;
+            /** Created By */
+            created_by: string;
+            /** Created At */
+            created_at?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
+            /** Revoked At */
+            revoked_at?: string | null;
+        };
+        /** CredentialPatch */
+        CredentialPatch: {
+            /** Name */
+            name?: string | null;
+            /** Secret */
+            secret?: string | null;
+        };
+        /**
          * CursorEvent
          * @description One replayed event tagged with its durable cursor (SSE Last-Event-ID
          *     space), so JSON replay can drive exactly-once clients too.
@@ -388,6 +647,20 @@ export interface components {
             cursor: number;
             /** Event */
             event: components["schemas"]["RunStarted"] | components["schemas"]["IterationStarted"] | components["schemas"]["ModelInvocationStarted"] | components["schemas"]["TextDelta"] | components["schemas"]["ModelInvocationCompleted"] | components["schemas"]["ToolCallRequested"] | components["schemas"]["ToolCallStarted"] | components["schemas"]["ToolCallCompleted"] | components["schemas"]["ToolCallFailed"] | components["schemas"]["IterationCompleted"] | components["schemas"]["RunCompleted"] | components["schemas"]["RunFailed"] | components["schemas"]["RunCancelled"];
+        };
+        /**
+         * EnvCredentialRef
+         * @description Credential reference: the *name* of an environment variable — the
+         *     secret itself never enters the domain (D18, ADR 0005).
+         */
+        EnvCredentialRef: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "env";
+            /** Env Var */
+            env_var: string;
         };
         /** EventList */
         EventList: {
@@ -472,6 +745,72 @@ export interface components {
             type: "iteration.started";
             /** Iteration */
             iteration: number;
+        };
+        /**
+         * LoginRequest
+         * @description Body for /auth/login. Plain string email — validation parity with
+         *     members invites, no email-validator dependency.
+         */
+        LoginRequest: {
+            /** Email */
+            email: string;
+            /** Password */
+            password: string;
+        };
+        /**
+         * MemberCreate
+         * @description POST /members. `password` is optional — a keys-only member carries no
+         *     password hash and cannot log in until one is set.
+         */
+        MemberCreate: {
+            /** Email */
+            email: string;
+            /** Password */
+            password?: string | null;
+            /**
+             * Display Name
+             * @default
+             */
+            display_name: string;
+            /**
+             * Role
+             * @default member
+             */
+            role: string;
+        };
+        /** MemberList */
+        MemberList: {
+            /** Items */
+            items: components["schemas"]["MemberOut"][];
+        };
+        /**
+         * MemberOut
+         * @description A member of the tenant — deliberately no password_hash field; the
+         *     scrypt string never crosses the API.
+         */
+        MemberOut: {
+            /** Id */
+            id: string;
+            /** Tenant Id */
+            tenant_id: string;
+            /** Email */
+            email: string;
+            /**
+             * Display Name
+             * @default
+             */
+            display_name: string;
+            /** Role */
+            role: string;
+            /** Created At */
+            created_at?: string | null;
+        };
+        /** MemberPatch */
+        MemberPatch: {
+            /** Display Name */
+            display_name?: string | null;
+            /** Role */
+            role?: string | null;
         };
         /** MemoryConfig */
         MemoryConfig: {
@@ -584,8 +923,9 @@ export interface components {
         };
         /**
          * ModelRef
-         * @description Reference to a model. `api_key_env` names an environment variable —
-         *     the secret itself never enters the domain.
+         * @description Reference to a model. `credential_ref` is a *reference* (env-var name
+         *     or stored credential id) — credential material never enters the domain,
+         *     a snapshot, or an API response (ADR 0006 §1).
          */
         ModelRef: {
             /** Provider */
@@ -594,8 +934,8 @@ export interface components {
             model: string;
             /** Base Url */
             base_url?: string | null;
-            /** Api Key Env */
-            api_key_env?: string | null;
+            /** Credential Ref */
+            credential_ref?: (components["schemas"]["EnvCredentialRef"] | components["schemas"]["StoredCredentialRef"]) | null;
         };
         /** RunCancelled */
         RunCancelled: {
@@ -714,6 +1054,8 @@ export interface components {
              * @default
              */
             agent_version_id: string;
+            /** Tenant Id */
+            tenant_id?: string | null;
             /** Session Id */
             session_id?: string | null;
             /**
@@ -792,6 +1134,20 @@ export interface components {
             detail?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /**
+         * StoredCredentialRef
+         * @description Credential reference: a stored (BYOK) credential id, tenant-scoped at
+         *     resolution time (ADR 0006). An id alone is never authorization.
+         */
+        StoredCredentialRef: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "stored";
+            /** Credential Id */
+            credential_id: string;
         };
         /** StrategyConfig */
         StrategyConfig: {
@@ -1047,6 +1403,29 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+        };
+        /**
+         * WhoamiResponse
+         * @description GET /auth/whoami — the acting principal. `mode` mirrors
+         *     domain.auth.AuthMode; `email`/`display_name` are None/"" for the
+         *     anonymous principal.
+         */
+        WhoamiResponse: {
+            /** Tenant Id */
+            tenant_id: string;
+            /** Mode */
+            mode: string;
+            /** User Id */
+            user_id?: string | null;
+            /** Email */
+            email?: string | null;
+            /**
+             * Display Name
+             * @default
+             */
+            display_name: string;
+            /** Role */
+            role?: string | null;
         };
     };
     responses: never;
@@ -1319,6 +1698,77 @@ export interface operations {
             };
         };
     };
+    login_v1_auth_login_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhoamiResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    logout_v1_auth_logout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    whoami_v1_auth_whoami_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhoamiResponse"];
+                };
+            };
+        };
+    };
     capabilities_v1_capabilities_get: {
         parameters: {
             query?: never;
@@ -1469,6 +1919,322 @@ export interface operations {
             };
         };
     };
+    list_members_v1_members_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberList"];
+                };
+            };
+        };
+    };
+    create_member_v1_members_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemberCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_member_v1_members__user_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_member_v1_members__user_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemberPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_api_keys_v1_api_keys_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyList"];
+                };
+            };
+        };
+    };
+    create_api_key_v1_api_keys_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApiKeyCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_api_key_v1_api_keys__key_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_credentials_v1_credentials_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialList"];
+                };
+            };
+        };
+    };
+    create_credential_v1_credentials_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_credential_v1_credentials__credential_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                credential_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_credential_v1_credentials__credential_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                credential_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     conversation_messages_v1_conversations__agent_id___session_id__messages_get: {
         parameters: {
             query?: {
@@ -1509,6 +2275,7 @@ export interface operations {
                 provider: string;
                 base_url?: string | null;
                 api_key_env?: string | null;
+                credential_id?: string | null;
             };
             header?: never;
             path?: never;

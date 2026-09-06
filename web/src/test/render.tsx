@@ -61,7 +61,11 @@ export const TEST_CAPABILITIES: Capabilities = {
     observability: { enabled: false, stage: "S7", summary: "Traces and spans" },
     plugins: { enabled: false, stage: "S3", summary: "Strategy plugins" },
     triggers: { enabled: false, stage: "S13", summary: "Cron, webhook, and event rules" },
-    settings: { enabled: false, stage: "S2", summary: "Auth, tenants, API keys" },
+    settings: {
+      enabled: true,
+      summary: "Auth, tenants, API keys, BYOK credentials",
+      detail: { auth_mode: "required", credentials: { available: true } },
+    },
   },
 };
 

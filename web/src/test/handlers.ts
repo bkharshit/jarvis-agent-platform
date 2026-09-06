@@ -80,6 +80,56 @@ export const eventLogFixture = [
   { cursor: 5, event: { event_id: "r5", run_id: "run-abc-123", type: "run.completed", final_message: "It is 4.", total_usage: { input_tokens: 12, output_tokens: 4, extra: {} }, iterations: 1 } },
 ];
 
+/** The signed-in principal matching the settings fixtures below. */
+export const whoamiFixture = {
+  tenant_id: "default",
+  mode: "session",
+  user_id: "user-1",
+  email: "owner@acme.test",
+  display_name: "Owner",
+  role: "owner",
+};
+
+export const memberFixture = {
+  id: "user-2",
+  tenant_id: "default",
+  email: "member@acme.test",
+  display_name: "Member Two",
+  role: "member",
+  created_at: "2026-09-05T09:00:00Z",
+};
+
+export const apiKeyFixture = {
+  id: "key-1",
+  tenant_id: "default",
+  user_id: "user-1",
+  name: "ci",
+  key_prefix: "jarvis_sk_1a2b3c4d5e6f",
+  created_at: "2026-09-05T09:00:00Z",
+  last_used_at: null,
+  revoked_at: null,
+};
+
+/** Create-time response: the ONLY payload that ever carries the plaintext. */
+export const apiKeyCreatedFixture = {
+  id: "key-2",
+  name: "cli key",
+  key_prefix: "jarvis_sk_9f8e7d6c5b4a",
+  plaintext: "jarvis_sk_9f8e7d6c5b4a3210fedcba9876543210fedcba9876543210abcd",
+  created_at: "2026-09-05T10:00:00Z",
+};
+
+export const credentialFixture = {
+  id: "cred-1",
+  tenant_id: "default",
+  name: "prod key",
+  provider: "openai_compatible",
+  created_by: "user-1",
+  created_at: "2026-09-05T09:00:00Z",
+  updated_at: null,
+  revoked_at: null,
+};
+
 export const handlers = [
   http.get("/v1/agents", () => HttpResponse.json({ items: agentsFixture })),
   http.post("/v1/agents", () => HttpResponse.json({ definition: agentFixture, versions: [] }, { status: 201 })),
@@ -235,10 +285,32 @@ export const handlers = [
         observability: { enabled: false, stage: "S7", summary: "Traces and spans" },
         plugins: { enabled: false, stage: "S3", summary: "Strategy plugins" },
         triggers: { enabled: false, stage: "S13", summary: "Cron, webhook, and event rules" },
-        settings: { enabled: false, stage: "S2", summary: "Auth, tenants, API keys" },
+        settings: {
+          enabled: true,
+          summary: "Auth, tenants, API keys, BYOK credentials",
+          detail: { auth_mode: "required", credentials: { available: true } },
+        },
       },
     });
   }),
+  // --- auth (S2) ----------------------------------------------------------
+  http.get("/v1/auth/whoami", () => HttpResponse.json(whoamiFixture)),
+  http.post("/v1/auth/login", () => HttpResponse.json(whoamiFixture)),
+  http.post("/v1/auth/logout", () => new HttpResponse(null, { status: 204 })),
+  // --- members ------------------------------------------------------------
+  http.get("/v1/members", () => HttpResponse.json({ items: [memberFixture] })),
+  http.post("/v1/members", () => HttpResponse.json(memberFixture, { status: 201 })),
+  http.patch("/v1/members/:user_id", () => HttpResponse.json(memberFixture)),
+  http.delete("/v1/members/:user_id", () => new HttpResponse(null, { status: 204 })),
+  // --- API keys -----------------------------------------------------------
+  http.get("/v1/api-keys", () => HttpResponse.json({ items: [apiKeyFixture] })),
+  http.post("/v1/api-keys", () => HttpResponse.json(apiKeyCreatedFixture, { status: 201 })),
+  http.delete("/v1/api-keys/:key_id", () => new HttpResponse(null, { status: 204 })),
+  // --- BYOK credentials -----------------------------------------------------
+  http.get("/v1/credentials", () => HttpResponse.json({ items: [credentialFixture] })),
+  http.post("/v1/credentials", () => HttpResponse.json(credentialFixture, { status: 201 })),
+  http.patch("/v1/credentials/:credential_id", () => HttpResponse.json(credentialFixture)),
+  http.delete("/v1/credentials/:credential_id", () => new HttpResponse(null, { status: 204 })),
 ];
 
 /** Build a frozen-shape error envelope body (D13/D16). */
