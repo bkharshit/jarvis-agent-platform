@@ -191,7 +191,7 @@ export function toSavePayload(draft: AgentDraft): SavePayload {
       error:
         credentialKind === "env"
           ? "credential: name the environment variable"
-          : "credential: paste the stored credential id (Settings → Credentials)",
+          : "credential: paste the stored credential id (Settings → Provider LLM Credentials)",
     };
   }
   const credentialRef =

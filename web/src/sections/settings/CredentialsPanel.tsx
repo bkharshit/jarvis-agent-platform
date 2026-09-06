@@ -62,9 +62,15 @@ export function CredentialsPanel({
   };
 
   return (
-    <section className="mt-10" aria-label="Credentials">
+    <section className="mt-10" aria-label="Provider LLM Credentials (BYOK)">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Credentials</h2>
+        <div>
+          <h2 className="text-lg font-semibold">Provider LLM Credentials (BYOK)</h2>
+          <p className="mt-0.5 text-xs text-neutral-500">
+            Secrets JARVIS uses to call model providers on your agents&apos; behalf —
+            never shown again after saving.
+          </p>
+        </div>
         {canManage && (
           <button
             type="button"

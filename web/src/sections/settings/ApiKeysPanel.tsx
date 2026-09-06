@@ -30,9 +30,14 @@ export function ApiKeysPanel({ canCreate }: { canCreate: boolean }) {
   };
 
   return (
-    <section className="mt-10" aria-label="API keys">
+    <section className="mt-10" aria-label="JARVIS API keys">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">API keys</h2>
+        <div>
+          <h2 className="text-lg font-semibold">JARVIS API keys</h2>
+          <p className="mt-0.5 text-xs text-neutral-500">
+            Authenticate to this platform&apos;s API — scripts, CI, the CLI.
+          </p>
+        </div>
         {canCreate && (
           <form onSubmit={submit} className="flex items-center gap-2">
             <input

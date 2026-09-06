@@ -91,8 +91,8 @@ describe("<SettingsPage/>", () => {
     expect(screen.getByText("session")).toBeInTheDocument();
     // owner role → member management controls are live
     expect(screen.getByRole("button", { name: "Invite member" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "API keys" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Credentials" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "JARVIS API keys" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Provider LLM Credentials (BYOK)" })).toBeInTheDocument();
   });
 
   it("says anonymous mode out loud and hides mutating controls", async () => {
@@ -110,7 +110,7 @@ describe("<SettingsPage/>", () => {
     expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Invite member" })).not.toBeInTheDocument();
     // but the panels still read their data honestly
-    expect(await screen.findByRole("region", { name: "API keys" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "JARVIS API keys" })).toBeInTheDocument();
     expect(user).toBeDefined();
   });
 

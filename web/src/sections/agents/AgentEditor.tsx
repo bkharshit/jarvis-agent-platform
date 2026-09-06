@@ -266,7 +266,7 @@ function AgentEditorForm() {
                   aria-label="Stored credential id"
                   className={`${inputClass} mt-1`}
                   value={draft.model.credential_value}
-                  placeholder="credential id (Settings → Credentials)"
+                  placeholder="credential id (Settings → Provider LLM Credentials)"
                   onChange={(e) =>
                     update({ model: { ...draft.model, credential_value: e.target.value } })
                   }
@@ -292,7 +292,7 @@ function AgentEditorForm() {
                   </select>
                   {(credentials.data ?? []).length === 0 && (
                     <p className="mt-1 text-xs text-amber-400">
-                      No stored credentials yet — create one in Settings → Credentials.
+                      No stored credentials yet — create one in Settings → Provider LLM Credentials.
                     </p>
                   )}
                 </>

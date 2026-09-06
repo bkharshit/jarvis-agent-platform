@@ -83,7 +83,7 @@ function SettingsInner() {
     <div className="mx-auto max-w-4xl px-6 py-8">
       <h1 className="text-xl font-semibold">Settings</h1>
       <p className="mt-1 text-sm text-neutral-400">
-        Authentication, tenant members, API keys, and BYOK credentials.
+        Authentication, tenant members, JARVIS API keys, and provider LLM credentials (BYOK).
       </p>
 
       {facts.authMode === "anonymous" && (
