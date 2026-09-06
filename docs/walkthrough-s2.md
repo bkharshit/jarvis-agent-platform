@@ -269,10 +269,11 @@ curl -s -N -X POST localhost:8002/v1/agents/$AGENT/stream -H "Authorization: Bea
   -H 'Content-Type: application/json' -d '{"input":"Reply with the single word: ok."}' | tail -4
 
 RUN=$(curl -s "localhost:8002/v1/executions?agent_id=$AGENT" -H "Authorization: Bearer $ACME_KEY" \
-  | python3 -c "import json,sys;print(json.load(sys.stdin)['items'][0]['id'])")
+  | python3 -c "import json,sys;print(json.load(sys.stdin)['items'][0]['run_id'])")
+# note: executions list items are RunResult rows — the field is run_id
 curl -s localhost:8002/v1/executions/$RUN -H "Authorization: Bearer $ACME_KEY" \
   | python3 -c "import json,sys;r=json.load(sys.stdin)['run'];print(r['status'], r['error_kind'], r['error'])"
-# → completed None None
+# → succeeded None None   (terminal event run.completed; row status "succeeded")
 ```
 
 ### 5. BYOK credential — write-only, encrypted at rest
@@ -339,7 +340,8 @@ curl -s -N -X POST localhost:8002/v1/agents/$G_AGENT/stream -b /tmp/globex.jar \
   -H 'Content-Type: application/json' -d '{"input":"hi"}' > /dev/null
 
 G_RUN=$(curl -s "localhost:8002/v1/executions?agent_id=$G_AGENT" -b /tmp/globex.jar \
-  | python3 -c "import json,sys;print(json.load(sys.stdin)['items'][0]['id'])")
+  | python3 -c "import json,sys;print(json.load(sys.stdin)['items'][0]['run_id'])")
+# note: executions list items are RunResult rows — the field is run_id
 curl -s localhost:8002/v1/executions/$G_RUN -b /tmp/globex.jar \
   | python3 -c "import json,sys;r=json.load(sys.stdin)['run'];print(r['status'], r['error_kind'], r['error'])"
 # → failed model "credential '<cred-id>' not found"
