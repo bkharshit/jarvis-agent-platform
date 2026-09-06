@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+
 from jarvis.domain.agent import (
     AgentDefinition,
     AgentVersion,
@@ -16,13 +18,14 @@ from jarvis.domain.agent import (
     StrategyConfig,
     ToolBinding,
 )
-from jarvis.domain.events import validate_event_sequence
+from jarvis.domain.events import EventSequenceError, TextDelta, validate_event_sequence
 from jarvis.domain.execution import ExecutionContext, RunResult
 from jarvis.domain.message import Message, ToolCall, Usage
 from jarvis.domain.tools import ToolDescriptor
 from jarvis.models.errors import ModelBadRequestError
 from jarvis.models.factory import DefaultModelProviderFactory
 from jarvis.models.mock import MockModelProvider, turn
+from jarvis.ports.strategy import AskHumanStep, FinishStep
 from jarvis.runtime.agent_runtime import AgentRuntime
 from jarvis.runtime.limits import RunLimits
 from jarvis.strategies.registry import DefaultStrategyRegistry
@@ -51,6 +54,7 @@ class _RecordingRepo:
         self.tool_executions: list[tuple[str, object]] = []
         self.started: list[RunResult] = []
         self.finished: list[RunResult] = []
+        self.awaited: list[tuple[str, object]] = []
         self.conversations: dict[str, list[Message]] = {}
         self.sequences: dict[str, list[int]] = {}
 
@@ -60,6 +64,9 @@ class _RecordingRepo:
 
     async def finish_run(self, result):
         self.finished.append(result)
+
+    async def mark_awaiting_input(self, run_id, awaiting_until):
+        self.awaited.append((run_id, awaiting_until))
 
     async def save_message(self, run_id, message):
         self.messages.setdefault(run_id, []).append(message)
@@ -121,6 +128,9 @@ def _calc_binding():
     from jarvis.tools.builtin.calculator import CalculatorTool
 
     return CalculatorTool(), ToolBinding(name="calculator")
+
+
+_APPROVAL_CALL = [ToolCall(id="c1", name="calculator", arguments={"expression": "1"})]
 
 
 class TestResolutionFailure:
@@ -554,3 +564,201 @@ class TestBlockingVsStreamedEquivalence:
 
         assert received == blocking_types
         validate_event_sequence(streaming_sink.events)
+
+
+class _AskHumanStrategy:
+    """Fixture strategy: asks the human, then finishes with the answer."""
+
+    name = "ask_human_fixture"
+
+    def __init__(self, question: str = "Which environment?"):
+        self._question = question
+        self.answered_with: str | None = None
+        self.calls = 0
+
+    async def step(self, ctx, messages, client, tools, sink):
+        self.calls += 1
+        # First step() asks; the next one (after the resume answer lands as
+        # the newest user message) finishes with the answer.
+        last = messages[-1]
+        if self.calls > 1:
+            self.answered_with = last.text
+            return FinishStep(
+                assistant_message=Message(role="assistant", content=f"deploying to {last.text}")
+            )
+        return AskHumanStep(
+            assistant_message=Message(role="assistant", content=self._question),
+            question=self._question,
+        )
+
+
+class TestPauseToolApproval:
+    def _gated_binding(self):
+        return ToolBinding(name="calculator", config={"requires_approval": True})
+
+    async def test_gated_tool_pauses_with_pending_calls(self):
+        calc, _ = _calc_binding()
+        provider = MockModelProvider(
+            [
+                turn(
+                    tool_calls=[
+                        ToolCall(id="c1", name="calculator", arguments={"expression": "6*7"})
+                    ]
+                ),
+                turn("never reached in this segment"),
+            ]
+        )
+        agent = _agent(tools=[self._gated_binding()])
+        repo = _RecordingRepo()
+        runtime = _runtime(provider, tools=[calc], repo=repo)
+
+        result = await runtime.run(_version(agent), "compute", _ctx("run-pause-1"))
+
+        assert result.status == "awaiting_input"
+        assert result.finished_at is None  # paused, not finished
+        assert repo.finished == []  # no terminal write
+        assert len(repo.awaited) == 1  # mark_awaiting_input(run_id, until)
+        events = runtime.bus.get("run-pause-1").events
+        types = [e.type for e in events]
+        assert types[-1] == "run.awaiting_input"
+        assert types.count("tool.call.requested") == 1
+        assert "tool.call.started" not in types  # nothing executed yet
+        pause = events[-1]
+        assert pause.reason == "tool_approval"
+        assert [c.id for c in pause.pending_calls] == ["c1"]
+        assert pause.awaiting_until > datetime.now(UTC)
+        # Gapless within the segment; the pause ends it (no terminal yet).
+        assert [e.sequence for e in events] == list(range(len(events)))
+        # The segment is closed — further appends on this sink are refused.
+        with pytest.raises(EventSequenceError, match="segment at a pause"):
+            sink = runtime.bus.get("run-pause-1")
+            await sink.append(TextDelta(event_id="x", run_id="run-pause-1", text="late"))
+
+    async def test_annotation_gates_without_binding_config(self):
+        class _GatedTimeTool(BaseTool):
+            def __init__(self):
+                super().__init__(
+                    ToolDescriptor(
+                        name="current_time",
+                        description="time",
+                        parameters={},
+                        annotations={"requires_approval": True},
+                    )
+                )
+
+            async def _execute(self, arguments, context):
+                return "12:00"
+
+        provider = MockModelProvider(
+            [turn(tool_calls=[ToolCall(id="c1", name="current_time", arguments={})]), turn("x")]
+        )
+        agent = _agent(tools=[ToolBinding(name="current_time")])
+        runtime = _runtime(provider, tools=[_GatedTimeTool()])
+
+        result = await runtime.run(_version(agent), "time?", _ctx("run-pause-2"))
+
+        assert result.status == "awaiting_input"
+        pending = runtime.bus.get("run-pause-2").events[-1].pending_calls
+        assert [c.name for c in pending] == ["current_time"]
+
+    async def test_binding_config_wins_over_descriptor(self):
+        calc, _ = _calc_binding()
+        calc.descriptor.annotations = {"requires_approval": True}
+
+        # Binding says NOT required — the descriptor's gate is overridden.
+        provider = MockModelProvider(
+            [
+                turn(tool_calls=_APPROVAL_CALL),
+                turn("ok"),
+            ]
+        )
+        agent = _agent(tools=[ToolBinding(name="calculator", config={"requires_approval": False})])
+        runtime = _runtime(provider, tools=[calc])
+        result = await runtime.run(_version(agent), "x", _ctx("run-pause-3a"))
+        assert result.status == "succeeded"
+
+        # Binding says required — wins the same way.
+        provider2 = MockModelProvider(
+            [
+                turn(tool_calls=_APPROVAL_CALL),
+                turn("x"),
+            ]
+        )
+        agent2 = _agent(tools=[ToolBinding(name="calculator", config={"requires_approval": True})])
+        runtime2 = _runtime(provider2, tools=[calc])
+        result2 = await runtime2.run(_version(agent2), "x", _ctx("run-pause-3b"))
+        assert result2.status == "awaiting_input"
+
+    async def test_only_gated_calls_are_pending(self):
+        from jarvis.tools.builtin.current_time import CurrentTimeTool
+
+        calc, _ = _calc_binding()
+        now_tool = CurrentTimeTool()
+        provider = MockModelProvider(
+            [
+                turn(
+                    tool_calls=[
+                        ToolCall(id="c1", name="calculator", arguments={"expression": "1"}),
+                        ToolCall(id="c2", name="current_time", arguments={}),
+                    ]
+                ),
+                turn("x"),
+            ]
+        )
+        agent = _agent(tools=[self._gated_binding(), ToolBinding(name="current_time")])
+        runtime = _runtime(provider, tools=[calc, now_tool])
+
+        result = await runtime.run(_version(agent), "x", _ctx("run-pause-4"))
+
+        assert result.status == "awaiting_input"
+        pending = runtime.bus.get("run-pause-4").events[-1].pending_calls
+        assert [c.id for c in pending] == ["c1"]  # the ungated call is not pending
+        events = runtime.bus.get("run-pause-4").events
+        started = [e for e in events if e.type == "tool.call.started"]
+        assert started == []  # nothing executed while gated calls are pending
+
+
+class TestPauseStrategyAsk:
+    async def test_ask_human_step_pauses_with_question(self):
+        repo = _RecordingRepo()
+        strategy = _AskHumanStrategy("Which environment?")
+        runtime = AgentRuntime(
+            strategies=SimpleNamespace(resolve=lambda config: strategy),
+            tools=InMemoryToolRegistry(),
+            tool_runtime=ToolRuntime(InMemoryToolRegistry()),
+            models=DefaultModelProviderFactory(mock_provider=MockModelProvider([turn("never")])),
+            conversations=repo,
+            executions=repo,
+        )
+
+        result = await runtime.run(_version(_agent()), "deploy", _ctx("run-pause-5"))
+
+        assert result.status == "awaiting_input"
+        assert repo.finished == []
+        assert len(repo.awaited) == 1
+        # The assistant's question is persisted as a message.
+        roles = [m.role for m in repo.messages["run-pause-5"]]
+        assert roles == ["user", "assistant"]
+        events = runtime.bus.get("run-pause-5").events
+        assert [e.type for e in events] == [
+            "run.started",
+            "iteration.started",
+            "run.awaiting_input",
+        ]
+        pause = events[-1]
+        assert pause.reason == "strategy"
+        assert pause.question == "Which environment?"
+        assert pause.pending_calls == []
+
+    async def test_ask_human_strategy_without_repo_still_pauses(self):
+        strategy = _AskHumanStrategy()
+        runtime = AgentRuntime(
+            strategies=SimpleNamespace(resolve=lambda config: strategy),
+            tools=InMemoryToolRegistry(),
+            tool_runtime=ToolRuntime(InMemoryToolRegistry()),
+            models=DefaultModelProviderFactory(mock_provider=MockModelProvider([turn("never")])),
+            conversations=None,
+            executions=None,
+        )
+        result = await runtime.run(_version(_agent()), "deploy", _ctx("run-pause-6"))
+        assert result.status == "awaiting_input"

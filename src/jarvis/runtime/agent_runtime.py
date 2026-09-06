@@ -12,18 +12,19 @@ task, so both modes produce identical event sequences."""
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from uuid import uuid4
 
 import jsonschema
 
-from jarvis.domain.agent import AgentDefinition, AgentVersion
+from jarvis.domain.agent import AgentDefinition, AgentVersion, ToolBinding
 from jarvis.domain.events import (
     EventSequenceError,
     IterationCompleted,
     IterationStarted,
+    RunAwaitingInput,
     RunCancelled,
     RunCompleted,
     RunFailed,
@@ -34,13 +35,19 @@ from jarvis.domain.events import (
     ToolCallStarted,
 )
 from jarvis.domain.execution import ExecutionCancelled, ExecutionContext, RunResult
-from jarvis.domain.message import Message
+from jarvis.domain.message import Message, ToolCall
 from jarvis.domain.tools import ToolContext, ToolDescriptor
 from jarvis.events.bus import InProcessEventBus, InProcessEventSink
 from jarvis.models.errors import ModelAbortedError, ModelError
 from jarvis.ports.model import ModelClient, ModelProviderFactory
 from jarvis.ports.repository import ConversationRepo, ExecutionRepo
-from jarvis.ports.strategy import FinishStep, StepOutcome, StrategyRegistry, ToolCallsStep
+from jarvis.ports.strategy import (
+    AskHumanStep,
+    FinishStep,
+    StepOutcome,
+    StrategyRegistry,
+    ToolCallsStep,
+)
 from jarvis.ports.tools import ToolRegistry
 from jarvis.prompt.engine import PromptContext, PromptEngine
 from jarvis.runtime.limits import RunLimits
@@ -48,14 +55,29 @@ from jarvis.tools.runtime import ToolRuntime
 
 ErrorKind = Literal["max_iterations", "timeout", "model", "tool", "output_schema"]
 
+DEFAULT_AWAITING_INPUT_TIMEOUT_SECONDS = 86_400.0
+
+
+@dataclass
+class PauseOutcome:
+    """Why the loop paused (S10, ADR 0010 §1). `awaiting_until` carries the
+    deadline stamped on both the pause event and the run row."""
+
+    reason: Literal["tool_approval", "strategy"]
+    question: str = ""
+    pending_calls: list[ToolCall] = field(default_factory=list)  # approval-gated calls
+    awaiting_until: datetime | None = None
+    pause_cursor: int | None = None  # the run.awaiting_input event's cursor
+
 
 @dataclass
 class LoopOutcome:
-    kind: str  # "completed" | "failed"
+    kind: str  # "completed" | "failed" | "paused"
     final_message: str | None = None
     error: str | None = None
     error_kind: ErrorKind | None = None
     iterations: int = 0
+    pause: PauseOutcome | None = None
 
 
 class AgentRuntime:
@@ -166,7 +188,10 @@ class AgentRuntime:
         finally:
             self._live_tokens.pop(ctx.run_id, None)
 
-        if self._executions is not None:
+        if self._executions is not None and result.status != "awaiting_input":
+            # A paused run already wrote its awaiting_input row (mark, not
+            # finish) — finish_run would stamp finished_at and clear the
+            # pause deadline (S10).
             await self._executions.finish_run(result)
         return result
 
@@ -217,6 +242,40 @@ class AgentRuntime:
             await self._conversations.append_message(conversation_id, user_message, ctx.run_id)  # type: ignore[union-attr]
 
         outcome = await self._loop(ctx, agent, client, sink, messages, conversation_id)
+
+        if outcome.kind == "paused":
+            pause = outcome.pause
+            if pause is None:  # the loop always sets it — defensive terminal
+                return await self._terminal_failed(
+                    ctx,
+                    sink,
+                    "internal error: paused without a pause outcome",
+                    "model",
+                    started_at,
+                    input,
+                    iterations=outcome.iterations,
+                )
+            # S10 (ADR 0010 §3): the loop returned WITHOUT finalize — the run
+            # row flips to awaiting_input (the worker acks the queue row).
+            # No terminal event: exactly-one-terminal still holds for the
+            # whole run; the resumed segment continues the sequence.
+            if self._executions is not None and pause.awaiting_until is not None:
+                await self._executions.mark_awaiting_input(ctx.run_id, pause.awaiting_until)
+            return RunResult(
+                run_id=ctx.run_id,
+                agent_id=ctx.agent_id,
+                status="awaiting_input",
+                input=input,
+                agent_version_id=ctx.agent_version_id,
+                tenant_id=ctx.tenant_id,
+                session_id=ctx.session_id,
+                trace_id=ctx.trace_id,
+                total_usage=ctx.usage,
+                iterations=outcome.iterations,
+                started_at=started_at,
+                finished_at=None,  # paused, not finished
+                event_cursor=pause.pause_cursor,
+            )
 
         if outcome.kind == "completed":
             cursor = await self._finalize(
@@ -330,7 +389,18 @@ class AgentRuntime:
                     kind="completed", final_message=final_text, iterations=iteration + 1
                 )
 
+            if isinstance(step, AskHumanStep):
+                # S10 (ADR 0010 §3.2): the strategy wants a human answer. The
+                # assistant message is already persisted; pause the run.
+                return await self._pause(
+                    sink, ctx, PauseOutcome(reason="strategy", question=step.question), iteration
+                )
+
             assert isinstance(step, ToolCallsStep)
+            # S10 (ADR 0010 §3.1): approval is checked BEFORE the batch
+            # executes. Every call gets its tool.call.requested frame; a
+            # gated batch pauses with the gated subset pending — no
+            # tool.call.started until the human answers.
             for call in step.tool_calls:
                 await sink.append(
                     ToolCallRequested(
@@ -342,6 +412,19 @@ class AgentRuntime:
                         arguments=dict(call.arguments),
                     )
                 )
+            gated = [
+                call
+                for call in step.tool_calls
+                if self._approval_required(bindings, descriptors, call.name)
+            ]
+            if gated:
+                return await self._pause(
+                    sink,
+                    ctx,
+                    PauseOutcome(reason="tool_approval", pending_calls=gated),
+                    iteration,
+                )
+            for call in step.tool_calls:
                 await sink.append(
                     ToolCallStarted(
                         event_id=_uuid(),
@@ -412,6 +495,56 @@ class AgentRuntime:
                     error_kind="max_iterations",
                     iterations=iteration,
                 )
+
+    # --- pause (S10, ADR 0010) ----------------------------------------------
+
+    async def _pause(
+        self,
+        sink: InProcessEventSink,
+        ctx: ExecutionContext,
+        outcome: PauseOutcome,
+        iteration: int,
+    ) -> LoopOutcome:
+        """Emit run.awaiting_input and end the segment. No IterationCompleted —
+        the iteration is unfinished; the resumed segment re-counts iterations
+        from the persisted iteration.started events."""
+        awaiting_until = datetime.now(UTC) + timedelta(
+            seconds=(
+                self._limits.awaiting_input_timeout_seconds
+                if self._limits is not None
+                else DEFAULT_AWAITING_INPUT_TIMEOUT_SECONDS
+            )
+        )
+        outcome.awaiting_until = awaiting_until
+        outcome.pause_cursor = await sink.append(
+            RunAwaitingInput(
+                event_id=_uuid(),
+                run_id=ctx.run_id,
+                created_at=_now(),
+                reason=outcome.reason,
+                question=outcome.question,
+                pending_calls=outcome.pending_calls,
+                awaiting_until=awaiting_until,
+            )
+        )
+        return LoopOutcome(kind="paused", iterations=iteration, pause=outcome)
+
+    def _approval_required(
+        self,
+        bindings: dict[str, ToolBinding],
+        descriptors: list[ToolDescriptor],
+        tool_name: str,
+    ) -> bool:
+        """S10 (ADR 0010 §3.1): the binding's config wins over the
+        descriptor's annotations — any bound tool can be gated per-agent
+        without a new tool."""
+        binding = bindings.get(tool_name)
+        if binding is not None and "requires_approval" in binding.config:
+            return bool(binding.config["requires_approval"])
+        descriptor = next((d for d in descriptors if d.name == tool_name), None)
+        if descriptor is not None:
+            return bool(descriptor.annotations.get("requires_approval", False))
+        return False
 
     # --- memory -------------------------------------------------------------
 

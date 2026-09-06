@@ -14,6 +14,9 @@ LIMIT_MAX_ITERATIONS = 32
 class RunLimits:
     max_iterations: int = 8
     max_total_tokens: int | None = None
+    # The pause deadline span (S10, ADR 0010 §6): awaiting_until = now + this
+    # at pause time; the sweeper's reaper scans for expired ones.
+    awaiting_input_timeout_seconds: float = 86_400.0
 
     def exceeded(self, ctx: ExecutionContext) -> str | None:
         """Return a reason string when a budget limit is exceeded, else None.

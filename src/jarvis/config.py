@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     run_max_iterations: int = 8
     run_max_total_tokens: int | None = None
     run_timeout_seconds: float | None = None
+    # How long a paused (awaiting_input) run may sit before the sweeper's
+    # pause-reaper cancels it (S10, ADR 0010 §6) — no run is ever stuck.
+    awaiting_input_timeout_seconds: float = 86_400.0
 
     # --- distributed runs (S1, ADR 0008) ----------------------------------
     # Every run goes through the queue. `serve` embeds a worker by default

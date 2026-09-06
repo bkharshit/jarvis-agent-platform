@@ -85,6 +85,7 @@ class AppContainer:
         limits = RunLimits(
             max_iterations=settings.run_max_iterations,
             max_total_tokens=settings.run_max_total_tokens,
+            awaiting_input_timeout_seconds=settings.awaiting_input_timeout_seconds,
         )
         # The persist callback makes the sink cursor the durable
         # execution_events.cursor (SSE Last-Event-ID, ADR 0003). Sinks are

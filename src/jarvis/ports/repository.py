@@ -8,6 +8,7 @@ and repoints `agents.current_version` — history is never rewritten.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import datetime
 from typing import Protocol
 
 from jarvis.domain.agent import AgentDefinition, AgentVersion
@@ -51,6 +52,10 @@ class ExecutionRepo(Protocol):
     async def create_run(self, result: RunResult) -> None: ...
 
     async def finish_run(self, result: RunResult) -> None: ...
+
+    async def mark_awaiting_input(self, run_id: str, awaiting_until: datetime) -> None:
+        """running → awaiting_input with the pause deadline (S10, ADR 0010)."""
+        ...
 
     async def get(self, run_id: str) -> RunResult | None: ...
 
