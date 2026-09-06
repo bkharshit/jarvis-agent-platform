@@ -20,6 +20,7 @@ from jarvis import __version__
 from jarvis.api.deps import AppContainer
 from jarvis.config import Settings
 from jarvis.domain.agent import AgentDefinition
+from jarvis.domain.auth import UserAccount
 from jarvis.domain.events import (
     ExecutionEvent,
     IterationStarted,
@@ -34,12 +35,24 @@ from jarvis.domain.events import (
     ToolCallStarted,
 )
 from jarvis.domain.message import user as user_message
+from jarvis.security import (
+    generate_api_key,
+    hash_api_key,
+    hash_password,
+    key_prefix,
+)
 
 app = typer.Typer(no_args_is_help=True, help="JARVIS agent platform CLI")
 agent_app = typer.Typer(no_args_is_help=True, help="Manage agents")
 executions_app = typer.Typer(no_args_is_help=True, help="Inspect executions")
+tenant_app = typer.Typer(no_args_is_help=True, help="Manage tenants")
+user_app = typer.Typer(no_args_is_help=True, help="Manage users")
+apikey_app = typer.Typer(no_args_is_help=True, help="Manage API keys")
 app.add_typer(agent_app, name="agent")
 app.add_typer(executions_app, name="executions")
+app.add_typer(tenant_app, name="tenant")
+app.add_typer(user_app, name="user")
+app.add_typer(apikey_app, name="api-key")
 
 console = Console()
 err_console = Console(stderr=True)
@@ -416,6 +429,100 @@ def executions_show(
             async for event in container.executions.list_events(run_id):
                 _print_event(event)
             console.print()
+
+    asyncio.run(_with_container(action))
+
+
+# --- tenancy bootstrap (S2, ADR 0009 §9) ----------------------------------
+# The chicken-and-egg commands: provision the first tenant/owner/key without
+# an authenticated route (there is no principal yet to authenticate). The CLI
+# is an in-process platform consumer (D26) and stays anonymous.
+
+
+@tenant_app.command("create")
+def tenant_create(
+    tenant_id: str,
+    name: str | None = typer.Argument(None, help="Display name (defaults to the id)."),
+) -> None:
+    """Create a tenant."""
+
+    async def action(container: AppContainer) -> None:
+        if await container.auth.get_tenant(tenant_id) is not None:
+            err_console.print(f"[red]tenant {tenant_id!r} already exists[/red]")
+            raise typer.Exit(1)
+        await container.auth.create_tenant(tenant_id, name or tenant_id)
+        console.print(f"[green]created[/green] tenant {tenant_id} ({name or tenant_id})")
+
+    asyncio.run(_with_container(action))
+
+
+def _role(role: str) -> str:
+    if role not in ("owner", "admin", "member"):
+        err_console.print(f"[red]role must be one of owner|admin|member, got {role!r}[/red]")
+        raise typer.Exit(1)
+    return role
+
+
+@user_app.command("create")
+def user_create(
+    tenant_id: str,
+    email: str,
+    display_name: str = typer.Option("", "--display-name"),
+    role: str = typer.Option("member", "--role", help="owner | admin | member"),
+    password: str | None = typer.Option(
+        None, "--password", help="Login password (omit for a keys-only member)."
+    ),
+) -> None:
+    """Create a user in a tenant (the first one is usually an owner)."""
+
+    async def action(container: AppContainer) -> None:
+        _role(role)
+        if await container.auth.get_tenant(tenant_id) is None:
+            err_console.print(f"[red]tenant {tenant_id!r} not found[/red]")
+            raise typer.Exit(1)
+        if await container.auth.get_user_by_email(email) is not None:
+            err_console.print(f"[red]a user with email {email!r} already exists[/red]")
+            raise typer.Exit(1)
+        user: UserAccount = await container.auth.create_user(
+            tenant_id=tenant_id,
+            email=email,
+            display_name=display_name,
+            # Secrets are hashed here and never echoed back
+            password_hash=hash_password(password) if password else None,
+            role=role,  # type: ignore[arg-type]
+        )
+        console.print(f"[green]created[/green] user {user.email} ({user.role}) in {tenant_id}")
+        console.print(f"  id: {user.id}")
+
+    asyncio.run(_with_container(action))
+
+
+@apikey_app.command("create")
+def apikey_create(
+    email: str,
+    name: str = typer.Option("cli", "--name"),
+) -> None:
+    """Create an API key for a user — the plaintext is printed ONCE."""
+
+    async def action(container: AppContainer) -> None:
+        user = await container.auth.get_user_by_email(email)
+        if user is None:
+            err_console.print(f"[red]no user with email {email!r}[/red]")
+            raise typer.Exit(1)
+        plaintext = generate_api_key()
+        record = await container.auth.create_api_key(
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            name=name,
+            key_hash=hash_api_key(plaintext),
+            key_prefix=key_prefix(plaintext),
+        )
+        console.print(f"[green]created[/green] API key {record.id} for {email} ({name})")
+        console.print(f"  key: {plaintext}")
+        err_console.print(
+            "[yellow]store it now — the plaintext is not recoverable "
+            "and is never shown again[/yellow]"
+        )
 
     asyncio.run(_with_container(action))
 
