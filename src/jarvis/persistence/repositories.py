@@ -24,6 +24,13 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import InstrumentedAttribute
 
 from jarvis.domain.agent import AgentDefinition, AgentVersion
+from jarvis.domain.auth import (
+    ApiKeyRecord,
+    SessionRecord,
+    StoredCredentialRecord,
+    TenantRole,
+    UserAccount,
+)
 from jarvis.domain.events import ExecutionEvent
 from jarvis.domain.execution import ExecutionStatus, RunResult
 from jarvis.domain.message import Message
@@ -32,12 +39,17 @@ from jarvis.persistence.models import (
     AgentExecutionRow,
     AgentRow,
     AgentVersionRow,
+    ApiKeyRow,
     ConversationRow,
+    CredentialRow,
     ExecutionEventRow,
     MessageRow,
     RunCancelRow,
     RunQueueRow,
+    SessionRow,
+    TenantRow,
     ToolExecutionRow,
+    UserRow,
 )
 from jarvis.ports.queue import RunQueueMessage
 
@@ -657,6 +669,409 @@ class SqlConversationRepo:
         return [SqlExecutionRepo._load_message(row) for row in rows]
 
 
+class SqlAuthRepo:
+    """Users, sessions, API keys, and stored credentials (S2, ADR 0009 §3).
+
+    Secret discipline at this boundary: passwords and API keys arrive as
+    *hashes* (the caller hashed them via `security/`), sessions are stored
+    by token hash, and credentials carry only the AES-GCM envelope — this
+    class never sees plaintext and could not leak it if it tried.
+
+    Every credential/api-key mutation takes a `tenant_id` and scopes the
+    WHERE clause with it: a foreign id resolves to `None`/`False`, which
+    callers map to 404 (no existence leak).
+    """
+
+    def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
+        self._sessionmaker = sessionmaker
+
+    # --- tenants -----------------------------------------------------------
+
+    async def create_tenant(self, tenant_id: str, name: str) -> None:
+        async with self._sessionmaker() as session:
+            session.add(TenantRow(id=tenant_id, name=name))
+            await session.commit()
+
+    async def get_tenant(self, tenant_id: str) -> TenantRow | None:
+        async with self._sessionmaker() as session:
+            return await session.get(TenantRow, tenant_id)
+
+    # --- users ---------------------------------------------------------------
+
+    async def create_user(
+        self,
+        *,
+        tenant_id: str,
+        email: str,
+        display_name: str = "",
+        password_hash: str | None = None,
+        role: TenantRole = "member",
+    ) -> UserAccount:
+        user = UserAccount(
+            id=_uuid(),
+            tenant_id=tenant_id,
+            email=email,
+            display_name=display_name,
+            role=role,
+            created_at=_now(),
+            password_hash=password_hash,
+        )
+        async with self._sessionmaker() as session:
+            session.add(self._user_row(user))
+            await session.commit()
+        return user
+
+    async def get_user(self, user_id: str) -> UserAccount | None:
+        async with self._sessionmaker() as session:
+            row = await session.get(UserRow, user_id)
+        return self._load_user(row) if row is not None else None
+
+    async def get_user_by_email(self, email: str) -> UserAccount | None:
+        async with self._sessionmaker() as session:
+            row = (
+                await session.execute(select(UserRow).where(UserRow.email == email))
+            ).scalar_one_or_none()
+        return self._load_user(row) if row is not None else None
+
+    async def list_users(self, tenant_id: str) -> list[UserAccount]:
+        async with self._sessionmaker() as session:
+            rows = (
+                await session.execute(
+                    select(UserRow)
+                    .where(UserRow.tenant_id == tenant_id)
+                    .order_by(UserRow.created_at)
+                )
+            ).scalars()
+            return [self._load_user(row) for row in rows]
+
+    async def update_user(
+        self,
+        user_id: str,
+        *,
+        display_name: str | None = None,
+        role: TenantRole | None = None,
+        password_hash: str | None = None,
+    ) -> UserAccount | None:
+        """Patch only the provided fields; None if the user doesn't exist."""
+        async with self._sessionmaker() as session:
+            row = await session.get(UserRow, user_id)
+            if row is None:
+                return None
+            if display_name is not None:
+                row.display_name = display_name
+            if role is not None:
+                row.role = role
+            if password_hash is not None:
+                row.password_hash = password_hash
+            await session.commit()
+            return self._load_user(row)
+
+    async def delete_user(self, user_id: str) -> bool:
+        """False if the user has API keys or credentials (caller maps to
+        409 — deleting the creator would orphan their keys); sessions
+        cascade at the DB level."""
+        async with self._sessionmaker() as session:
+            row = await session.get(UserRow, user_id)
+            if row is None:
+                return False
+            has_keys = (
+                await session.execute(
+                    select(ApiKeyRow.id).where(ApiKeyRow.user_id == user_id).limit(1)
+                )
+            ).scalar_one_or_none()
+            has_creds = (
+                await session.execute(
+                    select(CredentialRow.id).where(CredentialRow.created_by == user_id).limit(1)
+                )
+            ).scalar_one_or_none()
+            if has_keys is not None or has_creds is not None:
+                return False
+            await session.delete(row)
+            await session.commit()
+        return True
+
+    # --- sessions ----------------------------------------------------------
+
+    async def create_session(
+        self, *, user_id: str, token_hash: str, expires_at: datetime
+    ) -> SessionRecord:
+        record = SessionRecord(id=_uuid(), user_id=user_id, expires_at=expires_at)
+        async with self._sessionmaker() as session:
+            session.add(
+                SessionRow(
+                    id=record.id,
+                    user_id=user_id,
+                    token_hash=token_hash,
+                    expires_at=expires_at,
+                )
+            )
+            await session.commit()
+        return record
+
+    async def get_session_by_token_hash(
+        self, token_hash: str
+    ) -> tuple[SessionRecord, UserAccount] | None:
+        """Unexpired session joined with its user — the session-cookie
+        lookup. Expired rows simply don't match (no refresh semantics)."""
+        async with self._sessionmaker() as session:
+            result = (
+                await session.execute(
+                    select(SessionRow, UserRow)
+                    .join(UserRow, UserRow.id == SessionRow.user_id)
+                    .where(
+                        SessionRow.token_hash == token_hash,
+                        SessionRow.expires_at > _now(),
+                    )
+                )
+            ).first()
+        if result is None:
+            return None
+        session_row, user_row = result
+        record = SessionRecord(
+            id=session_row.id,
+            user_id=session_row.user_id,
+            expires_at=session_row.expires_at,
+            created_at=session_row.created_at,
+        )
+        return record, self._load_user(user_row)
+
+    async def delete_session(self, session_id: str) -> bool:
+        async with self._sessionmaker() as session:
+            row = await session.get(SessionRow, session_id)
+            if row is None:
+                return False
+            await session.delete(row)
+            await session.commit()
+        return True
+
+    # --- api keys ------------------------------------------------------------
+
+    async def create_api_key(
+        self, *, tenant_id: str, user_id: str, name: str, key_hash: str, key_prefix: str
+    ) -> ApiKeyRecord:
+        record = ApiKeyRecord(
+            id=_uuid(),
+            tenant_id=tenant_id,
+            user_id=user_id,
+            name=name,
+            key_prefix=key_prefix,
+            created_at=_now(),
+        )
+        async with self._sessionmaker() as session:
+            session.add(
+                ApiKeyRow(
+                    id=record.id,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    name=name,
+                    key_hash=key_hash,
+                    key_prefix=key_prefix,
+                    created_at=record.created_at,
+                )
+            )
+            await session.commit()
+        return record
+
+    async def get_api_key_by_hash(self, key_hash: str) -> tuple[ApiKeyRecord, UserAccount] | None:
+        """Unrevoked key joined with its owning user — the Bearer lookup."""
+        async with self._sessionmaker() as session:
+            result = (
+                await session.execute(
+                    select(ApiKeyRow, UserRow)
+                    .join(UserRow, UserRow.id == ApiKeyRow.user_id)
+                    .where(ApiKeyRow.key_hash == key_hash, ApiKeyRow.revoked_at.is_(None))
+                )
+            ).first()
+            if result is None:
+                return None
+            key_row, user_row = result
+            await session.execute(
+                update(ApiKeyRow).where(ApiKeyRow.id == key_row.id).values(last_used_at=_now())
+            )
+            await session.commit()
+        return self._load_api_key(key_row), self._load_user(user_row)
+
+    async def list_api_keys(self, tenant_id: str) -> list[ApiKeyRecord]:
+        async with self._sessionmaker() as session:
+            rows = (
+                await session.execute(
+                    select(ApiKeyRow)
+                    .where(ApiKeyRow.tenant_id == tenant_id)
+                    .order_by(ApiKeyRow.created_at.desc())
+                )
+            ).scalars()
+            return [self._load_api_key(row) for row in rows]
+
+    async def revoke_api_key(self, key_id: str, tenant_id: str) -> bool:
+        """Tenant-scoped revoke; False = no such key in this tenant (404)."""
+        async with self._sessionmaker() as session:
+            result = await session.execute(
+                update(ApiKeyRow)
+                .where(ApiKeyRow.id == key_id, ApiKeyRow.tenant_id == tenant_id)
+                .values(revoked_at=_now())
+                .returning(ApiKeyRow.id)
+            )
+            revoked = result.scalar_one_or_none() is not None
+            await session.commit()
+        return revoked
+
+    # --- stored credentials ----------------------------------------------------
+
+    async def create_credential(
+        self,
+        *,
+        tenant_id: str,
+        name: str,
+        provider: str,
+        ciphertext: dict[str, Any],
+        created_by: str,
+    ) -> StoredCredentialRecord:
+        record = StoredCredentialRecord(
+            id=_uuid(),
+            tenant_id=tenant_id,
+            name=name,
+            provider=provider,
+            ciphertext=ciphertext,
+            created_by=created_by,
+            created_at=_now(),
+            updated_at=_now(),
+        )
+        async with self._sessionmaker() as session:
+            session.add(
+                CredentialRow(
+                    id=record.id,
+                    tenant_id=tenant_id,
+                    name=name,
+                    provider=provider,
+                    ciphertext=ciphertext,
+                    created_by=created_by,
+                    created_at=record.created_at,
+                    updated_at=record.updated_at,
+                )
+            )
+            await session.commit()
+        return record
+
+    async def get_credential(
+        self, credential_id: str, tenant_id: str
+    ) -> StoredCredentialRecord | None:
+        async with self._sessionmaker() as session:
+            row = (
+                await session.execute(
+                    select(CredentialRow).where(
+                        CredentialRow.id == credential_id,
+                        CredentialRow.tenant_id == tenant_id,
+                    )
+                )
+            ).scalar_one_or_none()
+        return self._load_credential(row) if row is not None else None
+
+    async def list_credentials(self, tenant_id: str) -> list[StoredCredentialRecord]:
+        async with self._sessionmaker() as session:
+            rows = (
+                await session.execute(
+                    select(CredentialRow)
+                    .where(CredentialRow.tenant_id == tenant_id)
+                    .order_by(CredentialRow.created_at)
+                )
+            ).scalars()
+            return [self._load_credential(row) for row in rows]
+
+    async def update_credential(
+        self,
+        credential_id: str,
+        tenant_id: str,
+        *,
+        name: str | None = None,
+        ciphertext: dict[str, Any] | None = None,
+    ) -> StoredCredentialRecord | None:
+        """Patch name and/or re-encrypt the secret; None = not in this tenant."""
+        async with self._sessionmaker() as session:
+            row = (
+                await session.execute(
+                    select(CredentialRow).where(
+                        CredentialRow.id == credential_id,
+                        CredentialRow.tenant_id == tenant_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            if name is not None:
+                row.name = name
+            if ciphertext is not None:
+                row.ciphertext = ciphertext
+            row.updated_at = _now()
+            await session.commit()
+            return self._load_credential(row)
+
+    async def revoke_credential(self, credential_id: str, tenant_id: str) -> bool:
+        """Tenant-scoped revoke; False = no such credential here (404)."""
+        async with self._sessionmaker() as session:
+            result = await session.execute(
+                update(CredentialRow)
+                .where(CredentialRow.id == credential_id, CredentialRow.tenant_id == tenant_id)
+                .values(revoked_at=_now())
+                .returning(CredentialRow.id)
+            )
+            revoked = result.scalar_one_or_none() is not None
+            await session.commit()
+        return revoked
+
+    # --- helpers -----------------------------------------------------------
+
+    @staticmethod
+    def _user_row(user: UserAccount) -> UserRow:
+        return UserRow(
+            id=user.id,
+            tenant_id=user.tenant_id,
+            email=user.email,
+            display_name=user.display_name,
+            password_hash=user.password_hash,
+            role=user.role,
+            created_at=user.created_at or _now(),
+        )
+
+    @staticmethod
+    def _load_user(row: UserRow) -> UserAccount:
+        return UserAccount(
+            id=row.id,
+            tenant_id=row.tenant_id,
+            email=row.email,
+            display_name=row.display_name,
+            role=cast(TenantRole, row.role),
+            created_at=row.created_at,
+            password_hash=row.password_hash,
+        )
+
+    @staticmethod
+    def _load_api_key(row: ApiKeyRow) -> ApiKeyRecord:
+        return ApiKeyRecord(
+            id=row.id,
+            tenant_id=row.tenant_id,
+            user_id=row.user_id,
+            name=row.name,
+            key_prefix=row.key_prefix,
+            created_at=row.created_at,
+            last_used_at=row.last_used_at,
+            revoked_at=row.revoked_at,
+        )
+
+    @staticmethod
+    def _load_credential(row: CredentialRow) -> StoredCredentialRecord:
+        return StoredCredentialRecord(
+            id=row.id,
+            tenant_id=row.tenant_id,
+            name=row.name,
+            provider=row.provider,
+            ciphertext=dict(row.ciphertext),
+            created_by=row.created_by,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            revoked_at=row.revoked_at,
+        )
+
+
 class SqlRunQueue:
     """Postgres run queue (ADR 0008 §2-3): `SKIP LOCKED` claims, worker
     leases, idempotent cancel requests.
@@ -774,6 +1189,7 @@ class SqlRunQueue:
 
 __all__ = [
     "SqlAgentRepo",
+    "SqlAuthRepo",
     "SqlConversationRepo",
     "SqlExecutionRepo",
     "SqlRunQueue",

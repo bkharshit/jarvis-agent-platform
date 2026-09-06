@@ -23,6 +23,7 @@ from jarvis.models.credentials import DefaultCredentialResolver
 from jarvis.models.factory import DefaultModelProviderFactory
 from jarvis.persistence.repositories import (
     SqlAgentRepo,
+    SqlAuthRepo,
     SqlConversationRepo,
     SqlExecutionRepo,
     SqlRunQueue,
@@ -46,6 +47,7 @@ class AppContainer:
     executions: SqlExecutionRepo
     conversations: SqlConversationRepo
     queue: SqlRunQueue
+    auth: SqlAuthRepo
     notifier: PgNotifier
     streams: PgEventStream
     bus: InProcessEventBus
@@ -67,6 +69,7 @@ class AppContainer:
         executions = SqlExecutionRepo(sessionmaker)
         conversations = SqlConversationRepo(sessionmaker)
         queue = SqlRunQueue(sessionmaker)
+        auth = SqlAuthRepo(sessionmaker)
         notifier = PgNotifier(settings.database_url)
         # One LISTEN connection; the repo stays the sole SQL owner for
         # execution_events — the stream only tails through it.
@@ -118,6 +121,7 @@ class AppContainer:
             executions=executions,
             conversations=conversations,
             queue=queue,
+            auth=auth,
             notifier=notifier,
             streams=streams,
             bus=bus,
