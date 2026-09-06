@@ -34,8 +34,10 @@ export function CredentialsPanel({
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    // The API 422s blank fields (min_length=1) — never send them.
+    if (name.trim() === "" || provider.trim() === "" || secret.trim() === "") return;
     create.mutate(
-      { name, provider, secret },
+      { name: name.trim(), provider: provider.trim(), secret },
       {
         onSuccess: () => {
           setShowForm(false);

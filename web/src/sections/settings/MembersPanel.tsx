@@ -121,9 +121,11 @@ export function MembersPanel({ canManage }: { canManage: boolean }) {
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    const trimmedEmail = email.trim();
+    if (trimmedEmail === "") return; // the API rejects a blank email — never send it
     create.mutate(
       {
-        email,
+        email: trimmedEmail,
         display_name: displayName,
         role,
         // Omitted when blank — a keys-only member (backend schema optionality).

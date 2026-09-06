@@ -17,8 +17,10 @@ export function ApiKeysPanel({ canCreate }: { canCreate: boolean }) {
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    const trimmed = name.trim();
+    if (trimmed === "") return; // the API 422s blank names — never send it
     create.mutate(
-      { name },
+      { name: trimmed },
       {
         onSuccess: (created) => {
           setCreated(created); // shown once, below
@@ -41,6 +43,7 @@ export function ApiKeysPanel({ canCreate }: { canCreate: boolean }) {
         {canCreate && (
           <form onSubmit={submit} className="flex items-center gap-2">
             <input
+              required
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="key name"
@@ -48,7 +51,7 @@ export function ApiKeysPanel({ canCreate }: { canCreate: boolean }) {
             />
             <button
               type="submit"
-              disabled={create.isPending}
+              disabled={create.isPending || name.trim() === ""}
               className="cursor-pointer rounded bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:cursor-not-allowed disabled:text-neutral-500"
             >
               {create.isPending ? "Creating…" : "Create key"}

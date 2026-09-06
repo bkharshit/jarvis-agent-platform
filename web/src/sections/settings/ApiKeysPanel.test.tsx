@@ -71,4 +71,21 @@ describe("<ApiKeysPanel/>", () => {
     expect(screen.queryByRole("button", { name: "Create key" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "revoke" })).not.toBeInTheDocument();
   });
+
+  it("never fires the create request for a blank name (the API 422s it)", async () => {
+    const user = userEvent.setup();
+    let called = false;
+    server.use(
+      http.post("/v1/api-keys", () => {
+        called = true;
+        return HttpResponse.json(apiKeyCreatedFixture, { status: 201 });
+      }),
+    );
+
+    renderWithProviders(<ApiKeysPanel canCreate />, { initialEntries: ["/settings"] });
+    const createButton = await screen.findByRole("button", { name: "Create key" });
+    expect(createButton).toBeDisabled();
+    await user.click(createButton);
+    expect(called).toBe(false);
+  });
 });

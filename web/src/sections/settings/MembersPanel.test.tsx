@@ -77,4 +77,20 @@ describe("<MembersPanel/>", () => {
     await screen.findByText("No members listed.");
     expect(deleteSpy).toHaveBeenCalledTimes(1);
   });
+
+  it("never fires the create request for a blank email", async () => {
+    const user = userEvent.setup();
+    let called = false;
+    server.use(
+      http.post("/v1/members", () => {
+        called = true;
+        return HttpResponse.json(memberFixture, { status: 201 });
+      }),
+    );
+
+    renderWithProviders(<MembersPanel canManage />, { initialEntries: ["/settings"] });
+    await user.click(await screen.findByRole("button", { name: "Invite member" }));
+    await user.click(screen.getByRole("button", { name: "Create member" }));
+    expect(called).toBe(false);
+  });
 });

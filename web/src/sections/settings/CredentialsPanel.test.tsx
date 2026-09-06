@@ -76,4 +76,22 @@ describe("<CredentialsPanel/>", () => {
       await screen.findByText(/BYOK storage is not configured/),
     ).toBeInTheDocument();
   });
+
+  it("never fires the create request while fields are blank (the API 422s them)", async () => {
+    const user = userEvent.setup();
+    let called = false;
+    server.use(
+      http.post("/v1/credentials", () => {
+        called = true;
+        return HttpResponse.json(credentialFixture, { status: 201 });
+      }),
+    );
+
+    renderWithProviders(<CredentialsPanel canManage storageAvailable />, {
+      initialEntries: ["/settings"],
+    });
+    await user.click(await screen.findByRole("button", { name: "Add credential" }));
+    await user.click(screen.getByRole("button", { name: "Save credential" }));
+    expect(called).toBe(false);
+  });
 });
