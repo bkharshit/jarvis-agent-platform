@@ -259,4 +259,5 @@ Each deferral names its seam in `docs/roadmap.md` (stages S1–S14) — the
 deferral is a sequencing decision, not an architectural rejection.
 (*Frontend* was on this list until 2026-09-04 — decision 1.6 moved it to a
 parallel track: the shell ships now against Phase 1, and each backend stage
-enables its UI section as it lands.)
+enables its UI section as it lands. Since then, multi-tenancy/auth (S2) and
+human-in-the-loop (S10) have landed; the rest remain staged.)

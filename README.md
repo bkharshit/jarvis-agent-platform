@@ -5,9 +5,10 @@ tools, MCP, workflows, RAG, and frontend ride on the interfaces the runtime
 establishes.
 
 > Status: Phase 1 (agent runtime) complete; roadmap stages F1 (product
-> shell), S1 (distributed runs, ADR 0008) and S2 (auth, multi-tenancy,
-> BYOK credentials, ADR 0009/0006) shipped. See `docs/roadmap.md` for the
-> stage list and `docs/adr/` for the design decisions.
+> shell), S1 (distributed runs, ADR 0008), S2 (auth, multi-tenancy,
+> BYOK credentials, ADR 0009/0006) and S10 (human-in-the-loop,
+> ADR 0010) shipped. See `docs/roadmap.md` for the stage list and
+> `docs/adr/` for the design decisions.
 > The frontend ships alongside the backend: the full product shell
 > landed first (roadmap F1) and each section enables as its backend
 > capability lands — see `docs/architecture/frontend-architecture.md`.
@@ -23,7 +24,10 @@ A modular monolith (single deployable, clean internal seams):
 - **Runtime** — `AgentRuntime` owns the run loop and every limit (iterations,
   token budget, deadline, cancellation). A run *never raises*: it emits
   exactly one terminal event (`run.completed` / `run.failed` /
-  `run.cancelled`) and persists the outcome.
+  `run.cancelled`) and persists the outcome. A run may also *pause* — one
+  non-terminal `run.awaiting_input` event — and resume through the same
+  queue: a run is a chain of pause/resume segments over one gapless event
+  sequence, with one terminal at the end (ADR 0010).
 - **Event log** — every run appends an ordered event stream: per-run
   `sequence` (gapless, replayable transcripts) and a global BIGSERIAL
   `cursor` that *is* the SSE `Last-Event-ID` (ADR 0003).
@@ -79,6 +83,7 @@ uv run jarvis doctor --ping-model
 | GET | `/executions` | List runs (`agent_id`, `status`, `session_id`, `limit`, `offset`) |
 | GET | `/executions/{run_id}` | Run + transcript + tool executions |
 | POST | `/executions/{run_id}/cancel` | Idempotent cancel — live token in-process, cross-process request row otherwise |
+| POST | `/executions/{run_id}/resume` | Answer a paused run (`{content}` or `{tool_approval: bool}`; blocking, mirrors `/run`) — 409 when not awaiting |
 | GET | `/executions/{run_id}/events` | Event replay: JSON, or SSE with `Accept: text/event-stream` |
 | GET | `/conversations/{agent_id}/{session_id}/messages` | Conversation history |
 | GET | `/capabilities` | Section flags + registry-derived detail the UI renders from |
@@ -149,6 +154,47 @@ curl -N -X POST localhost:8000/v1/agents/{id}/stream \
 
 Finished runs replay from the database the same way.
 
+### Human-in-the-loop (S10, ADR 0010)
+
+Runs can pause for a human decision instead of failing or guessing. Two
+trigger classes:
+
+- **Tool approval** — a tool binding carries
+  `config: {requires_approval: true}`; the model's gated calls emit
+  `tool.call.requested` but never start: the run pauses with
+  `status: "awaiting_input"` and the pending batch on the durable
+  `run.awaiting_input` event.
+- **Strategy-asked input** — a strategy step returns `AskHumanStep`
+  (clarifying questions, missing parameters); the run pauses with a
+  question.
+
+A pause is a *segment*, not a terminal: HTTP callers see a 200 with
+`status: "awaiting_input"` (`finished_at: null`), the SSE stream ends at
+the pause frame exactly like a terminal, and the gapless event sequence
+continues when the run resumes. Answer through the resume route —
+validated to exactly one of:
+
+```bash
+curl -s -X POST localhost:8000/v1/executions/<run-id>/resume \
+  -H 'Content-Type: application/json' -d '{"tool_approval": true}'
+# or: -d '{"content": "Harshit"}'   (a strategy-asked question)
+```
+
+Approve executes the gated batch; reject closes the declined calls with a
+refusal tool message (they never ran) and lets the model continue. The
+resume is blocking — it returns the row for the resumed segment's end,
+which may pause again. Limits span the chain: `max_iterations` and the
+token budget bound the whole run, not one segment.
+
+A paused run carries a deadline (`awaiting_until`, default 24h,
+`JARVIS_AWAITING_INPUT_TIMEOUT_SECONDS`); the worker's sweeper reaps
+expired pauses with the one terminal `run.cancelled` (reason
+`awaiting_input timeout`) so no run is ever stuck. Cancelling a paused
+run is immediate — nothing holds it. On the web, the run console renders
+the pause card (approval rows / answer form) and the Executions section
+gains an awaiting-input inbox, both gated on
+`executions.detail.human_in_the_loop` from `/v1/capabilities`.
+
 ### Queue-backed runs and distributed mode (S1, ADR 0008)
 
 Every API run is enqueued in Postgres and executed by a worker; the API
@@ -189,7 +235,9 @@ strategy: {type: function_calling}   # or: react
 tools:
   - name: calculator
   - name: http_get
-    config: {allowed_hosts: [api.example.com]}   # allow-lists are opt-in
+    config:
+      allowed_hosts: [api.example.com]   # allow-lists are opt-in
+      requires_approval: true            # pause for approval (S10)
 memory: {enabled: true, max_messages: 20}
 ```
 
@@ -217,6 +265,7 @@ alongside it.
 | `JARVIS_RUN_MAX_ITERATIONS` | `8` | Platform run cap (ADR 0004) |
 | `JARVIS_RUN_MAX_TOTAL_TOKENS` | unset | Token budget per run |
 | `JARVIS_RUN_TIMEOUT_SECONDS` | unset | Run deadline |
+| `JARVIS_AWAITING_INPUT_TIMEOUT_SECONDS` | `86400` | Pause deadline — expired pauses are reaped as `run.cancelled` (S10) |
 | `JARVIS_EMBEDDED_WORKER` | `true` | Embed a queue worker in `serve` (ADR 0008; `false` + `jarvis worker` = distributed mode) |
 | `JARVIS_WORKER_CONCURRENCY` | `4` | Runs a single worker executes concurrently |
 | `JARVIS_AUTH_MODE` | `anonymous` | `anonymous` (fixed default tenant) or `required` (401 without credentials — S2/ADR 0009) |
