@@ -198,3 +198,201 @@ cd web && JARVIS_API_URL=http://127.0.0.1:8001 npm run dev   # → http://localh
 carries `auth_mode` and whether BYOK storage is configured (presence of the
 master key, never its value), and every panel's error text is the API's own
 message, verbatim.
+
+## Appendix — full copy-paste validation sequence
+
+A single end-to-end pass through every acceptance check, using shell
+variables so each block is pasteable in order. Assumes sections 0–9 above
+for the "why"; this is the hands-on script. Uses the live Ollama Cloud
+model (`gemma4:31b` via `https://ollama.com/v1`, key value in `./.env` as
+`OLLAMA_API_KEY`); where no network is wanted, substitute
+`provider: mock` + `strategy: {type: function_calling}` and drop the
+`credential_ref`.
+
+### 0. Setup
+
+```bash
+lsof -nP -iTCP:8001 -sTCP:LISTEN; lsof -nP -iTCP:8002 -sTCP:LISTEN   # kill stale backends
+uv run alembic upgrade head
+
+# BYOK master key: 32 random bytes, base64, under the configured env-var NAME (D30)
+python3 -c "import os,base64;print(base64.urlsafe_b64encode(os.urandom(32)).decode())" > /tmp/mk
+export JARVIS_CREDENTIALS_MASTER_KEY=$(cat /tmp/mk)
+
+JARVIS_AUTH_MODE=required JARVIS_PORT=8002 uv run jarvis serve > /tmp/jarvis-8002.log 2>&1 &
+```
+
+### 1. Required mode 401s with the frozen envelope
+
+```bash
+curl -s localhost:8002/v1/agents
+# → {"error":{"kind":"unauthenticated","message":"authentication required — log in or present an API key"}}
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8002/healthz      # → 200 (public)
+curl -s localhost:8002/v1/capabilities | python3 -m json.tool | grep -A4 '"settings"'
+# → "enabled": true, "detail": {"auth_mode": "required", "credentials": {"available": true}}
+```
+
+### 2. CLI bootstrap (ADR 0009 §9)
+
+```bash
+uv run jarvis tenant create acme "Acme Corp"
+uv run jarvis user create acme owner@acme.test --role owner --password s3cret
+uv run jarvis api-key create owner@acme.test --name cli
+export ACME_KEY=jarvis_sk_...   # copy the printed key NOW — never shown again
+```
+
+### 3. Session login → whoami → logout
+
+```bash
+curl -s -c /tmp/acme.jar -X POST localhost:8002/v1/auth/login \
+  -H 'Content-Type: application/json' -d '{"email":"owner@acme.test","password":"s3cret"}'
+# → {"tenant_id":"acme","mode":"session","user_id":"…","email":"owner@acme.test","role":"owner"}
+curl -s localhost:8002/v1/auth/whoami -b /tmp/acme.jar
+curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8002/v1/auth/logout -b /tmp/acme.jar   # → 204
+```
+
+### 4. API-key caller + an env-ref agent run
+
+```bash
+curl -s localhost:8002/v1/agents -H "Authorization: Bearer $ACME_KEY" | head -c 120
+
+AGENT=$(curl -s -X POST localhost:8002/v1/agents -H "Authorization: Bearer $ACME_KEY" \
+  -H 'Content-Type: application/json' -d '{
+    "name": "byok-walkthrough-env",
+    "model": {"provider": "openai_compatible", "model": "gemma4:31b", "base_url": "https://ollama.com/v1",
+              "credential_ref": {"type": "env", "env_var": "OLLAMA_API_KEY"}},
+    "system_prompt": "You are terse.", "strategy": {"type": "function_calling"}}' \
+  | python3 -c "import json,sys;print(json.load(sys.stdin)['id'])")
+
+curl -s -N -X POST localhost:8002/v1/agents/$AGENT/stream -H "Authorization: Bearer $ACME_KEY" \
+  -H 'Content-Type: application/json' -d '{"input":"Reply with the single word: ok."}' | tail -4
+
+RUN=$(curl -s "localhost:8002/v1/executions?agent_id=$AGENT" -H "Authorization: Bearer $ACME_KEY" \
+  | python3 -c "import json,sys;print(json.load(sys.stdin)['items'][0]['id'])")
+curl -s localhost:8002/v1/executions/$RUN -H "Authorization: Bearer $ACME_KEY" \
+  | python3 -c "import json,sys;r=json.load(sys.stdin)['run'];print(r['status'], r['error_kind'], r['error'])"
+# → completed None None
+```
+
+### 5. BYOK credential — write-only, encrypted at rest
+
+```bash
+export OLLAMA_KEY=$(grep '^OLLAMA_API_KEY=' .env | cut -d= -f2-)
+
+CRED=$(curl -s -X POST localhost:8002/v1/credentials -H "Authorization: Bearer $ACME_KEY" \
+  -H 'Content-Type: application/json' \
+  -d "{\"name\":\"ollama byok\",\"provider\":\"openai_compatible\",\"secret\":\"$OLLAMA_KEY\"}" \
+  | python3 -c "import json,sys;print(json.load(sys.stdin)['id'])")
+
+curl -s localhost:8002/v1/credentials -H "Authorization: Bearer $ACME_KEY" | grep -c "$OLLAMA_KEY"    # → 0
+psql jarvis -tAc "SELECT ciphertext FROM credentials WHERE id='$CRED';"
+# → {"v":1,"key_id":…,"nonce":…,"ct":…}   — AES-GCM envelope, never plaintext
+
+curl -s -X PATCH localhost:8002/v1/credentials/$CRED -H "Authorization: Bearer $ACME_KEY" \
+  -H 'Content-Type: application/json' -d "{\"secret\":\"$OLLAMA_KEY\"}" | head -c 160   # rotate (fresh nonce)
+```
+
+### 6. A run bound to the stored credential (the D28 resolution chain)
+
+```bash
+BYOK_AGENT=$(curl -s -X POST localhost:8002/v1/agents -H "Authorization: Bearer $ACME_KEY" \
+  -H 'Content-Type: application/json' -d '{
+    "name": "byok-walkthrough-stored",
+    "model": {"provider": "openai_compatible", "model": "gemma4:31b", "base_url": "https://ollama.com/v1",
+              "credential_ref": {"type": "stored", "credential_id": "'"$CRED"'"}},
+    "system_prompt": "You are terse.", "strategy": {"type": "function_calling"}}' \
+  | python3 -c "import json,sys;print(json.load(sys.stdin)['id'])")
+
+curl -s -N -X POST localhost:8002/v1/agents/$BYOK_AGENT/stream -H "Authorization: Bearer $ACME_KEY" \
+  -H 'Content-Type: application/json' -d '{"input":"Reply with the single word: ok."}' | tail -4
+# run completes → the worker resolved the ref, decrypted AES-GCM, used the material
+```
+
+### 7. Tenant isolation — 404, never 403 (D29)
+
+```bash
+uv run jarvis tenant create globex
+uv run jarvis user create globex g@x.test --role owner --password p
+curl -s -c /tmp/globex.jar -X POST localhost:8002/v1/auth/login \
+  -H 'Content-Type: application/json' -d '{"email":"g@x.test","password":"p"}' > /dev/null
+
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8002/v1/agents/$AGENT     -b /tmp/globex.jar   # → 404
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8002/v1/executions/$RUN   -b /tmp/globex.jar   # → 404
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8002/v1/credentials/$CRED -b /tmp/globex.jar   # → 404
+```
+
+The D5/D28 terminal-failure proof — a globex agent referencing acme's
+credential id ends as a **persisted terminal `model` failure**, not a
+worker claim-failure retry loop:
+
+```bash
+G_AGENT=$(curl -s -X POST localhost:8002/v1/agents -b /tmp/globex.jar \
+  -H 'Content-Type: application/json' -d '{
+    "name": "bad-cred-agent",
+    "model": {"provider": "openai_compatible", "model": "gemma4:31b", "base_url": "https://ollama.com/v1",
+              "credential_ref": {"type": "stored", "credential_id": "'"$CRED"'"}},
+    "system_prompt": "You are terse.", "strategy": {"type": "function_calling"}}' \
+  | python3 -c "import json,sys;print(json.load(sys.stdin)['id'])")
+
+curl -s -N -X POST localhost:8002/v1/agents/$G_AGENT/stream -b /tmp/globex.jar \
+  -H 'Content-Type: application/json' -d '{"input":"hi"}' > /dev/null
+
+G_RUN=$(curl -s "localhost:8002/v1/executions?agent_id=$G_AGENT" -b /tmp/globex.jar \
+  | python3 -c "import json,sys;print(json.load(sys.stdin)['items'][0]['id'])")
+curl -s localhost:8002/v1/executions/$G_RUN -b /tmp/globex.jar \
+  | python3 -c "import json,sys;r=json.load(sys.stdin)['run'];print(r['status'], r['error_kind'], r['error'])"
+# → failed model "credential '<cred-id>' not found"
+```
+
+### 8. Members & roles — minimal, no RBAC
+
+```bash
+MEMBER_ID=$(curl -s -X POST localhost:8002/v1/members -b /tmp/acme.jar \
+  -H 'Content-Type: application/json' -d '{"email":"dev@acme.test","role":"member","password":"devpass"}' \
+  | python3 -c "import json,sys;print(json.load(sys.stdin)['id'])")
+
+curl -s -c /tmp/dev.jar -X POST localhost:8002/v1/auth/login \
+  -H 'Content-Type: application/json' -d '{"email":"dev@acme.test","password":"devpass"}' > /dev/null
+
+curl -s localhost:8002/v1/members -b /tmp/dev.jar
+# → 403 {"error":{"kind":"forbidden","message":"member management requires the admin or owner role"}}
+curl -s localhost:8002/v1/agents -b /tmp/dev.jar | head -c 80   # members CAN read tenant agents
+curl -s -X POST localhost:8002/v1/api-keys -b /tmp/dev.jar \
+  -H 'Content-Type: application/json' -d '{"name":"dev-key"}' | head -c 140   # and manage keys
+
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -X DELETE localhost:8002/v1/members/$MEMBER_ID -b /tmp/acme.jar   # → 409 (member owns keys)
+```
+
+### 9. API-key revocation
+
+```bash
+NEW=$(curl -s -X POST localhost:8002/v1/api-keys -H "Authorization: Bearer $ACME_KEY" \
+  -H 'Content-Type: application/json' -d '{"name":"temp-key"}')
+KEY2=$(echo "$NEW" | python3 -c "import json,sys;print(json.load(sys.stdin)['plaintext'])")
+KEY2_ID=$(echo "$NEW" | python3 -c "import json,sys;print(json.load(sys.stdin)['id'])")
+
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8002/v1/agents -H "Authorization: Bearer $KEY2"   # → 200
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -X DELETE localhost:8002/v1/api-keys/$KEY2_ID -H "Authorization: Bearer $ACME_KEY"                 # → 204
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8002/v1/agents -H "Authorization: Bearer $KEY2"   # → 401
+```
+
+### 10. Missing master key → honest 503 (optional)
+
+Only meaningful if the key is not also set in `./.env`:
+
+```bash
+env -u JARVIS_CREDENTIALS_MASTER_KEY JARVIS_AUTH_MODE=required JARVIS_PORT=8003 \
+  uv run jarvis serve > /tmp/jarvis-8003.log 2>&1 &
+curl -s localhost:8003/v1/credentials -b /tmp/acme.jar
+# → {"error":{"kind":"credentials_unavailable","message":"stored credentials are not configured: …"}}
+kill %2
+```
+
+### 11. Teardown and the web UI
+
+```bash
+lsof -nP -iTCP:8002 -sTCP:LISTEN   # find the PID, then: kill <pid>
+cd web && npm run dev              # → http://localhost:5173/settings
+```
