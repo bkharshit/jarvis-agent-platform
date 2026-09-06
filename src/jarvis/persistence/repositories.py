@@ -52,7 +52,7 @@ from jarvis.persistence.models import (
     ToolExecutionRow,
     UserRow,
 )
-from jarvis.ports.queue import RunQueueMessage
+from jarvis.ports.queue import ResumeRequest, RunQueueMessage
 
 _EVENT_ADAPTER: TypeAdapter[ExecutionEvent] = TypeAdapter(ExecutionEvent)
 
@@ -1213,6 +1213,28 @@ class SqlRunQueue:
     async def enqueue(self, message: RunQueueMessage) -> None:
         async with self._sessionmaker() as session:
             session.add(RunQueueRow(run_id=message.run_id, payload=message.model_dump(mode="json")))
+            await session.commit()
+
+    async def enqueue_resume(self, run_id: str, resume: ResumeRequest) -> None:
+        """JSONB `||` MERGE of `resume` into the acked (paused) run's
+        payload, then flip the row back to pending (S10, ADR 0010 §4). The
+        payload is the only place the enqueue-time principal/deadline
+        survive, so this merges — never replaces. Unknown run_id: no-op
+        (the API route has already 404'd; a raced row is absorbed)."""
+        async with self._sessionmaker() as session:
+            await session.execute(
+                update(RunQueueRow)
+                .where(RunQueueRow.run_id == run_id)
+                .values(
+                    payload=RunQueueRow.payload.op("||")(
+                        func.jsonb_build_object("resume", resume.model_dump(mode="json"))
+                    ),
+                    status="pending",
+                    claimed_by=None,
+                    claimed_at=None,
+                    lease_until=None,
+                )
+            )
             await session.commit()
 
     async def claim(self, worker_id: str, lease: timedelta) -> RunQueueMessage | None:

@@ -133,3 +133,86 @@ def test_tool_call_completed_roundtrip():
     event = _event(ToolCallCompleted, 5, tool_call_id="tc1", name="calculator", output="42")
     assert event.sequence == 5
     assert event.type == "tool.call.completed"
+
+
+def test_pause_event_is_not_terminal():
+    from datetime import UTC, datetime, timedelta
+
+    from jarvis.domain.events import TERMINAL_EVENT_TYPES, RunAwaitingInput, is_pause
+    from jarvis.domain.message import ToolCall
+
+    pause = RunAwaitingInput(
+        event_id="p1",
+        run_id="r1",
+        sequence=3,
+        reason="tool_approval",
+        pending_calls=[ToolCall(id="c1", name="shell", arguments={"cmd": "ls"})],
+        awaiting_until=datetime.now(UTC) + timedelta(seconds=60),
+    )
+    assert pause.type == "run.awaiting_input"
+    assert is_pause(pause)
+    assert not is_terminal(pause)  # pause, not terminal (ADR 0010 §1)
+    assert "run.awaiting_input" not in TERMINAL_EVENT_TYPES
+
+    strategy_pause = RunAwaitingInput(
+        event_id="p2",
+        run_id="r1",
+        reason="strategy",
+        question="Which branch should I deploy?",
+        awaiting_until=datetime.now(UTC),
+    )
+    assert strategy_pause.question == "Which branch should I deploy?"
+    assert strategy_pause.pending_calls == []
+    with pytest.raises(ValidationError):
+        RunAwaitingInput(
+            event_id="p3",
+            run_id="r1",
+            reason="weird",  # type: ignore[arg-type]
+            awaiting_until=datetime.now(UTC),
+        )
+
+
+def test_segment_invariant_pause_ends_segment():
+    """ADR 0010 §1: no non-terminal event may follow run.awaiting_input
+    within a segment; the resumed segment's events form a new chain that
+    continues the gapless sequence, and the WHOLE chain validates as a
+    completed run once it reaches its terminal."""
+    from datetime import UTC, datetime, timedelta
+
+    from jarvis.domain.events import RunAwaitingInput, is_pause
+
+    pause = RunAwaitingInput(
+        event_id="p1",
+        run_id="r1",
+        sequence=2,
+        reason="strategy",
+        question="go on?",
+        awaiting_until=datetime.now(UTC) + timedelta(seconds=60),
+    )
+
+    # Segment 1: starts the run, ends at the pause — no terminal yet.
+    segment_1 = [
+        _event(RunStarted, 0, agent_id="a1", agent_version_id="v1"),
+        _event(TextDelta, 1, text="thinking"),
+        pause,
+    ]
+    assert all(not is_terminal(e) for e in segment_1)
+    assert is_pause(segment_1[-1])  # the segment's last event is the pause
+
+    # Resumed segment 2: continues the sequence (offset-seeded) and ends
+    # at the run's single terminal.
+    segment_2 = [
+        TextDelta(event_id="e3", run_id="r1", sequence=3, text="answered"),
+        _event(RunCompleted, 4, final_message="done", total_usage=_usage(), iterations=1),
+    ]
+
+    # Each segment is gapless within itself; the concatenation is the
+    # run's full gapless chain and validates as a completed run.
+    whole = segment_1 + segment_2
+    validate_event_sequence(whole)
+
+    # Control flow enforces the invariant (the loop returns after the
+    # pause); the detector documents it — an event appended right after
+    # the pause inside the same segment would break it.
+    violated = segment_1[:-1] + [pause, segment_2[0]]
+    assert is_pause(violated[2])

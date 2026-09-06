@@ -13,7 +13,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from jarvis.domain.message import Usage
+from jarvis.domain.message import ToolCall, Usage
 
 
 class _Event(BaseModel):
@@ -103,6 +103,22 @@ class ToolCallFailed(_Event):
     kind: Literal["validation", "timeout", "internal"] = "internal"
 
 
+# --- pause (non-terminal; the segment ends here, ADR 0010 §1) ----------------
+
+
+class RunAwaitingInput(_Event):
+    """The run paused for a human decision. NOT terminal — exactly-one-
+    terminal still holds for the whole run; the pause ends one *segment* of
+    the gapless sequence (no non-terminal event may follow it within a
+    segment; the next event belongs to the resumed segment)."""
+
+    type: Literal["run.awaiting_input"] = "run.awaiting_input"
+    reason: Literal["tool_approval", "strategy"]
+    question: str = ""  # strategy-asked prompt text
+    pending_calls: list[ToolCall] = Field(default_factory=list)  # approval-gated calls
+    awaiting_until: datetime  # the pause deadline (row column carries it too)
+
+
 # --- terminal (exactly one per run) -----------------------------------------
 
 
@@ -137,6 +153,7 @@ ExecutionEvent = Annotated[
     | ToolCallCompleted
     | ToolCallFailed
     | IterationCompleted
+    | RunAwaitingInput
     | RunCompleted
     | RunFailed
     | RunCancelled,
@@ -145,11 +162,19 @@ ExecutionEvent = Annotated[
 
 TERMINAL_EVENT_TYPES = frozenset({"run.completed", "run.failed", "run.cancelled"})
 
+# The one pause event — a segment end, not a terminal (ADR 0010 §1).
+PAUSE_EVENT_TYPE = "run.awaiting_input"
+
 TerminalEvent = RunCompleted | RunFailed | RunCancelled
 
 
 def is_terminal(event: BaseModel) -> bool:
     return getattr(event, "type", None) in TERMINAL_EVENT_TYPES
+
+
+def is_pause(event: BaseModel) -> bool:
+    """True for `run.awaiting_input` — a segment end, never a terminal."""
+    return getattr(event, "type", None) == PAUSE_EVENT_TYPE
 
 
 class EventSequenceError(Exception):

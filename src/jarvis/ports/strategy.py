@@ -27,7 +27,7 @@ class StepOutcome(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: str  # "tool_calls" | "finish"
+    kind: str  # "tool_calls" | "finish" | "ask_human"
     assistant_message: Message
     tool_calls: list[ToolCall] = Field(default_factory=list)
     finish_reason: str | None = None
@@ -41,6 +41,16 @@ class ToolCallsStep(StepOutcome):
 class FinishStep(StepOutcome):
     kind: str = "finish"
     finish_reason: str = "stop"
+
+
+class AskHumanStep(StepOutcome):
+    """The strategy wants a human answer before it can continue (S10, ADR
+    0010 §3.2). The orchestrator persists the assistant message and pauses
+    the run with `reason="strategy"`; the answer arrives as a resume
+    content message. Sibling of FinishStep/ToolCallsStep."""
+
+    kind: str = "ask_human"
+    question: str = ""
 
 
 @runtime_checkable
@@ -70,6 +80,7 @@ class StrategyRegistry(Protocol):
 
 __all__ = [
     "AgentStrategy",
+    "AskHumanStep",
     "FinishStep",
     "StepOutcome",
     "StrategyRegistry",

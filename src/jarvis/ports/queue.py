@@ -11,11 +11,23 @@ first; Redis later behind the same protocol.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from jarvis.domain.auth import Principal
+
+
+class ResumeRequest(BaseModel):
+    """The human's answer to a pause (S10, ADR 0010 §4). Strategy pauses
+    carry `content` (the answer text); tool-approval pauses carry `approved`.
+    The other field is None — `kind` says which."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["content", "tool_approval"]
+    content: str | None = None
+    approved: bool | None = None
 
 
 class RunQueueMessage(BaseModel):
@@ -41,6 +53,9 @@ class RunQueueMessage(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     variables: dict[str, Any] = Field(default_factory=dict)
     deadline: datetime | None = None
+    # Set on a resumed segment (ADR 0010 §4) — merged into the existing
+    # payload by `enqueue_resume`; None on the original enqueue.
+    resume: ResumeRequest | None = None
     enqueued_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -53,6 +68,15 @@ class RunQueue(Protocol):
 
     async def enqueue(self, message: RunQueueMessage) -> None:
         """Persist a message as pending."""
+        ...
+
+    async def enqueue_resume(self, run_id: str, resume: ResumeRequest) -> None:
+        """Merge `resume` into a paused run's acked payload and flip the row
+        back to pending (S10, ADR 0010 §4). The payload is the only place
+        the enqueue-time `principal` and `deadline` survive, so this MERGES
+        (`payload || resume`) — never replaces. A stale resume (the run no
+        longer awaiting_input, e.g. reaped) is absorbed harmlessly: the
+        claim-side stale-guard acks and skips it."""
         ...
 
     async def claim(self, worker_id: str, lease: timedelta) -> RunQueueMessage | None:
@@ -91,4 +115,4 @@ class RunQueue(Protocol):
         ...
 
 
-__all__ = ["RunQueue", "RunQueueMessage"]
+__all__ = ["ResumeRequest", "RunQueue", "RunQueueMessage"]

@@ -62,3 +62,34 @@ class TestRunQueueMessage:
             RunQueueMessage(run_id="r1")  # type: ignore[call-arg]
         missing = {e["loc"][0] for e in exc.value.errors() if e["type"] == "missing"}
         assert missing == {"agent_id", "agent_version_id", "input"}
+
+
+class TestResumeRequest:
+    def test_content_resume(self):
+        from jarvis.ports.queue import ResumeRequest
+
+        resume = ResumeRequest(kind="content", content="deploy staging")
+        assert resume.approved is None
+        restored = ResumeRequest.model_validate(resume.model_dump(mode="json"))
+        assert restored == resume
+
+    def test_tool_approval_resume(self):
+        from jarvis.ports.queue import ResumeRequest
+
+        assert ResumeRequest(kind="tool_approval", approved=True).content is None
+        with pytest.raises(ValidationError):
+            ResumeRequest(kind="weird")  # type: ignore[arg-type]
+
+    def test_message_carries_resume_roundtrip(self):
+        from jarvis.ports.queue import ResumeRequest, RunQueueMessage
+
+        message = RunQueueMessage(
+            run_id="r1",
+            agent_id="a1",
+            agent_version_id="v1",
+            input="original",
+            resume=ResumeRequest(kind="tool_approval", approved=False),
+        )
+        restored = RunQueueMessage.model_validate(message.model_dump(mode="json"))
+        assert restored == message
+        assert message.resume is not None and message.resume.approved is False
