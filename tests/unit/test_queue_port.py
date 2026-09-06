@@ -13,9 +13,7 @@ from jarvis.ports.queue import RunQueueMessage
 class TestRunQueueMessage:
     def test_defaults(self):
         before = datetime.now(UTC)
-        message = RunQueueMessage(
-            run_id="r1", agent_id="a1", agent_version_id="v1", input="hi"
-        )
+        message = RunQueueMessage(run_id="r1", agent_id="a1", agent_version_id="v1", input="hi")
         assert message.session_id is None
         assert message.user_id is None
         assert message.trace_id == ""

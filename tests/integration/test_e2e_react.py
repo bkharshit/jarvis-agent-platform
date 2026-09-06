@@ -43,11 +43,7 @@ async def test_react_end_to_end_through_api_with_sse(client, container, agent, m
         )
     )
     mock.add_turn(
-        turn(
-            "Thought: Now I add.\n"
-            "Action: calculator\n"
-            'Action Input: {"expression": "40 + 2"}'
-        )
+        turn('Thought: Now I add.\nAction: calculator\nAction Input: {"expression": "40 + 2"}')
     )
     mock.add_turn(turn("Final Answer: 42"))
 

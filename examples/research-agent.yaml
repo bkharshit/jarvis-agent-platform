@@ -16,8 +16,13 @@ model:
   provider: openai_compatible
   model: gpt-4o-mini
   # base_url: http://localhost:11434/v1   # e.g. local Ollama
-  # api_key_env: OPENAI_API_KEY           # names an env var; the secret itself
-  #                                       # never enters configuration (ADR 0005)
+  # credential_ref:                       # a *reference* — never the key itself
+  #   type: env
+  #   env_var: OPENAI_API_KEY             # names an env var (ADR 0005/0006);
+  #                                       # the secret never enters configuration
+  # credential_ref:                       # or a stored (BYOK) credential, owned
+  #   type: stored                        # by a tenant and resolved at run time
+  #   credential_id: cred_01J...
 
 system_prompt: >-
   You are a meticulous research assistant. Use tools when they make the answer

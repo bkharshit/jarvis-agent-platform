@@ -57,9 +57,7 @@ class AppContainer:
     _worker_task: asyncio.Task[None] | None = field(default=None, repr=False)
 
     @classmethod
-    def from_settings(
-        cls, settings: Settings, *, mock_provider: Any | None = None
-    ) -> AppContainer:
+    def from_settings(cls, settings: Settings, *, mock_provider: Any | None = None) -> AppContainer:
         """`mock_provider` injects a shared MockModelProvider (tests / demo);
         production wiring passes nothing."""
         engine = create_async_engine(settings.database_url)

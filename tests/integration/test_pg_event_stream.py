@@ -127,8 +127,7 @@ async def test_resume_at_terminal_cursor_ends_immediately(container):
 
     stream = container.streams
     seen = [
-        (cursor, event.type)
-        async for cursor, event in stream.subscribe(run_id, terminal_cursor)
+        (cursor, event.type) async for cursor, event in stream.subscribe(run_id, terminal_cursor)
     ]
     assert seen == []  # nothing was missed — the empty stream is the answer
 

@@ -78,9 +78,7 @@ class ExecutionRepo(Protocol):
         global cursor (SSE Last-Event-ID)."""
         ...
 
-    def list_events(
-        self, run_id: str, after: int | None = None
-    ) -> AsyncIterator[ExecutionEvent]:
+    def list_events(self, run_id: str, after: int | None = None) -> AsyncIterator[ExecutionEvent]:
         """Async-generator replay (per-run `sequence` order)."""
         ...
 

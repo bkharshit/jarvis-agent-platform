@@ -26,9 +26,7 @@ class ApiError(Exception):
         self.details = details
 
 
-def envelope(
-    kind: str, message: str, details: dict[str, Any] | None = None
-) -> dict[str, Any]:
+def envelope(kind: str, message: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
     error: dict[str, Any] = {"kind": kind, "message": message}
     if details:
         error["details"] = details

@@ -16,9 +16,7 @@ class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-ExecutionStatus = Literal[
-    "queued", "running", "succeeded", "failed", "cancelled", "timed_out"
-]
+ExecutionStatus = Literal["queued", "running", "succeeded", "failed", "cancelled", "timed_out"]
 
 # Statuses a run row can no longer leave (the terminal event's counterpart
 # on the run row itself). Used by subscribers deciding whether a run whose
@@ -84,6 +82,7 @@ class ExecutionContext:
     run_id: str
     agent_id: str
     agent_version_id: str
+    tenant_id: str | None = None  # stamped from the principal (S2, ADR 0009 §6)
     session_id: str | None = None
     user_id: str | None = None
     trace_id: str = ""

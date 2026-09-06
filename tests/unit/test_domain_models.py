@@ -6,7 +6,9 @@ from pydantic import ValidationError
 from jarvis.domain.agent import (
     AgentDefinition,
     AgentVersion,
+    EnvCredentialRef,
     ModelRef,
+    StoredCredentialRef,
     StrategyConfig,
     ToolBinding,
 )
@@ -179,3 +181,53 @@ class TestRunResult:
         # S1: runs are enqueued before a worker claims them.
         result = RunResult(run_id="r", agent_id="a", status="queued")
         assert result.status == "queued"
+
+
+class TestCredentialRef:
+    """S2 (ADR 0006): ModelRef carries credential *references* — an env-var
+    name or a stored credential id — never material."""
+
+    def test_env_ref_roundtrip(self):
+        ref = ModelRef(
+            provider="openai_compatible",
+            model="gpt-4o-mini",
+            credential_ref=EnvCredentialRef(type="env", env_var="OPENAI_API_KEY"),
+        )
+        dumped = ref.model_dump()
+        assert dumped["credential_ref"] == {"type": "env", "env_var": "OPENAI_API_KEY"}
+        assert ModelRef.model_validate(dumped).credential_ref == ref.credential_ref
+
+    def test_stored_ref(self):
+        ref = ModelRef(
+            provider="openai_compatible",
+            model="gpt-4o-mini",
+            credential_ref=StoredCredentialRef(type="stored", credential_id="cred_1"),
+        )
+        assert ref.credential_ref.type == "stored"
+        assert ref.credential_ref.credential_id == "cred_1"
+
+    def test_discriminator_required(self):
+        with pytest.raises(ValidationError):
+            ModelRef(
+                provider="openai_compatible",
+                model="m",
+                credential_ref={"env_var": "OPENAI_API_KEY"},  # type: ignore[dict-item]
+            )
+
+    def test_unknown_discriminator_rejected(self):
+        with pytest.raises(ValidationError):
+            ModelRef(
+                provider="openai_compatible",
+                model="m",
+                credential_ref={"type": "plaintext", "value": "sk-..."},  # type: ignore[dict-item]
+            )
+
+    def test_api_key_env_is_gone(self):
+        # The old field was removed (extra="forbid" makes stale writers fail
+        # loudly) — this is the ADR 0006 §S2-migration shape change.
+        with pytest.raises(ValidationError):
+            ModelRef(provider="mock", model="m", api_key_env="OPENAI_API_KEY")
+
+    def test_absent_ref_defaults_none(self):
+        ref = ModelRef(provider="mock", model="m")
+        assert ref.credential_ref is None

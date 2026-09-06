@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -12,14 +12,34 @@ class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class EnvCredentialRef(_Model):
+    """Credential reference: the *name* of an environment variable — the
+    secret itself never enters the domain (D18, ADR 0005)."""
+
+    type: Literal["env"]
+    env_var: str
+
+
+class StoredCredentialRef(_Model):
+    """Credential reference: a stored (BYOK) credential id, tenant-scoped at
+    resolution time (ADR 0006). An id alone is never authorization."""
+
+    type: Literal["stored"]
+    credential_id: str
+
+
+CredentialRef = Annotated[EnvCredentialRef | StoredCredentialRef, Field(discriminator="type")]
+
+
 class ModelRef(_Model):
-    """Reference to a model. `api_key_env` names an environment variable —
-    the secret itself never enters the domain."""
+    """Reference to a model. `credential_ref` is a *reference* (env-var name
+    or stored credential id) — credential material never enters the domain,
+    a snapshot, or an API response (ADR 0006 §1)."""
 
     provider: str
     model: str
     base_url: str | None = None
-    api_key_env: str | None = None
+    credential_ref: CredentialRef | None = None
 
 
 class ToolBinding(_Model):

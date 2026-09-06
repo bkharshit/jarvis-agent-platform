@@ -95,9 +95,7 @@ async def create_agent(
     try:
         await container.agents.create(definition)
     except IntegrityError:
-        raise ApiError(
-            409, "conflict", f"agent name {definition.name!r} already exists"
-        ) from None
+        raise ApiError(409, "conflict", f"agent name {definition.name!r} already exists") from None
     return await _detail(container, definition)
 
 
@@ -110,9 +108,7 @@ async def list_agents(
 
 
 @router.get("/{agent_id}")
-async def get_agent(
-    agent_id: str, container: AppContainer = ContainerDep
-) -> AgentDetail:
+async def get_agent(agent_id: str, container: AppContainer = ContainerDep) -> AgentDetail:
     definition = await _require_definition(container, agent_id)
     return await _detail(container, definition)
 
@@ -145,15 +141,11 @@ async def update_agent(
 
 
 @router.delete("/{agent_id}", status_code=204)
-async def delete_agent(
-    agent_id: str, container: AppContainer = ContainerDep
-) -> None:
+async def delete_agent(agent_id: str, container: AppContainer = ContainerDep) -> None:
     await _require_definition(container, agent_id)
     deleted = await container.agents.delete(agent_id)
     if not deleted:
-        raise ApiError(
-            409, "conflict", f"agent {agent_id!r} has executions; delete refused"
-        )
+        raise ApiError(409, "conflict", f"agent {agent_id!r} has executions; delete refused")
 
 
 # --- runs (queued — ADR 0008: the queue is the only execution path) ------------
@@ -207,9 +199,7 @@ async def run_agent(
         pass  # the stream ends exactly at the terminal event
     run = await _await_terminal_row(container, message.run_id)
     if run is None:
-        raise ApiError(
-            500, "internal", f"run {message.run_id!r} never reached a terminal state"
-        )
+        raise ApiError(500, "internal", f"run {message.run_id!r} never reached a terminal state")
     return run
 
 

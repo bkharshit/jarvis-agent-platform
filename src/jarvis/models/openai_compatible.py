@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from jarvis.domain.agent import ModelRef
+from jarvis.domain.agent import EnvCredentialRef, ModelRef
 from jarvis.domain.execution import CancellationToken
 from jarvis.domain.message import Message, ToolCall, Usage
 from jarvis.domain.tools import ToolDescriptor
@@ -67,10 +67,22 @@ class OpenAICompatibleProvider:
 
     @classmethod
     def for_ref(cls, ref: ModelRef, **kwargs: Any) -> OpenAICompatibleProvider:
-        return cls(
-            base_url=ref.base_url or "https://api.openai.com/v1",
-            api_key_env=ref.api_key_env,
-            **kwargs,
+        base_url = ref.base_url or "https://api.openai.com/v1"
+        credential = ref.credential_ref
+        if credential is None:
+            return cls(base_url=base_url, **kwargs)
+        if isinstance(credential, EnvCredentialRef):
+            # D18 preserved: lazy env-var indirection — the key is read from
+            # the process environment at request time, never at construction.
+            return cls(base_url=base_url, api_key_env=credential.env_var, **kwargs)
+        # Stored credentials materialize through the CredentialResolver
+        # (ADR 0006) — the factory passes `api_key=` material. Without a
+        # resolver this deployment cannot serve stored refs: fail loudly.
+        raise ModelAuthError(
+            "stored credential reference cannot be resolved — "
+            "stored credentials are not available in this deployment",
+            provider=ref.provider,
+            model=ref.model,
         )
 
     def _headers(self) -> dict[str, str]:
@@ -193,9 +205,7 @@ class OpenAICompatibleProvider:
                     f"malformed model-list payload: {exc}", provider=self._name
                 ) from exc
         except httpx.RequestError as exc:
-            raise ModelConnectionError(
-                f"model listing failed: {exc}", provider=self._name
-            ) from exc
+            raise ModelConnectionError(f"model listing failed: {exc}", provider=self._name) from exc
         finally:
             await client.aclose()
         entries = data.get("data") if isinstance(data, dict) else None

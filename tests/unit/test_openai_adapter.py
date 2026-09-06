@@ -288,9 +288,7 @@ class TestListModels:
     @respx.mock
     async def test_sends_auth_header_from_env(self, monkeypatch):
         monkeypatch.setenv("TEST_LIST_KEY", "sk-list")
-        route = respx.get(f"{BASE}/models").respond(
-            status_code=200, json={"data": [{"id": "m"}]}
-        )
+        route = respx.get(f"{BASE}/models").respond(status_code=200, json={"data": [{"id": "m"}]})
         await _provider(api_key_env="TEST_LIST_KEY").list_models()
         assert route.calls.last.request.headers["Authorization"] == "Bearer sk-list"
 

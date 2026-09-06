@@ -135,9 +135,7 @@ async def test_run_rows_reconstruct_transcript(container, agent, mock):
 
 
 def _message(run_id: str, agent_id: str) -> RunQueueMessage:
-    return RunQueueMessage(
-        run_id=run_id, agent_id=agent_id, agent_version_id="v1", input="hi"
-    )
+    return RunQueueMessage(run_id=run_id, agent_id=agent_id, agent_version_id="v1", input="hi")
 
 
 @pytest.mark.db
@@ -233,7 +231,10 @@ async def test_mark_running_flips_queued_row(container, agent):
     run_id = "q-mark"
     await container.executions.create_queued_run(
         RunResult(
-            run_id=run_id, agent_id=agent.id, status="queued", input="hi",
+            run_id=run_id,
+            agent_id=agent.id,
+            status="queued",
+            input="hi",
             agent_version_id="v1",
         ),
         _message(run_id, agent.id),

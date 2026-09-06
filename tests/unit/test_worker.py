@@ -56,9 +56,7 @@ class FakeQueue:
 
     async def sweep(self, expired_before: datetime) -> list[str]:
         return [
-            run_id
-            for run_id in self.claimed
-            if run_id in self.expired and run_id not in self.acked
+            run_id for run_id in self.claimed if run_id in self.expired and run_id not in self.acked
         ]
 
     async def requeue(self, run_id: str) -> None:
@@ -309,9 +307,7 @@ async def test_sweep_fails_partial_run_with_one_terminal_event():
     await queue.enqueue(_message("run-5", definition))
     await queue.claim("dead-worker", timedelta(seconds=15))
     queue.expired.add("run-5")
-    executions.runs["run-5"] = RunResult(
-        run_id="run-5", agent_id=definition.id, status="running"
-    )
+    executions.runs["run-5"] = RunResult(run_id="run-5", agent_id=definition.id, status="running")
     started = RunStarted(
         event_id="e1",
         run_id="run-5",
@@ -339,9 +335,7 @@ async def test_sweep_finishes_run_whose_terminal_event_already_landed():
     await queue.enqueue(_message("run-6", definition))
     await queue.claim("dead-worker", timedelta(seconds=15))
     queue.expired.add("run-6")
-    executions.runs["run-6"] = RunResult(
-        run_id="run-6", agent_id=definition.id, status="running"
-    )
+    executions.runs["run-6"] = RunResult(run_id="run-6", agent_id=definition.id, status="running")
     terminal = RunCompleted(
         event_id="t1",
         run_id="run-6",

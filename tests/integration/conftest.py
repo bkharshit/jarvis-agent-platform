@@ -50,9 +50,7 @@ def _create_test_db() -> None:
     async def go() -> None:
         conn = await asyncpg.connect(ADMIN_URL)
         try:
-            exists = await conn.fetchval(
-                "SELECT 1 FROM pg_database WHERE datname = $1", TEST_DB
-            )
+            exists = await conn.fetchval("SELECT 1 FROM pg_database WHERE datname = $1", TEST_DB)
             if not exists:
                 await conn.execute(f"CREATE DATABASE {TEST_DB}")
         finally:

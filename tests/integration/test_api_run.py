@@ -77,6 +77,6 @@ async def test_variables_and_metadata_flow_through(client, agent, mock):
     detail = (await client.get(f"/v1/executions/{run_id}")).json()
     assert detail["run"]["session_id"] == "sess-1"
     assert detail["run"]["trace_id"]
-    transcript = (await client.get(f"/v1/conversations/{agent.id}/sess-1/messages"))
+    transcript = await client.get(f"/v1/conversations/{agent.id}/sess-1/messages")
     # memory disabled on this agent → no conversation rows
     assert transcript.status_code == 404

@@ -151,9 +151,7 @@ class PgEventStream:
             while True:
                 # Materialize the batch first: a terminal stop must not leave
                 # an async replay generator (and its session) dangling.
-                batch = [
-                    pair async for pair in self._replay_with_cursor(run_id, last_yielded)
-                ]
+                batch = [pair async for pair in self._replay_with_cursor(run_id, last_yielded)]
                 terminal_seen = False
                 for cursor, event in batch:
                     last_yielded = cursor
@@ -177,9 +175,7 @@ class PgEventStream:
         finally:
             self._subscribers.remove(queue)
 
-    async def _wait_for_wake(
-        self, queue: asyncio.Queue[_NotifyPayload], run_id: str
-    ) -> None:
+    async def _wait_for_wake(self, queue: asyncio.Queue[_NotifyPayload], run_id: str) -> None:
         """Block until THIS run gets a notify — or the fallback poll timeout
         expires, which is equivalent (the loop re-queries the DB either way)."""
         while True:
@@ -192,9 +188,7 @@ class PgEventStream:
             if wake_run == run_id:
                 return
 
-    async def replay(
-        self, run_id: str, after: int | None = None
-    ) -> AsyncIterator[ExecutionEvent]:
+    async def replay(self, run_id: str, after: int | None = None) -> AsyncIterator[ExecutionEvent]:
         if self._replay_with_cursor is None:
             raise RuntimeError("replay_cursor_fn not wired")
         async for _cursor, event in self._replay_with_cursor(run_id, after):

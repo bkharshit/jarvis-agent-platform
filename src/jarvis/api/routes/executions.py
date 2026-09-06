@@ -56,9 +56,7 @@ async def list_executions(
 
 
 @router.get("/{run_id}")
-async def get_execution(
-    run_id: str, container: AppContainer = ContainerDep
-) -> ExecutionDetail:
+async def get_execution(run_id: str, container: AppContainer = ContainerDep) -> ExecutionDetail:
     run = await _require_run(container, run_id)
     messages = await container.executions.list_messages(run_id)
     tool_executions = await container.executions.list_tool_executions(run_id)

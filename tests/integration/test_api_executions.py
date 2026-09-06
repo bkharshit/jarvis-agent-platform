@@ -71,13 +71,9 @@ async def test_executions_list_filters(client, agent, mock):
 
     mock.add_turn(turn("one"))
     mock.add_turn(turn("two"))
-    run_a = (await client.post(f"/v1/agents/{agent.id}/run", json={"input": "1"})).json()[
-        "run_id"
-    ]
+    run_a = (await client.post(f"/v1/agents/{agent.id}/run", json={"input": "1"})).json()["run_id"]
     run_b = (
-        await client.post(
-            f"/v1/agents/{agent.id}/run", json={"input": "2", "session_id": "s9"}
-        )
+        await client.post(f"/v1/agents/{agent.id}/run", json={"input": "2", "session_id": "s9"})
     ).json()["run_id"]
 
     listed = (await client.get("/v1/executions", params={"agent_id": agent.id})).json()
@@ -158,9 +154,9 @@ async def test_events_replay_json_and_sse(client, agent, mock):
     from jarvis.models.mock import turn
 
     mock.add_turn(turn("payload"))
-    run_id = (
-        await client.post(f"/v1/agents/{agent.id}/run", json={"input": "hi"})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/v1/agents/{agent.id}/run", json={"input": "hi"})).json()[
+        "run_id"
+    ]
 
     json_resp = await client.get(f"/v1/executions/{run_id}/events")
     assert json_resp.status_code == 200
@@ -170,9 +166,7 @@ async def test_events_replay_json_and_sse(client, agent, mock):
 
     # `after` is cursor space: everything after the first event's cursor.
     first_cursor = replay["events"][0]["cursor"]
-    after = await client.get(
-        f"/v1/executions/{run_id}/events", params={"after": first_cursor}
-    )
+    after = await client.get(f"/v1/executions/{run_id}/events", params={"after": first_cursor})
     after_ids = [e["cursor"] for e in after.json()["events"]]
     assert after_ids == [e["cursor"] for e in replay["events"]][1:]
 
@@ -224,13 +218,14 @@ async def test_conversation_messages_endpoint(client, container, mock):
         )
         await container.runtime.run(version, f"question {i}", ctx)
 
-    resp = await client.get(
-        f"/v1/conversations/{definition.id}/conv-sess/messages"
-    )
+    resp = await client.get(f"/v1/conversations/{definition.id}/conv-sess/messages")
     assert resp.status_code == 200
     body = resp.json()
     assert [m["role"] for m in body["messages"]] == [
-        "user", "assistant", "user", "assistant",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
     ]
     assert body["messages"][1]["content"] == "first reply"
 
@@ -238,7 +233,8 @@ async def test_conversation_messages_endpoint(client, container, mock):
         f"/v1/conversations/{definition.id}/conv-sess/messages", params={"limit": 2}
     )
     assert [m["content"] for m in limited.json()["messages"]] == [
-        "question 1", "second reply",
+        "question 1",
+        "second reply",
     ]
 
     missing = await client.get(f"/v1/conversations/{definition.id}/nope/messages")

@@ -96,9 +96,7 @@ def _print_event(event: ExecutionEvent) -> None:
         detail = f"input={event.input!r}"
     elif isinstance(event, IterationStarted):
         detail = f"iteration={event.iteration}"
-    elif isinstance(
-        event, (ToolCallRequested, ToolCallStarted, ToolCallCompleted, ToolCallFailed)
-    ):
+    elif isinstance(event, (ToolCallRequested, ToolCallStarted, ToolCallCompleted, ToolCallFailed)):
         detail = f"tool={event.name}"
         if isinstance(event, ToolCallCompleted):
             detail += f" ok={not event.is_error} latency={event.latency_ms}ms"
@@ -200,29 +198,25 @@ def doctor(
         tree.add(f"model provider: {settings.model_provider} / {settings.model_name}")
 
         if ping_model:
-            from jarvis.domain.agent import ModelRef
+            from jarvis.domain.agent import EnvCredentialRef, ModelRef
             from jarvis.models.types import ModelRequest
 
             ref = ModelRef(
                 provider=settings.model_provider,
                 model=settings.model_name,
                 base_url=settings.model_base_url,
-                api_key_env=settings.model_api_key_env,
+                credential_ref=EnvCredentialRef(type="env", env_var=settings.model_api_key_env),
             )
             try:
                 client = container.models.resolve(ref)
-                request = ModelRequest(
-                    model=ref.model, messages=[user_message("Reply with: ok")]
-                )
+                request = ModelRequest(model=ref.model, messages=[user_message("Reply with: ok")])
                 response = await client.generate(request)
                 model_note = f"[green]ok[/green]: {response.message.text[:80]!r}"
             except Exception as exc:  # noqa: BLE001
                 model_note = f"[red]failed: {type(exc).__name__}: {exc}[/red]"
             tree.add(f"model ping: {model_note}")
 
-        tree.add(
-            "tools: " + ", ".join(sorted(d.name for d in container.tools.descriptors()))
-        )
+        tree.add("tools: " + ", ".join(sorted(d.name for d in container.tools.descriptors())))
         console.print(tree)
 
     asyncio.run(_with_container(check))
@@ -261,7 +255,8 @@ def agent_list() -> None:
         table.add_column("strategy")
         for definition in agents:
             table.add_row(
-                definition.id, definition.name,
+                definition.id,
+                definition.name,
                 f"{definition.model.provider}/{definition.model.model}",
                 definition.strategy.type,
             )
@@ -304,9 +299,7 @@ def agent_delete(name: str) -> None:
             err_console.print(f"[red]agent {name!r} not found[/red]")
             raise typer.Exit(1)
         if not await container.agents.delete(definition.id):
-            err_console.print(
-                f"[red]agent {name!r} has executions; delete refused[/red]"
-            )
+            err_console.print(f"[red]agent {name!r} has executions; delete refused[/red]")
             raise typer.Exit(1)
         console.print(f"[green]deleted[/green] {name}")
 
@@ -358,9 +351,7 @@ def run(
         )
         if stream:
             sink = await container.bus.get_or_create(ctx.run_id)
-            run_task = asyncio.create_task(
-                container.runtime.run(version, input, ctx, sink=sink)
-            )
+            run_task = asyncio.create_task(container.runtime.run(version, input, ctx, sink=sink))
             async for _, event in sink.subscribe(None):
                 _print_event(event)
             result = await run_task
