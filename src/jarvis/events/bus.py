@@ -16,6 +16,7 @@ from jarvis.domain.events import (
     EventSequenceError,
     ExecutionEvent,
     TerminalEvent,
+    is_pause,
     is_terminal,
 )
 
@@ -25,20 +26,36 @@ PersistFn = Callable[[ExecutionEvent], Awaitable[int]]
 
 class InProcessEventSink:
     """Write/read side for one run. NOT thread-safe across event loops — a
-    run and its subscribers live on the same asyncio loop."""
+    run and its subscribers live on the same asyncio loop.
 
-    def __init__(self, run_id: str, persist: PersistFn | None = None) -> None:
+    `sequence_offset` seeds the per-run gapless sequence for a RESUMED
+    segment (S10, ADR 0010 §1): `append_event` trusts the sink-assigned
+    sequence, so a fresh sink for an existing log must continue at
+    `next_event_sequence`, not restart at 0.
+    """
+
+    def __init__(
+        self, run_id: str, persist: PersistFn | None = None, sequence_offset: int = 0
+    ) -> None:
         self.run_id = run_id
         self._persist = persist
+        self._sequence_offset = sequence_offset
         self._events: list[ExecutionEvent] = []
         self._cursors: list[int] = []
         self._subscribers: list[asyncio.Queue[tuple[int, ExecutionEvent]]] = []
         self._finalized = False
+        self._paused = False
         self._terminal: ExecutionEvent | None = None
 
     @property
     def finalized(self) -> bool:
         return self._finalized
+
+    @property
+    def paused(self) -> bool:
+        """True once this segment ended at run.awaiting_input — the run is
+        paused, not finished."""
+        return self._paused
 
     @property
     def events(self) -> list[ExecutionEvent]:
@@ -47,13 +64,22 @@ class InProcessEventSink:
     async def append(self, event: ExecutionEvent) -> int:
         if self._finalized:
             raise EventSequenceError(f"sink for run {self.run_id!r} is already finalized")
+        if self._paused:
+            # The segment ended at the pause (ADR 0010 §1) — exactly as after
+            # finalize. The resumed segment uses a fresh, offset-seeded sink.
+            raise EventSequenceError(f"sink for run {self.run_id!r} ended its segment at a pause")
         if is_terminal(event):
             raise EventSequenceError("terminal events must go through finalize()")
-        return await self._append(event)
+        cursor = await self._append(event)
+        if is_pause(event):
+            self._paused = True
+        return cursor
 
     async def finalize(self, event: TerminalEvent) -> int:
         if self._finalized:
             raise EventSequenceError(f"sink for run {self.run_id!r} is already finalized")
+        if self._paused:
+            raise EventSequenceError(f"sink for run {self.run_id!r} ended its segment at a pause")
         if not is_terminal(event):
             raise EventSequenceError("finalize() accepts terminal events only")
         cursor = await self._append(event)
@@ -62,7 +88,7 @@ class InProcessEventSink:
         return cursor
 
     async def _append(self, event: ExecutionEvent) -> int:
-        sequence = len(self._events)
+        sequence = self._sequence_offset + len(self._events)
         if event.run_id != self.run_id:
             raise EventSequenceError(
                 f"event run_id {event.run_id!r} does not match sink run {self.run_id!r}"
@@ -83,7 +109,9 @@ class InProcessEventSink:
         self, last_cursor: int | None = None
     ) -> AsyncIterator[tuple[int, ExecutionEvent]]:
         """Yield (cursor, event) pairs after `last_cursor`, then live ones,
-        ending with the run's terminal event (if any)."""
+        ending with the run's terminal event — or at a `run.awaiting_input`
+        pause: a segment end is a stream end (S10, ADR 0010 §5), and the
+        client re-attaches with Last-Event-ID after resume."""
         queue: asyncio.Queue[tuple[int, ExecutionEvent]] = asyncio.Queue()
         self._subscribers.append(queue)
         try:
@@ -91,15 +119,15 @@ class InProcessEventSink:
             # anything appended meanwhile is deduped by cursor comparison.
             last_yielded = last_cursor
             replay = list(zip(self._cursors, self._events, strict=True))
-            terminal_seen = False
+            segment_ended = False
             for cursor, event in replay:
                 if last_cursor is not None and cursor <= last_cursor:
                     continue
                 yield cursor, event
                 last_yielded = cursor
-                if is_terminal(event):
-                    terminal_seen = True
-            if terminal_seen or (self._finalized and self._terminal is None):
+                if is_terminal(event) or is_pause(event):
+                    segment_ended = True
+            if segment_ended or (self._finalized and self._terminal is None):
                 return
             while True:
                 cursor, event = await queue.get()
@@ -107,7 +135,7 @@ class InProcessEventSink:
                     continue
                 last_yielded = cursor
                 yield cursor, event
-                if is_terminal(event):
+                if is_terminal(event) or is_pause(event):
                     return
         finally:
             self._subscribers.remove(queue)
@@ -135,7 +163,11 @@ class InProcessEventBus:
         self._sinks.pop(run_id, None)
 
     def active_runs(self) -> list[str]:
-        return [run_id for run_id, sink in self._sinks.items() if not sink.finalized]
+        return [
+            run_id
+            for run_id, sink in self._sinks.items()
+            if not sink.finalized and not sink.paused  # a paused run is not active
+        ]
 
 
 class ReplayOnlyEventStream:

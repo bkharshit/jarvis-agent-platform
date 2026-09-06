@@ -169,3 +169,46 @@ async def test_notifier_is_best_effort_without_listeners(container):
     notifier = PgNotifier(container.settings.database_url)
     await notifier.notify("nobody-listens", 1)  # must not raise
     await notifier.aclose()
+
+
+@pytest.mark.db
+async def test_stream_ends_at_pause_segment(container):
+    """S10: a run.awaiting_input frame ends the stream exactly like a
+    terminal — the client shows the pause UI and re-attaches with
+    Last-Event-ID after resume; a reconnect whose replay is empty ends at
+    once because the row says awaiting_input."""
+    from datetime import timedelta
+
+    from jarvis.domain.events import RunAwaitingInput
+    from jarvis.events.bus import EventSequenceError
+
+    run_id = "stream-pause"
+    sink = _sink(container, run_id, notify=True)
+    await sink.append(_started(run_id))
+    pause_cursor = await sink.append(
+        RunAwaitingInput(
+            event_id=f"p-{run_id}",
+            run_id=run_id,
+            created_at=datetime.now(UTC),
+            reason="strategy",
+            question="go on?",
+            awaiting_until=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    # The paused row (what the empty-replay reconnect reads).
+    await container.executions.create_run(
+        RunResult(run_id=run_id, agent_id="a", status="awaiting_input")
+    )
+
+    stream = container.streams
+    seen = [(c, e.type) async for c, e in stream.subscribe(run_id)]
+    assert [t for _, t in seen] == ["run.started", "run.awaiting_input"]
+
+    # The client consumed the pause frame; the reconnect's replay is empty
+    # and the row is awaiting_input — the stream ends, it does not poll.
+    seen = [(c, e.type) async for c, e in stream.subscribe(run_id, pause_cursor)]
+    assert seen == []
+
+    # The paused sink refuses further appends: its segment has ended.
+    with pytest.raises(EventSequenceError, match="segment at a pause"):
+        await sink.append(_started(run_id, 2))

@@ -24,7 +24,7 @@ from typing import Any
 import asyncpg
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jarvis.domain.events import ExecutionEvent, is_terminal
+from jarvis.domain.events import ExecutionEvent, is_pause, is_terminal
 from jarvis.domain.execution import TERMINAL_STATUSES
 
 logger = logging.getLogger("jarvis.events")
@@ -152,23 +152,28 @@ class PgEventStream:
                 # Materialize the batch first: a terminal stop must not leave
                 # an async replay generator (and its session) dangling.
                 batch = [pair async for pair in self._replay_with_cursor(run_id, last_yielded)]
-                terminal_seen = False
+                segment_ended = False
                 for cursor, event in batch:
                     last_yielded = cursor
                     yield cursor, event
-                    if is_terminal(event):
-                        terminal_seen = True
-                if terminal_seen:
+                    if is_terminal(event) or is_pause(event):
+                        # Terminal, or a pause: a segment end is a stream end
+                        # (S10, ADR 0010 §5) — the client re-attaches with
+                        # Last-Event-ID after resume.
+                        segment_ended = True
+                if segment_ended:
                     return
                 if not batch and self._run_status is not None:
                     # Empty replay: either the run is still live (nothing new
                     # since `last_cursor`) or the client already consumed the
-                    # terminal event before reconnecting — in which case the
+                    # stream's end before reconnecting — in which case the
                     # stream ends now, as a pure replay would have. An unknown
                     # row keeps waiting: every route path creates the row
                     # before subscribing (404 happens first).
                     run = await self._run_status(run_id)
-                    if run is not None and run.status in TERMINAL_STATUSES:
+                    if run is not None and (
+                        run.status in TERMINAL_STATUSES or run.status == "awaiting_input"
+                    ):
                         return
                 await self._wait_for_wake(queue, run_id)
                 await self._heal_if_needed()
