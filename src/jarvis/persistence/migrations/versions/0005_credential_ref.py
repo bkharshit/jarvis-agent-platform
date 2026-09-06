@@ -21,6 +21,31 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # Pre-S2 serialization wrote `api_key_env: null` (explicit JSON null) for
+    # credential-less models — a null the removed domain field can no longer
+    # express (extra="forbid"). Drop those keys first: they carry no
+    # reference. Match on VALUE, never key presence (`?` matches nulls too —
+    # the original bug, which produced credential_ref {type: env,
+    # env_var: null} and 500s on every affected listing).
+    op.execute(
+        """
+        UPDATE agent_versions
+        SET snapshot = snapshot #- '{model,api_key_env}'::text[]
+        WHERE snapshot -> 'model' ? 'api_key_env'
+          AND coalesce(snapshot -> 'model' ->> 'api_key_env', '') = ''
+        """
+    )
+    # Self-heal for databases already migrated by the pre-fix form of this
+    # migration (its WHERE matched api_key_env: null): remove the bogus
+    # credential_ref blobs it wrote. No-op on fresh databases.
+    op.execute(
+        """
+        UPDATE agent_versions
+        SET snapshot = snapshot #- '{model,credential_ref}'::text[]
+        WHERE snapshot #>> '{model,credential_ref,type}'::text[] = 'env'
+          AND coalesce(snapshot #>> '{model,credential_ref,env_var}'::text[], '') = ''
+        """
+    )
     # NOTE: explicit ::text[] casts — asyncpg does not infer array types
     # from string literals.
     op.execute(
@@ -34,7 +59,7 @@ def upgrade() -> None:
                     'env_var', snapshot -> 'model' ->> 'api_key_env'
                 )
             )
-        WHERE snapshot -> 'model' ? 'api_key_env'
+        WHERE coalesce(snapshot -> 'model' ->> 'api_key_env', '') <> ''
         """
     )
 
@@ -60,5 +85,15 @@ def downgrade() -> None:
         UPDATE agent_versions
         SET snapshot = snapshot #- '{model,credential_ref}'::text[]
         WHERE snapshot -> 'model' -> 'credential_ref' ->> 'type' = 'stored'
+        """
+    )
+    # Self-heal (see upgrade): drop credential_ref blobs with a null env_var
+    # before the env rewrite reads them.
+    op.execute(
+        """
+        UPDATE agent_versions
+        SET snapshot = snapshot #- '{model,credential_ref}'::text[]
+        WHERE snapshot #>> '{model,credential_ref,type}'::text[] = 'env'
+          AND coalesce(snapshot #>> '{model,credential_ref,env_var}'::text[], '') = ''
         """
     )

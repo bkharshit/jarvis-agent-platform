@@ -116,6 +116,29 @@ def test_credential_ref_snapshot_rewrite() -> None:
                         )
                     },
                 )
+                # Old-shape snapshot with an EXPLICIT null api_key_env (the
+                # pre-S2 serializer emitted it for credential-less models).
+                await conn.execute(
+                    text(
+                        "INSERT INTO agent_versions (id, agent_id, version, snapshot,"
+                        " label, created_at) VALUES ('v-s2-null', 'a-s2', 2, :snapshot,"
+                        " '', now())"
+                    ),
+                    {
+                        "snapshot": json.dumps(
+                            {
+                                "id": "a-s2",
+                                "name": "s2-migration",
+                                "model": {
+                                    "provider": "mock",
+                                    "model": "mock-agent",
+                                    "api_key_env": None,
+                                },
+                                "strategy": {"type": "function_calling"},
+                            }
+                        )
+                    },
+                )
         finally:
             await engine.dispose()
 
@@ -131,11 +154,24 @@ def test_credential_ref_snapshot_rewrite() -> None:
                     text("SELECT snapshot FROM agent_versions WHERE id = 'v-s2'")
                 )
                 snapshot = row.scalar_one()
+                row = await conn.execute(
+                    text("SELECT snapshot FROM agent_versions WHERE id = 'v-s2-null'")
+                )
+                null_snapshot = row.scalar_one()
         finally:
             await engine.dispose()
 
         model = snapshot["model"]
         assert "api_key_env" not in model
         assert model["credential_ref"] == {"type": "env", "env_var": "OPENAI_API_KEY"}
+
+        # Regression (found live in the S2 walkthrough): pre-S2 snapshots
+        # serialized `api_key_env: null` for credential-less models. The
+        # migration must match on VALUE, not key presence — a null must be
+        # dropped, not rewritten into credential_ref {type: env, env_var:
+        # null} (unparseable by the discriminated union; 500s every listing).
+        null_model = null_snapshot["model"]
+        assert "api_key_env" not in null_model
+        assert "credential_ref" not in null_model
 
     asyncio.run(check())

@@ -87,6 +87,12 @@ uv run jarvis serve        # API on :8000
   credential resolution failure must become a persisted terminal `model`
   failure; an escape past the runtime makes the worker treat the message as
   a claim failure and retry it forever with no terminal state.
+- **JSONB data migrations match on VALUE, never key presence** — the
+  pre-S2 serializer wrote explicit nulls (`api_key_env: null`), and `?`
+  matches a JSON null while `->>` reads it back as SQL NULL. Migration
+  0005's key-presence WHERE rewrote nulls into unparseable
+  `credential_ref` blobs and 500'd every affected listing (found live in
+  the walkthrough; regression-tested in test_migrations).
 
 ## Working agreement
 

@@ -262,7 +262,8 @@ AGENT=$(curl -s -X POST localhost:8002/v1/agents -H "Authorization: Bearer $ACME
     "model": {"provider": "openai_compatible", "model": "gemma4:31b", "base_url": "https://ollama.com/v1",
               "credential_ref": {"type": "env", "env_var": "OLLAMA_API_KEY"}},
     "system_prompt": "You are terse.", "strategy": {"type": "function_calling"}}' \
-  | python3 -c "import json,sys;print(json.load(sys.stdin)['id'])")
+  | python3 -c "import json,sys;print(json.load(sys.stdin)['definition']['id'])")
+# note: agent create returns AgentDetail {definition, versions} — id is nested
 
 curl -s -N -X POST localhost:8002/v1/agents/$AGENT/stream -H "Authorization: Bearer $ACME_KEY" \
   -H 'Content-Type: application/json' -d '{"input":"Reply with the single word: ok."}' | tail -4
@@ -301,7 +302,7 @@ BYOK_AGENT=$(curl -s -X POST localhost:8002/v1/agents -H "Authorization: Bearer 
     "model": {"provider": "openai_compatible", "model": "gemma4:31b", "base_url": "https://ollama.com/v1",
               "credential_ref": {"type": "stored", "credential_id": "'"$CRED"'"}},
     "system_prompt": "You are terse.", "strategy": {"type": "function_calling"}}' \
-  | python3 -c "import json,sys;print(json.load(sys.stdin)['id'])")
+  | python3 -c "import json,sys;print(json.load(sys.stdin)['definition']['id'])")
 
 curl -s -N -X POST localhost:8002/v1/agents/$BYOK_AGENT/stream -H "Authorization: Bearer $ACME_KEY" \
   -H 'Content-Type: application/json' -d '{"input":"Reply with the single word: ok."}' | tail -4
@@ -332,7 +333,7 @@ G_AGENT=$(curl -s -X POST localhost:8002/v1/agents -b /tmp/globex.jar \
     "model": {"provider": "openai_compatible", "model": "gemma4:31b", "base_url": "https://ollama.com/v1",
               "credential_ref": {"type": "stored", "credential_id": "'"$CRED"'"}},
     "system_prompt": "You are terse.", "strategy": {"type": "function_calling"}}' \
-  | python3 -c "import json,sys;print(json.load(sys.stdin)['id'])")
+  | python3 -c "import json,sys;print(json.load(sys.stdin)['definition']['id'])")
 
 curl -s -N -X POST localhost:8002/v1/agents/$G_AGENT/stream -b /tmp/globex.jar \
   -H 'Content-Type: application/json' -d '{"input":"hi"}' > /dev/null
