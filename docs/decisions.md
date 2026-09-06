@@ -227,6 +227,28 @@ the code.
   503 `credentials_unavailable`, capability reports unavailable — it never
   silently degrades). Envelope-encryption via a cloud KMS is the natural
   swap at the same seam (see ADR 0006) and is deliberately not built yet.
+- **D31 (2026-09-06) — A pause is a segment, not a terminal (S10).** A run
+  pauses via one new non-terminal event `run.awaiting_input` (ADR 0010) and
+  a new non-terminal status `awaiting_input`; `is_terminal`,
+  `TERMINAL_EVENT_TYPES`, and exactly-one-terminal are unchanged — a
+  paused run simply has no terminal event *yet*, and the gapless per-run
+  sequence continues across segments. Terminal-adjacency is the new
+  invariant: no non-terminal event after `run.awaiting_input` within a
+  segment. Pause is a runtime decision (ADR 0004): the loop returns
+  without `finalize()`, the worker acks the queue row (nothing holds a
+  paused run — cancel/reap act directly on the row).
+- **D32 (2026-09-06) — Resume is one more queue segment, and limits span
+  the chain (S10).** `POST /executions/{id}/resume` upsert-merges a
+  `ResumeRequest` into the run's existing queue payload (the principal
+  and deadline live only there, ADR 0008) and flips the row to pending —
+  any worker claims it. The resumed segment rebuilds messages from the
+  persisted transcript (system prompt + run messages + the resume
+  append), seeds usage from the run row and iterations from persisted
+  `iteration.started` events, and keeps the original deadline: `max_iterations`
+  and the token budget bound the whole chain, not a segment (ADR 0004). A
+  crashed resume segment never requeues — a resumed run always has prior
+  events, so S1's expired-lease policy lands on terminal failure, never a
+  blind re-execution the gapless sequence could not survive.
 
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 
