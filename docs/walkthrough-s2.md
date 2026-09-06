@@ -212,7 +212,10 @@ Cloud model (`gemma4:31b` via `https://ollama.com/v1`, key value in
 
 - Every create is **fire-and-forget** (`-o /dev/null`) — a duplicate name
   409s harmlessly on re-run — and the id is then **looked up by name**, so
-  any block can be re-run in any order.
+  any block can be re-run in any order. The flip side: the POSTs hide
+  *why* they failed. Swap in `-w '%{http_code}\n' -o /dev/null` to see
+  the status — a 401 there usually means the cookie jar was logged out
+  (section 3 clears `/tmp/acme.jar`); re-login and re-run the block.
 - Two response shapes to know: agent create returns `AgentDetail`
   (`{definition, versions}` — id nested at `definition.id`), while
   credentials/members/api-keys return top-level `id`; execution list items
