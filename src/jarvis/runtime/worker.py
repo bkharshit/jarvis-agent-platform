@@ -45,6 +45,7 @@ SWEEP_INTERVAL_SECONDS = 30.0
 CLAIM_POLL_SECONDS = 0.5
 
 _LOST_LEASE_ERROR = "worker lost (lease expired) — run did not finish within its claim"
+_AWAITING_TIMEOUT_REASON = "awaiting_input timeout"
 
 
 class VersionLoader(Protocol):
@@ -64,6 +65,9 @@ class WorkerExecutions(Protocol):
     async def append_event(self, event: ExecutionEvent) -> int: ...
     async def finish_run(self, result: RunResult) -> None: ...
     async def get(self, run_id: str) -> RunResult | None: ...
+    async def expired_awaiting(self, now: datetime) -> list[str]:
+        """Run_ids whose pause deadline passed (S10, ADR 0010 §6)."""
+        ...
 
 
 class WorkerNotifier(Protocol):
@@ -286,7 +290,9 @@ class Worker:
     async def sweep(self) -> list[str]:
         """Expired leases: requeue runs that emitted nothing (safe to re-run
         from scratch); otherwise record exactly one terminal failure — or
-        finish from the terminal event a worker already wrote before dying."""
+        finish from the terminal event a worker already wrote before dying.
+        Then the pause-reaper (S10, ADR 0010 §6): an awaiting_input run past
+        its deadline is finished with a terminal cancel from any worker."""
         acted: list[str] = []
         for run_id in await self._queue.sweep(datetime.now(UTC)):
             try:
@@ -308,7 +314,40 @@ class Worker:
                 logger.warning("reaped expired lease for run %s", run_id)
             except Exception:  # noqa: BLE001 — one bad run must not stop the sweep
                 logger.exception("sweep failed for run %s", run_id)
+        for run_id in await self._executions.expired_awaiting(datetime.now(UTC)):
+            try:
+                if await self._reap_paused(run_id):
+                    acted.append(run_id)
+                    logger.warning("reaped expired pause for run %s", run_id)
+            except Exception:  # noqa: BLE001 — one bad run must not stop the sweep
+                logger.exception("pause-reap failed for run %s", run_id)
         return acted
+
+    async def _reap_paused(self, run_id: str) -> bool:
+        """A paused run is acked — no heartbeat holds it, so the deadline on
+        its row is all the sweeper can act on. Append `run.cancelled`
+        (reason `awaiting_input timeout`) at the next sequence, finish the
+        row, and drop any pending resume message from the queue (its claim
+        would only hit the stale-guard). Returns False when the row already
+        moved on (resumed, finished, or reaped by another worker)."""
+        row = await self._executions.get(run_id)
+        if row is None or row.status != "awaiting_input":
+            return False
+        event = _cancelled_event(run_id, _AWAITING_TIMEOUT_REASON)
+        event.total_usage = row.total_usage
+        event.sequence = await self._executions.next_event_sequence(run_id)
+        cursor = await self._persist(event)
+        await self._executions.finish_run(
+            row.model_copy(
+                update={
+                    "status": "cancelled",
+                    "finished_at": datetime.now(UTC),
+                    "event_cursor": cursor,
+                }
+            )
+        )
+        await self._queue.ack(run_id)
+        return True
 
     async def _sweep_loop(self) -> None:
         while True:

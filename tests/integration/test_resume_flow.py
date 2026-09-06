@@ -144,6 +144,72 @@ async def test_refused_resume_continues_with_refusal_message(container, mock: Mo
 
 
 @pytest.mark.db
+async def test_sweeper_reaps_expired_pause(container, mock: MockModelProvider):
+    """S10 (ADR 0010 §6): a pause whose deadline passed is finished by the
+    sweeper — one terminal `run.cancelled` at the next sequence, from any
+    worker; a resume racing the reap is absorbed by the stale-guard."""
+    from sqlalchemy import update
+
+    from jarvis.persistence.models import AgentExecutionRow
+
+    mock.add_turn(_tool_call_turn())
+
+    agent = _gated_agent("reap-agent")
+    await container.agents.create(agent)
+    run_id = f"hl-reap-{uuid4().hex[:8]}"
+    await _enqueue_gated_run(container, agent, run_id)
+    await _await_status(container.executions, run_id, AWAITING)
+    before = [e async for e in container.executions.list_events(run_id)]
+
+    # Backdate the pause deadline under the sweeper's feet.
+    async with container.engine.begin() as conn:
+        await conn.execute(
+            update(AgentExecutionRow)
+            .where(AgentExecutionRow.id == run_id)
+            .values(awaiting_until=datetime.now(UTC) - timedelta(seconds=1))
+        )
+
+    acted = await container.worker.sweep()
+    assert run_id in acted
+
+    row = await container.executions.get(run_id)
+    assert row.status == "cancelled" and row.finished_at is not None
+    events = [e async for e in container.executions.list_events(run_id)]
+    assert events[-1].type == "run.cancelled"
+    assert events[-1].reason == "awaiting_input timeout"
+    assert [e.sequence for e in events] == list(range(len(events)))  # gapless
+    assert sum(e.type == "run.cancelled" for e in events) == 1  # exactly one terminal
+    assert len(events) == len(before) + 1
+
+    # A pending resume racing the reap is absorbed (no events, row untouched).
+    await container.queue.enqueue_resume(run_id, ResumeRequest(kind="content", content="late"))
+    await asyncio.sleep(1.0)
+    after = [e async for e in container.executions.list_events(run_id)]
+    assert len(after) == len(events)
+    assert (await container.executions.get(run_id)).status == "cancelled"
+
+
+@pytest.mark.db
+async def test_sweeper_leaves_live_pauses_alone(container, mock: MockModelProvider):
+    mock.add_turn(_tool_call_turn())
+
+    agent = _gated_agent("live-agent")
+    await container.agents.create(agent)
+    run_id = f"hl-live-{uuid4().hex[:8]}"
+    await _enqueue_gated_run(container, agent, run_id)
+    await _await_status(container.executions, run_id, AWAITING)
+    before = [e async for e in container.executions.list_events(run_id)]
+
+    acted = await container.worker.sweep()
+
+    assert run_id not in acted
+    row = await container.executions.get(run_id)
+    assert row.status == "awaiting_input"
+    after = [e async for e in container.executions.list_events(run_id)]
+    assert len(after) == len(before)
+
+
+@pytest.mark.db
 async def test_enqueue_resume_merges_and_preserves_enqueue_time_fields(container, agent):
     """The payload is the run's trust boundary: the resume MERGES into it,
     so the enqueue-time principal and deadline survive the cross-process

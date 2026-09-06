@@ -71,6 +71,7 @@ class FakeExecutions:
         self.events: dict[str, list[tuple[int, Any]]] = {}
         self.next_cursor = 100
         self.finished: list[RunResult] = []
+        self.expired_pauses: list[str] = []
 
     async def mark_running(self, run_id: str, started_at: datetime) -> None:
         if run_id in self.runs:
@@ -100,6 +101,9 @@ class FakeExecutions:
 
     async def get(self, run_id: str) -> RunResult | None:
         return self.runs.get(run_id)
+
+    async def expired_awaiting(self, now: datetime) -> list[str]:
+        return list(self.expired_pauses)
 
 
 class NotifyRecorder:
@@ -381,6 +385,51 @@ async def test_sweep_finishes_run_whose_terminal_event_already_landed():
     finished = executions.runs["run-6"]
     assert finished.status == "succeeded" and finished.event_cursor == cursor
     assert finished.final_message == "done"
+
+
+async def test_sweep_reaps_expired_pause_with_one_terminal_event():
+    """S10 (ADR 0010 §6): a paused run is acked — no heartbeat holds it, so
+    the row's deadline is what the sweeper acts on. Exactly one terminal
+    `run.cancelled` at the next sequence, then finish_run; the paused
+    row's usage carries into the terminal event."""
+    worker, queue, executions, notifier, definition = _wired()
+    executions.runs["run-7"] = RunResult(
+        run_id="run-7",
+        agent_id=definition.id,
+        status="awaiting_input",
+        total_usage=Usage(input_tokens=5, output_tokens=2),
+    )
+    executions.expired_pauses.append("run-7")
+
+    acted = await worker.sweep()
+
+    assert acted == ["run-7"]
+    cursors, events = zip(*executions.events["run-7"], strict=True)
+    assert [e.type for e in events] == ["run.cancelled"]
+    assert events[-1].reason == "awaiting_input timeout"
+    assert events[-1].sequence == 0
+    assert events[-1].total_usage == Usage(input_tokens=5, output_tokens=2)
+    assert notifier.notified  # the reap woke subscribers holding at the pause
+    finished = executions.runs["run-7"]
+    assert finished.status == "cancelled" and finished.event_cursor == cursors[-1]
+    assert finished.finished_at is not None
+    assert finished.total_usage == Usage(input_tokens=5, output_tokens=2)
+    assert queue.acked == ["run-7"]  # a pending resume is dropped with the row
+
+
+async def test_sweep_skips_pause_that_already_moved_on():
+    """Raced resume/reap: the row is no longer awaiting_input — no events,
+    no finish, nothing to reap (the stale-guard owns the queue side)."""
+    worker, queue, executions, _notifier, definition = _wired()
+    executions.runs["run-8"] = RunResult(run_id="run-8", agent_id=definition.id, status="succeeded")
+    executions.expired_pauses.append("run-8")
+
+    acted = await worker.sweep()
+
+    assert acted == []
+    assert "run-8" not in executions.events
+    assert executions.finished == []
+    assert queue.acked == []
 
 
 async def test_run_forever_respects_concurrency_cap():
