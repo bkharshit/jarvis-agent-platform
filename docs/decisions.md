@@ -194,6 +194,40 @@ the code.
   not finish within its claim"`. A new kind (`worker_lost`) would be
   preferable at the next envelope-revisiting ADR.
 
+- **D28 (2026-09-06) — The credential-resolution seam is async (S2).**
+  Stored BYOK credentials resolve through the database, so resolution is IO
+  and the seam must await: `CredentialResolver.resolve`,
+  `ModelProviderFactory.resolve` (and `list_models`), `StoredResolver`,
+  `EnvCredentialResolver`, and `DefaultCredentialResolver.resolve` are all
+  `async def`. Alternatives rejected: a second sync engine/driver just for
+  the resolver (two connection pools, a driver dependency, and a lie about
+  what the operation is), and preloading credentials outside the runtime.
+  The ADR 0009 consequences amendment pre-declared the signature change
+  (CLAUDE.md rule 7). One follow-on rule this forced, now locked by unit
+  tests: **model resolution happens inside `AgentRuntime.run`'s try block**
+  — a resolution failure is a persisted terminal `model` failure (D5). An
+  escape past the runtime makes the worker treat the message as a claim
+  failure and retry it forever, with no terminal state (found live in the
+  S2 isolation e2e).
+- **D29 (2026-09-06) — Tenant boundaries read as 404, secrets are
+  write-only.** Cross-tenant ids (agents, executions, members, API keys,
+  credentials) resolve to 404 `not_found`, never 403 — no existence leak
+  (ADR 0009 §4); scoping happens at the repository boundary as WHERE
+  clauses, never post-filters. BYOK material is write-only through the API:
+  the secret enters on create/update and no response, snapshot, or log ever
+  carries plaintext or the ciphertext envelope (locked by integration
+  tests). Member deletes are refused while the user owns API keys or
+  credentials even if revoked — the audit rows reference the user, so the
+  user row survives.
+- **D30 (2026-09-06) — BYOK encryption is AES-GCM with a local master key;
+  KMS is deferred.** `JARVIS_CREDENTIALS_MASTER_KEY` names an env var
+  holding a base64 32-byte key (ADR 0005 pattern: config stores the
+  *name*, never the value). Envelope: `{v, key_id, nonce, ct}`. Tamper
+  fails loudly (decrypt error → persisted `model` failure; missing key →
+  503 `credentials_unavailable`, capability reports unavailable — it never
+  silently degrades). Envelope-encryption via a cloud KMS is the natural
+  swap at the same seam (see ADR 0006) and is deliberately not built yet.
+
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 
 Redis/queues · plugins & marketplace · multi-tenancy/auth · RAG · workflow

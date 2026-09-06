@@ -4,10 +4,12 @@ An open-source, production-grade AI agent platform. Agent runtime first —
 tools, MCP, workflows, RAG, and frontend ride on the interfaces the runtime
 establishes.
 
-> Status: Phase 1 (agent runtime) complete. See `docs/implementation-plan.md`
-> for the build sequence and `docs/adr/` for the design decisions.
-> The frontend now ships alongside the backend: the full product shell
-> lands first (roadmap F1) and each section enables as its backend
+> Status: Phase 1 (agent runtime) complete; roadmap stages F1 (product
+> shell), S1 (distributed runs, ADR 0008) and S2 (auth, multi-tenancy,
+> BYOK credentials, ADR 0009/0006) shipped. See `docs/roadmap.md` for the
+> stage list and `docs/adr/` for the design decisions.
+> The frontend ships alongside the backend: the full product shell
+> landed first (roadmap F1) and each section enables as its backend
 > capability lands — see `docs/architecture/frontend-architecture.md`.
 
 ## What it is
@@ -80,9 +82,53 @@ uv run jarvis doctor --ping-model
 | GET | `/executions/{run_id}/events` | Event replay: JSON, or SSE with `Accept: text/event-stream` |
 | GET | `/conversations/{agent_id}/{session_id}/messages` | Conversation history |
 | GET | `/capabilities` | Section flags + registry-derived detail the UI renders from |
-| GET | `/models` | Live model catalog from a provider endpoint (`provider`, optional `base_url`/`api_key_env`; 502 `model_unreachable`/`model_auth` on failure — ADR 0007) |
+| GET | `/models` | Live model catalog from a provider endpoint (`provider`, optional `base_url`/`api_key_env`/`credential_id`; 502 `model_unreachable`/`model_auth` on failure — ADR 0007) |
+| POST/GET | `/auth/login`, `/auth/logout`, `/auth/whoami` | Session auth (S2): opaque httpOnly cookie, server-side session rows |
+| GET/POST/PATCH/DELETE | `/members` | Tenant member management — admin/owner only (ADR 0009 §8) |
+| GET/POST/DELETE | `/api-keys` | API keys for the acting user — plaintext returned exactly once at create |
+| GET/POST/PATCH/DELETE | `/credentials` | BYOK credentials — write-only: the secret never comes back (ADR 0006) |
 
 Every error has one envelope shape: `{"error": {"kind", "message", "details"}}`.
+
+### Auth and multi-tenancy (S2, ADR 0009)
+
+Auth is a config choice. `JARVIS_AUTH_MODE=anonymous` (the default) keeps
+local dev friction-free: every request acts on a fixed `default` tenant.
+`JARVIS_AUTH_MODE=required` 401s unauthenticated requests — sign in with a
+session (browser) or present an API key (`Authorization: Bearer
+jarvis_sk_…`). Callers resolve to a tenant-scoped Principal: agents,
+executions, conversations, members, keys, and credentials are all isolated
+per tenant, and a foreign id reads as 404, never 403 (no existence leak).
+
+The first principal is provisioned by the CLI (no authenticated route can
+provision the principal that would authenticate it):
+
+```bash
+uv run jarvis tenant create acme "Acme Corp"
+uv run jarvis user create acme owner@acme.test --role owner --password s3cret
+uv run jarvis api-key create owner@acme.test --name cli   # plaintext printed once
+```
+
+### BYOK credentials (S2, ADR 0006)
+
+Model credentials are a `credential_ref` union on the agent definition: an
+`env` ref names an environment variable (self-hosted default, ADR 0005), a
+`stored` ref points at an encrypted, tenant-owned credential:
+
+```yaml
+model:
+  provider: openai_compatible
+  model: gpt-4o-mini
+  credential_ref: {type: stored, credential_id: <id from POST /v1/credentials>}
+  # or: credential_ref: {type: env, env_var: OPENAI_API_KEY}
+```
+
+Stored secrets are AES-GCM-encrypted at rest (master key from the
+environment; config stores only the env var *name*) and are write-only
+through the API: the secret enters on create/update and is never returned
+by GET, never logged, never snapshotted. A credential failure ends the run
+as a persisted terminal `model` failure — a cross-tenant id resolves to
+"not found", exactly like any other foreign resource.
 
 ### Streaming and exactly-once resume
 
@@ -173,6 +219,8 @@ alongside it.
 | `JARVIS_RUN_TIMEOUT_SECONDS` | unset | Run deadline |
 | `JARVIS_EMBEDDED_WORKER` | `true` | Embed a queue worker in `serve` (ADR 0008; `false` + `jarvis worker` = distributed mode) |
 | `JARVIS_WORKER_CONCURRENCY` | `4` | Runs a single worker executes concurrently |
+| `JARVIS_AUTH_MODE` | `anonymous` | `anonymous` (fixed default tenant) or `required` (401 without credentials — S2/ADR 0009) |
+| `JARVIS_CREDENTIALS_MASTER_KEY` | `JARVIS_CREDENTIALS_MASTER_KEY` | *Name* of the env var holding the base64 32-byte BYOK master key (ADR 0006; unset → 503 `credentials_unavailable`) |
 | `JARVIS_HOST` / `JARVIS_PORT` | `127.0.0.1` / `8000` | HTTP bind |
 
 ## Development

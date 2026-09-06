@@ -30,8 +30,12 @@ only — `docs/reference/dify-map.md` maps the verified paths.
    to `AgentRuntime` alone.
 4. **Typed Pydantic-over-JSONB persistence** (ADR 0002); agent versions are
    immutable append-only snapshots (D1); every run pins a published version.
-5. **Secrets are referenced, never stored** — `api_key_env` names an
-   environment *variable* (ADR 0005); keys never appear in config or YAML.
+5. **Secrets are referenced, never stored** — a model credential is a
+   `credential_ref` union (`env` | `stored`, ADR 0006): env refs name an
+   environment *variable* (ADR 0005); stored BYOK material lives only
+   AES-GCM-encrypted and is **write-only** through the API — never returned
+   by GET, never logged, never snapshotted (D29/D30). Keys never appear in
+   config or YAML.
 6. **Frontend development model** (decision 1.6): the full product shell
    ships *alongside* the backend. Unimplemented sections render
    disabled/coming-soon, gated by `GET /v1/capabilities` — **never fake
@@ -79,6 +83,10 @@ uv run jarvis serve        # API on :8000
   (D17).
 - The runtime writes a RUNNING row at run start; stream resume prefers
   the live sink before the DB row (D2/D3).
+- **Model resolution is inside the runtime's try block (D28)** — a
+  credential resolution failure must become a persisted terminal `model`
+  failure; an escape past the runtime makes the worker treat the message as
+  a claim failure and retry it forever with no terminal state.
 
 ## Working agreement
 
