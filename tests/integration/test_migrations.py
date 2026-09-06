@@ -70,6 +70,80 @@ def test_migrations_up_down_up() -> None:
     values = asyncio.run(enum_values())
     # S1 (migration 0002): runs are enqueued before a worker claims them.
     assert "queued" in values
+    # S10 (migration 0006): awaiting_input is a pause, not terminal.
+    assert "awaiting_input" in values
+
+
+def test_awaiting_input_status_and_deadline_column() -> None:
+    """S10 (0006): the pause deadline column rides on the enum value; a
+    downgrade moves paused runs to 'failed' before dropping the column —
+    Postgres cannot drop enum values, and a paused run has no terminal
+    event yet, so nothing can happen to it afterwards."""
+    from alembic import command
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    config = _alembic_config()
+
+    async def table_columns(table: str) -> set[str]:
+        engine = create_async_engine(TEST_DB_URL)
+        try:
+            async with engine.connect() as conn:
+                rows = await conn.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns"
+                        " WHERE table_schema = 'public' AND table_name = :t"
+                    ),
+                    {"t": table},
+                )
+                return {row[0] for row in rows}
+        finally:
+            await engine.dispose()
+
+    command.downgrade(config, "0005")
+    assert "awaiting_until" not in asyncio.run(table_columns("agent_executions"))
+
+    command.upgrade(config, "0006")  # back to head
+    assert "awaiting_until" in asyncio.run(table_columns("agent_executions"))
+
+    async def seed_paused() -> None:
+        engine = create_async_engine(TEST_DB_URL)
+        try:
+            async with engine.begin() as conn:
+                # Migrations tests don't truncate — reset any row a previous
+                # run left behind, then put it back in the paused state.
+                await conn.execute(
+                    text(
+                        "INSERT INTO agent_executions (id, agent_id, agent_version_id,"
+                        " tenant_id, status, input, trace_id, total_usage, iterations,"
+                        " started_at, awaiting_until, metadata, created_at) VALUES"
+                        " ('run-paused', 'a-s10', 'v-s10', 'default', 'awaiting_input',"
+                        " '', '', '{}', 0, now(), now() - interval '1 hour', '{}', now())"
+                        " ON CONFLICT (id) DO UPDATE SET status = 'awaiting_input',"
+                        " error = NULL, awaiting_until = now() - interval '1 hour'"
+                    )
+                )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(seed_paused())
+    command.downgrade(config, "0005")
+    command.upgrade(config, "0006")  # re-run is safe (ADD VALUE IF NOT EXISTS)
+
+    async def check() -> tuple[str, str | None]:
+        engine = create_async_engine(TEST_DB_URL)
+        try:
+            async with engine.connect() as conn:
+                row = await conn.execute(
+                    text("SELECT status, error FROM agent_executions WHERE id = 'run-paused'")
+                )
+                return row.one()  # type: ignore[return-value]
+        finally:
+            await engine.dispose()
+
+    status, error = asyncio.run(check())
+    assert status == "failed"
+    assert error is not None and "downgrade" in error
 
 
 def test_credential_ref_snapshot_rewrite() -> None:
@@ -175,3 +249,6 @@ def test_credential_ref_snapshot_rewrite() -> None:
         assert "credential_ref" not in null_model
 
     asyncio.run(check())
+    # This test historically left the DB at 0005 because that WAS head —
+    # restore the true head so later tests see the full schema.
+    command.upgrade(config, "head")

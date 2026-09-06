@@ -17,7 +17,11 @@ class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-ExecutionStatus = Literal["queued", "running", "succeeded", "failed", "cancelled", "timed_out"]
+# `awaiting_input` is a pause, not terminal (S10, ADR 0010 §2) — it never
+# joins TERMINAL_STATUSES; a paused run still reaches exactly one terminal.
+ExecutionStatus = Literal[
+    "queued", "running", "awaiting_input", "succeeded", "failed", "cancelled", "timed_out"
+]
 
 # Statuses a run row can no longer leave (the terminal event's counterpart
 # on the run row itself). Used by subscribers deciding whether a run whose

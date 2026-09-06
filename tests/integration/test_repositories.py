@@ -289,3 +289,58 @@ async def test_event_sequence_helpers(container, agent, mock):
     assert await container.executions.next_event_sequence("seq-run") == 2
     latest = await container.executions.latest_event("seq-run")
     assert latest is not None and latest[1].type == "run.failed" and latest[0] == cursor
+
+
+@pytest.mark.db
+async def test_awaiting_input_pause_transitions(container, agent):
+    """S10 repo seams: running → awaiting_input (guarded), the reaper's
+    expired scan, resume claim flips back (mark_running clears the
+    deadline), finish clears it too."""
+    from jarvis.domain.execution import RunResult
+
+    def paused(run_id: str) -> RunResult:
+        return RunResult(run_id=run_id, agent_id=agent.id, agent_version_id="v1", status="running")
+
+    now = datetime.now(UTC)
+    past = now - timedelta(hours=1)
+    repo = container.executions
+
+    # Pause: running → awaiting_input with the deadline on the row.
+    await repo.create_run(paused("run-hil-1"))
+    await repo.mark_awaiting_input("run-hil-1", past)
+    assert (await repo.get("run-hil-1")).status == "awaiting_input"
+    assert "run-hil-1" in await repo.expired_awaiting(now)
+
+    # The guard: a non-running row never pauses (no terminal or queued run
+    # can drift into awaiting_input through a raced claim).
+    await repo.create_run(paused("run-hil-2"))
+    await repo.finish_run(
+        RunResult(
+            run_id="run-hil-2",
+            agent_id=agent.id,
+            agent_version_id="v1",
+            status="cancelled",
+        )
+    )
+    await repo.mark_awaiting_input("run-hil-2", past)
+    assert (await repo.get("run-hil-2")).status == "cancelled"
+
+    # Resume claim: awaiting_input → running, deadline cleared.
+    await repo.mark_running("run-hil-1", now)
+    resumed = await repo.get("run-hil-1")
+    assert resumed.status == "running"
+    assert "run-hil-1" not in await repo.expired_awaiting(now)
+
+    # Finish: terminal clears the deadline too.
+    await repo.create_run(paused("run-hil-3"))
+    await repo.mark_awaiting_input("run-hil-3", past)
+    await repo.finish_run(
+        RunResult(
+            run_id="run-hil-3",
+            agent_id=agent.id,
+            agent_version_id="v1",
+            status="succeeded",
+        )
+    )
+    assert (await repo.get("run-hil-3")).status == "succeeded"
+    assert await repo.expired_awaiting(now) == []

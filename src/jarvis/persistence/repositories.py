@@ -328,14 +328,49 @@ class SqlExecutionRepo:
 
     async def mark_running(self, run_id: str, started_at: datetime) -> None:
         """queued → running when a worker claims the message (re-claims of a
-        requeued run are a no-op — the row is already running)."""
+        requeued run are a no-op — the row is already running). Accepts
+        `awaiting_input` too (S10): the resume segment's claim flips the
+        paused row back to running and clears the pause deadline."""
         async with self._sessionmaker() as session:
             await session.execute(
                 update(AgentExecutionRow)
-                .where(AgentExecutionRow.id == run_id, AgentExecutionRow.status == "queued")
-                .values(status="running", started_at=started_at)
+                .where(
+                    AgentExecutionRow.id == run_id,
+                    AgentExecutionRow.status.in_(("queued", "awaiting_input")),
+                )
+                .values(status="running", started_at=started_at, awaiting_until=None)
             )
             await session.commit()
+
+    async def mark_awaiting_input(self, run_id: str, awaiting_until: datetime) -> None:
+        """running → awaiting_input (S10, ADR 0010 §2): the loop paused. The
+        deadline lands on the row for the sweeper's reaper; a stale guard
+        (status == 'running') keeps a raced resume claim from pausing a row
+        that already moved on."""
+        async with self._sessionmaker() as session:
+            await session.execute(
+                update(AgentExecutionRow)
+                .where(
+                    AgentExecutionRow.id == run_id,
+                    AgentExecutionRow.status == "running",
+                )
+                .values(status="awaiting_input", awaiting_until=awaiting_until)
+            )
+            await session.commit()
+
+    async def expired_awaiting(self, now: datetime) -> list[str]:
+        """Run_ids whose pause deadline has passed — the sweeper's
+        pause-reaper input (S10, ADR 0010 §6)."""
+        async with self._sessionmaker() as session:
+            rows = (
+                await session.execute(
+                    select(AgentExecutionRow.id).where(
+                        AgentExecutionRow.status == "awaiting_input",
+                        AgentExecutionRow.awaiting_until < now,
+                    )
+                )
+            ).scalars()
+        return list(rows)
 
     async def count_events(self, run_id: str) -> int:
         async with self._sessionmaker() as session:
@@ -426,6 +461,7 @@ class SqlExecutionRepo:
                 row.started_at = result.started_at
                 row.finished_at = result.finished_at or _now()
                 row.event_cursor = result.event_cursor
+                row.awaiting_until = None  # terminal clears a pause (S10)
             await session.commit()
 
     async def get(self, run_id: str, *, tenant_id: str | None = None) -> RunResult | None:

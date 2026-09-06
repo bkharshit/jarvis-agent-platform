@@ -25,7 +25,17 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-EXECUTION_STATUSES = ("queued", "running", "succeeded", "failed", "cancelled", "timed_out")
+# `awaiting_input` is a pause, not terminal (S10, ADR 0010 §2) — it does not
+# join TERMINAL_STATUSES and the run row can still reach one.
+EXECUTION_STATUSES = (
+    "queued",
+    "running",
+    "awaiting_input",
+    "succeeded",
+    "failed",
+    "cancelled",
+    "timed_out",
+)
 MESSAGE_ROLES = ("system", "developer", "user", "assistant", "tool")
 QUEUE_STATUSES = ("pending", "claimed", "done")
 USER_ROLES = ("owner", "admin", "member")
@@ -119,6 +129,9 @@ class AgentExecutionRow(Base):
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     event_cursor: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # The pause deadline (S10, ADR 0010 §2): set on awaiting_input, NULL
+    # otherwise, cleared on resume/finish — the sweeper's reaper scans it.
+    awaiting_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict
     )
