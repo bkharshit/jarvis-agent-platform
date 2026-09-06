@@ -5,6 +5,7 @@ blocking-vs-streamed event-sequence equivalence."""
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 from jarvis.domain.agent import (
@@ -120,6 +121,57 @@ def _calc_binding():
     from jarvis.tools.builtin.calculator import CalculatorTool
 
     return CalculatorTool(), ToolBinding(name="calculator")
+
+
+class TestResolutionFailure:
+    """Model resolution happens inside the runtime's try (S2: credential
+    resolution is IO and can fail) — the failure is a persisted terminal
+    `model` state, never an exception past the runtime (D5). An escape would
+    make the worker treat the message as a claim failure and retry forever."""
+
+    async def test_resolution_failure_is_terminal_model_failure(self):
+        from jarvis.models.errors import ModelAuthError
+
+        class _FailingFactory:
+            async def resolve(self, ref, *, principal=None):
+                raise ModelAuthError(
+                    "credential 'c1' not found", provider="openai_compatible", model="m"
+                )
+
+        registry = InMemoryToolRegistry()
+        runtime = AgentRuntime(
+            strategies=DefaultStrategyRegistry(),
+            tools=registry,
+            tool_runtime=ToolRuntime(registry),
+            models=SimpleNamespace(resolve=_FailingFactory().resolve),
+            conversations=None,
+            executions=None,
+        )
+        ctx = _ctx("run-fail")
+
+        result = await runtime.run(_version(_agent()), "hi", ctx)
+
+        assert result.status == "failed"
+        assert result.error_kind == "model"
+        assert "not found" in (result.error or "")
+
+    async def test_resolution_failure_never_raises(self):
+        from jarvis.models.errors import ModelAuthError
+
+        async def _boom(ref, *, principal=None):
+            raise ModelAuthError("boom", provider="p", model="m")
+
+        registry = InMemoryToolRegistry()
+        runtime = AgentRuntime(
+            strategies=DefaultStrategyRegistry(),
+            tools=registry,
+            tool_runtime=ToolRuntime(registry),
+            models=SimpleNamespace(resolve=_boom),
+            conversations=None,
+            executions=None,
+        )
+        result = await runtime.run(_version(_agent()), "hi", _ctx("run-fail-2"))
+        assert result.status == "failed"
 
 
 class TestHappyPath:

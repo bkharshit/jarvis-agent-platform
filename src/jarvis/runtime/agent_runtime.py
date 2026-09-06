@@ -113,7 +113,6 @@ class AgentRuntime:
         started_at = datetime.now(UTC)
         self._live_tokens[ctx.run_id] = ctx
         sink = sink or await self._bus.get_or_create(ctx.run_id)
-        client = await self._models.resolve(agent.model, principal=ctx.principal)
 
         if self._executions is not None:
             # A RUNNING row exists from the first event — /executions/{id}/cancel
@@ -133,6 +132,11 @@ class AgentRuntime:
             )
 
         try:
+            # Inside the try: credential resolution is IO (S2) and can fail —
+            # the failure must become a persisted terminal `model` state
+            # (D5), never an exception past the runtime (which the worker
+            # would treat as a claim failure and retry forever).
+            client = await self._models.resolve(agent.model, principal=ctx.principal)
             result = await self._execute(version, input, ctx, sink, client, agent, started_at)
         except ExecutionCancelled as exc:
             result = await self._terminal_cancelled(ctx, sink, exc, started_at, input)
