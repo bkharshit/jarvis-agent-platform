@@ -31,7 +31,7 @@ from jarvis.api.sse import SSE_HEADERS, frame, parse_last_event_id
 from jarvis.config import Settings
 from jarvis.domain.agent import AgentDefinition, AgentVersion
 from jarvis.domain.auth import Principal
-from jarvis.domain.events import is_terminal
+from jarvis.domain.events import ExecutionEvent, is_pause, is_terminal
 from jarvis.domain.execution import TERMINAL_STATUSES, RunResult
 from jarvis.persistence.scoped import TenantScopedExecutions
 from jarvis.ports.queue import RunQueueMessage
@@ -42,6 +42,12 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 # Module-level Depends singleton (ruff B008): the container is per-app state,
 # so every route shares this one dependency declaration.
 ContainerDep = Depends(get_container)
+
+# S10 (ADR 0010): a run's segments end at a pause just like at a terminal —
+# a blocking caller returns a non-terminal awaiting_input row and the client
+# resumes with POST /executions/{id}/resume.
+TERMINAL_SET: set[str] = set(TERMINAL_STATUSES)
+SEGMENT_END_STATUSES: set[str] = TERMINAL_SET | {"awaiting_input"}
 
 
 async def _require_definition(auth: AuthContext, agent_id: str) -> AgentDefinition:
@@ -204,28 +210,50 @@ async def run_agent(
     auth: AuthContext = AuthDep,
     container: AppContainer = ContainerDep,
 ) -> RunResult:
-    """Blocking run — enqueue, then wait for the worker's terminal event.
-    The subscribe replays anything the worker already wrote, so there is no
-    race between enqueueing and listening."""
+    """Blocking run — enqueue, then wait for the worker's segment to end. The
+    subscribe replays anything the worker already wrote, so there is no race
+    between enqueueing and listening. A pause (S10) ends the segment like a
+    terminal: the route returns the awaiting_input row and the client
+    resumes with POST /executions/{id}/resume."""
     definition = await _require_definition(auth, agent_id)
     version = await _require_version(auth, agent_id)
     message = _queue_message(container.settings, definition, version, req, auth.principal)
     await auth.executions.create_queued_run(_queued_result(message), message)
-    async for _cursor, _event in container.streams.subscribe(message.run_id):
-        pass  # the stream ends exactly at the terminal event
-    run = await _await_terminal_row(auth.executions, message.run_id)
-    if run is None:
-        raise ApiError(500, "internal", f"run {message.run_id!r} never reached a terminal state")
-    return run
+    return await _await_segment(container, auth.executions, message.run_id, None)
 
 
-async def _await_terminal_row(executions: TenantScopedExecutions, run_id: str) -> RunResult | None:
-    """The terminal event lands moments before finish_run — poll the row
-    until it is terminal (bounded; the stream already guaranteed the event).
-    `executions` is the caller's (tenant-scoped) execution view."""
+async def _await_segment(
+    container: AppContainer,
+    executions: TenantScopedExecutions,
+    run_id: str,
+    after: int | None,
+) -> RunResult:
+    """Wait for the run's current segment to end (a terminal or a pause),
+    then return the row once it carries that state. `after` attaches the
+    stream beyond an already-durable segment end (the resume route passes
+    the pause frame's cursor)."""
+    held: ExecutionEvent | None = None
+    async for _cursor, event in container.streams.subscribe(run_id, after):
+        held = event  # subscribe returns right after the terminal/pause
+    # The row write trails the last event; poll until it matches. Nothing
+    # streamed at all means the resume was absorbed (the run moved on
+    # between the 409 check and the enqueue) — only a terminal can be true.
+    statuses = TERMINAL_SET if held is None else SEGMENT_END_STATUSES
+    row = await _await_row_status(executions, run_id, statuses)
+    if row is None:
+        raise ApiError(500, "internal", f"run {run_id!r} never reached a segment end")
+    return row
+
+
+async def _await_row_status(
+    executions: TenantScopedExecutions, run_id: str, statuses: set[str]
+) -> RunResult | None:
+    """The last event lands moments before finish_run — poll the row until
+    it reaches one of `statuses` (bounded; the stream already guaranteed
+    the event). `executions` is the caller's (tenant-scoped) execution view."""
     run = await executions.get(run_id)
     for _ in range(100):
-        if run is not None and run.status in TERMINAL_STATUSES:
+        if run is not None and run.status in statuses:
             return run
         await asyncio.sleep(0.05)
         run = await executions.get(run_id)
@@ -243,7 +271,9 @@ async def stream_agent(
     """SSE run: enqueue, then frame every event the worker writes. Resume with
     `Last-Event-ID` (durable cursor) plus `run_id` in the body — replay and
     live tail are the same cursor space (PgEventStream tails the DB, so the
-    stream survives this process). Ends with the run's single terminal event."""
+    stream survives this process). Ends with the segment's last event
+    (terminal or pause, S10): a pause closes the stream and the client
+    resumes with POST /executions/{id}/resume."""
     try:
         last_cursor = parse_last_event_id(request.headers.get("last-event-id"))
     except ValueError as exc:
@@ -272,16 +302,17 @@ async def _queue_stream(
     run_id: str,
     last_cursor: int | None,
 ) -> AsyncIterator[str]:
-    """Frame every event; hold the terminal frame back until the run row is
-    terminal, so a stream that ends carries the run's final state (the web
-    UI fetches the detail immediately after the stream closes)."""
+    """Frame every event; hold the segment-end frame (terminal or pause,
+    S10) back until the run row carries that state, so a stream that ends
+    carries the run's final state (the web UI fetches the detail or fires
+    the resume immediately after the stream closes)."""
     last_frame: str | None = None
     async for cursor, event in container.streams.subscribe(run_id, last_cursor):
-        if is_terminal(event):
+        if is_terminal(event) or is_pause(event):
             last_frame = frame(cursor, event)  # subscribe returns right after
         else:
             yield frame(cursor, event)
-    await _await_terminal_row(executions, run_id)  # best effort: finish_run catch-up
+    await _await_row_status(executions, run_id, SEGMENT_END_STATUSES)  # finish/pause catch-up
     if last_frame is not None:
         yield last_frame
 

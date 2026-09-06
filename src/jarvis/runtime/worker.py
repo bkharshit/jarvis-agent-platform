@@ -330,24 +330,13 @@ class Worker:
         row, and drop any pending resume message from the queue (its claim
         would only hit the stale-guard). Returns False when the row already
         moved on (resumed, finished, or reaped by another worker)."""
-        row = await self._executions.get(run_id)
-        if row is None or row.status != "awaiting_input":
-            return False
-        event = _cancelled_event(run_id, _AWAITING_TIMEOUT_REASON)
-        event.total_usage = row.total_usage
-        event.sequence = await self._executions.next_event_sequence(run_id)
-        cursor = await self._persist(event)
-        await self._executions.finish_run(
-            row.model_copy(
-                update={
-                    "status": "cancelled",
-                    "finished_at": datetime.now(UTC),
-                    "event_cursor": cursor,
-                }
-            )
+        return await finish_paused_run(
+            self._executions,
+            self._queue,
+            self._persist,
+            run_id,
+            _AWAITING_TIMEOUT_REASON,
         )
-        await self._queue.ack(run_id)
-        return True
 
     async def _sweep_loop(self) -> None:
         while True:
@@ -444,6 +433,51 @@ def _cancelled_event(run_id: str, reason: str) -> RunCancelled:
     )
 
 
+class PausedRunFinisher(Protocol):
+    """Structural view used to finish a paused run directly (the reaper and
+    the cancel route's awaiting_input branch share the path)."""
+
+    async def get(self, run_id: str) -> RunResult | None: ...
+    async def next_event_sequence(self, run_id: str) -> int: ...
+    async def append_event(self, event: ExecutionEvent) -> int: ...
+    async def finish_run(self, result: RunResult) -> None: ...
+
+
+async def finish_paused_run(
+    executions: PausedRunFinisher,
+    queue: RunQueue,
+    persist: PersistFn,
+    run_id: str,
+    reason: str,
+) -> bool:
+    """Finish an `awaiting_input` run directly (S10, ADR 0010 §6): no
+    heartbeat holds a paused run, so neither the sweeper's reaper nor the
+    cancel route can go through the queue — append one terminal
+    `run.cancelled` at the next sequence (with the paused row's usage
+    carried in), finish the row, and ack the queue (dropping any pending
+    resume message whose claim would only hit the stale-guard). Returns
+    False when the row already moved on — resumed, finished, or reaped by
+    another worker — so exactly one terminal survives a race."""
+    row = await executions.get(run_id)
+    if row is None or row.status != "awaiting_input":
+        return False
+    event = _cancelled_event(run_id, reason)
+    event.total_usage = row.total_usage
+    event.sequence = await executions.next_event_sequence(run_id)
+    cursor = await persist(event)
+    await executions.finish_run(
+        row.model_copy(
+            update={
+                "status": "cancelled",
+                "finished_at": datetime.now(UTC),
+                "event_cursor": cursor,
+            }
+        )
+    )
+    await queue.ack(run_id)
+    return True
+
+
 def _failed_event(run_id: str, error: str, error_kind: str) -> RunFailed:
     return RunFailed(
         event_id=str(uuid4()),
@@ -455,4 +489,4 @@ def _failed_event(run_id: str, error: str, error_kind: str) -> RunFailed:
     )
 
 
-__all__ = ["LEASE_SECONDS", "Worker", "worker_persist"]
+__all__ = ["LEASE_SECONDS", "Worker", "finish_paused_run", "worker_persist"]

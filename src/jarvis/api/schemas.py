@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from jarvis.domain.agent import (
     AgentDefinition,
@@ -22,6 +22,7 @@ from jarvis.domain.events import ExecutionEvent
 from jarvis.domain.execution import RunResult
 from jarvis.domain.message import Message
 from jarvis.domain.tools import ToolResult
+from jarvis.ports.queue import ResumeRequest
 
 
 class _Model(BaseModel):
@@ -114,6 +115,29 @@ class CancelResult(_Model):
     run_id: str
     cancelled: bool
     status: str
+
+
+class ResumeBody(_Model):
+    """Body for POST /executions/{id}/resume (S10, ADR 0010 §4): an
+    ask_human pause answers with `content`; a tool-approval pause answers
+    with `tool_approval`. Exactly one is present — `kind` says which."""
+
+    content: str | None = None
+    tool_approval: bool | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_answer(self) -> ResumeBody:
+        has_content = self.content is not None
+        if has_content == (self.tool_approval is not None):
+            raise ValueError("provide exactly one of `content` or `tool_approval`")
+        if self.content is not None and not self.content.strip():
+            raise ValueError("content must not be blank")
+        return self
+
+    def to_domain(self) -> ResumeRequest:
+        if self.content is not None:
+            return ResumeRequest(kind="content", content=self.content)
+        return ResumeRequest(kind="tool_approval", approved=self.tool_approval)
 
 
 class LoginRequest(_Model):
@@ -270,6 +294,7 @@ __all__ = [
     "ExecutionList",
     "MessageList",
     "ModelListResponse",
+    "ResumeBody",
     "RunRequest",
     "SectionCapability",
     "VersionSummary",

@@ -106,6 +106,10 @@ async def build_capabilities(container: AppContainer) -> CapabilitiesResponse:
                 "builtins": [d.model_dump() for d in container.tools.descriptors()],
                 "mcp": {"enabled": False, "stage": "S4"},
             }
+        elif key == "executions":
+            # S10: human-in-the-loop is live — pause frames, the resume
+            # route, and the awaiting_input inbox are real (UI enablement).
+            detail = {"human_in_the_loop": True}
         elif key == "models":
             detail = await _model_providers_detail(container)
         elif key == "settings":

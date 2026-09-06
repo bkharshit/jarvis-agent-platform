@@ -1,4 +1,4 @@
-"""Executions: list, detail, cancel (idempotent), event replay (plan §5).
+"""Executions: list, detail, cancel (idempotent), resume (S10), event replay.
 
 `GET /{id}/events` returns JSON replay by default or an SSE stream when the
 client sends `Accept: text/event-stream` — same cursor space as the
@@ -15,18 +15,25 @@ from fastapi.responses import StreamingResponse
 from jarvis.api.auth import AuthContext, AuthDep
 from jarvis.api.deps import AppContainer
 from jarvis.api.errors import ApiError
-from jarvis.api.routes.agents import ContainerDep, _await_terminal_row
+from jarvis.api.routes.agents import (
+    SEGMENT_END_STATUSES,
+    ContainerDep,
+    _await_row_status,
+    _await_segment,
+)
 from jarvis.api.schemas import (
     CancelResult,
     CursorEvent,
     EventList,
     ExecutionDetail,
     ExecutionList,
+    ResumeBody,
 )
 from jarvis.api.sse import SSE_HEADERS, frame
-from jarvis.domain.events import is_terminal
+from jarvis.domain.events import is_pause, is_terminal
 from jarvis.domain.execution import TERMINAL_STATUSES, ExecutionStatus, RunResult
 from jarvis.persistence.scoped import TenantScopedExecutions
+from jarvis.runtime.worker import finish_paused_run, worker_persist
 
 router = APIRouter(prefix="/executions", tags=["executions"])
 
@@ -73,15 +80,61 @@ async def cancel_run(
 ) -> CancelResult:
     """Idempotent. A run live in THIS process gets its runtime token; a
     queued or foreign-worker run gets a cross-process cancel request
-    (ADR 0008 §6) that the owning worker's heartbeat pops. A finished run is
-    a no-op that reports its current status."""
+    (ADR 0008 §6) that the owning worker's heartbeat pops. A paused run
+    (S10) is finished directly — no heartbeat holds it — on the same
+    append-terminal-and-finish path the reaper uses, so cancelling an
+    awaiting_input run is immediate, not cooperative. A finished run is a
+    no-op that reports its current status."""
     run = await _require_run(auth.executions, run_id)
     if run.status in TERMINAL_STATUSES:
         return CancelResult(run_id=run_id, cancelled=False, status=run.status)
     if run.status == "running" and container.runtime.cancel(run_id):
         return CancelResult(run_id=run_id, cancelled=True, status=run.status)
+    if run.status == "awaiting_input":
+        finished = await finish_paused_run(
+            container.executions,
+            container.queue,
+            worker_persist(container.executions, container.notifier),
+            run_id,
+            "cancelled by user",
+        )
+        if not finished:
+            # Raced with a resume claim — the run is live again; the
+            # cooperative path still applies.
+            await container.queue.request_cancel(run_id, "cancelled by user")
+        row = await auth.executions.get(run_id)
+        return CancelResult(
+            run_id=run_id,
+            cancelled=finished,
+            status=row.status if row is not None else run.status,
+        )
     await container.queue.request_cancel(run_id, "cancelled by user")
     return CancelResult(run_id=run_id, cancelled=True, status=run.status)
+
+
+@router.post("/{run_id}/resume")
+async def resume_run(
+    run_id: str,
+    req: ResumeBody,
+    auth: AuthContext = AuthDep,
+    container: AppContainer = ContainerDep,
+) -> RunResult:
+    """Human-in-the-loop resume (S10, ADR 0010 §4): merge the answer into
+    the paused run's queue payload and block until the resumed segment ends
+    (like /run). A segment can pause again — the route then returns the
+    still-awaiting row and the client answers the next question."""
+    run = await _require_run(auth.executions, run_id)
+    if run.status != "awaiting_input":
+        raise ApiError(
+            409, "conflict", f"execution {run_id!r} is {run.status!r}, not awaiting input"
+        )
+    # Attach the stream beyond the current pause frame, so the wait covers
+    # only the segment the worker is about to run — the already-durable
+    # pause would otherwise end the stream immediately.
+    last = await auth.executions.latest_event(run_id)
+    after = last[0] if last is not None else None
+    await container.queue.enqueue_resume(run_id, req.to_domain())
+    return await _await_segment(container, auth.executions, run_id, after)
 
 
 @router.get("/{run_id}/events", response_model=EventList)
@@ -112,17 +165,18 @@ async def _live_replay(
     run_id: str,
     after: int | None,
 ) -> AsyncIterator[str]:
-    """Replay from `after`, then live-tail until the run's terminal event
-    (a finished run's stream is a pure replay — the terminal ends it). The
-    terminal frame is held back until the run row is terminal, mirroring the
-    stream route, so stream end carries the run's final state."""
+    """Replay from `after`, then live-tail until the run's segment ends
+    (a finished run's stream is a pure replay — the terminal ends it; a
+    paused run's stream ends at the pause frame, S10). The segment-end frame
+    is held back until the run row carries that state, mirroring the stream
+    route, so stream end carries the run's final state."""
     last_frame: str | None = None
     async for cursor, event in container.streams.subscribe(run_id, after):
-        if is_terminal(event):
+        if is_terminal(event) or is_pause(event):
             last_frame = frame(cursor, event)  # subscribe returns right after
         else:
             yield frame(cursor, event)
-    await _await_terminal_row(executions, run_id)  # best effort: finish_run catch-up
+    await _await_row_status(executions, run_id, SEGMENT_END_STATUSES)
     if last_frame is not None:
         yield last_frame
 

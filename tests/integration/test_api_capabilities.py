@@ -38,6 +38,8 @@ async def test_capabilities_shape(client):
     assert builtins == {"calculator", "current_time", "http_get"}
     providers = {p["name"] for p in sections["models"]["detail"]["providers"]}
     assert providers == {"mock", "openai_compatible"}
+    # S10: human-in-the-loop is live (pause frames, resume route, inbox)
+    assert sections["executions"]["detail"]["human_in_the_loop"] is True
 
 
 @pytest.mark.db

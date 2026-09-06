@@ -135,6 +135,16 @@ class TenantScopedExecutions:
     async def append_event(self, event: ExecutionEvent) -> int:
         return await self._inner.append_event(event)
 
+    async def latest_event(self, run_id: str) -> tuple[int, ExecutionEvent] | None:
+        """Nested read — the resume route needs the pause frame's cursor to
+        attach its stream after it (S10)."""
+        return await self._inner.latest_event(run_id)
+
+    async def next_event_sequence(self, run_id: str) -> int:
+        """Nested read — the cancel route's awaiting_input branch appends the
+        terminal at the run's next sequence (S10, ADR 0010 §6)."""
+        return await self._inner.next_event_sequence(run_id)
+
     def list_events(self, run_id: str, after: int | None = None) -> AsyncIterator[ExecutionEvent]:
         return self._inner.list_events(run_id, after)
 

@@ -118,6 +118,55 @@ async def test_finished_run_resume_replays_from_db(client, container, agent, moc
 
 
 @pytest.mark.db
+async def test_stream_ends_at_pause_and_replays_the_resumed_segment(client, container, mock):
+    """S10 (ADR 0010 §5): a pause closes the SSE stream with the pause frame
+    (held back until the row carries awaiting_input); the client resumes via
+    POST /executions/{id}/resume and re-attaches with Last-Event-ID."""
+    from uuid import uuid4
+
+    from jarvis.domain.agent import AgentDefinition, ModelRef, StrategyConfig, ToolBinding
+    from jarvis.models.mock import turn
+
+    mock.add_turn(
+        turn(tool_calls=[ToolCall(id="c1", name="calculator", arguments={"expression": "6*7"})])
+    )
+    mock.add_turn(turn("42 it is"))
+
+    definition = AgentDefinition(
+        id=str(uuid4()),
+        name=f"stream-gate-{uuid4().hex[:8]}",
+        model=ModelRef(provider="mock", model="mock-model"),
+        strategy=StrategyConfig(type="function_calling"),
+        tools=[ToolBinding(name="calculator", config={"requires_approval": True})],
+    )
+    await container.agents.create(definition)
+
+    first = await client.post(f"/v1/agents/{definition.id}/stream", json={"input": "compute"})
+    frames = parse_sse(first.text)
+    run_id = frames[0][2]["run_id"]
+    assert frames[-1][1] == "run.awaiting_input"  # the pause ends the stream
+    assert "run.completed" not in [t for _, t, _ in frames]
+    pause_cursor = frames[-1][0]
+
+    # resume through the API route, then re-attach beyond the pause cursor
+    await client.post(f"/v1/executions/{run_id}/resume", json={"tool_approval": True})
+    resumed = parse_sse(
+        (
+            await client.post(
+                f"/v1/agents/{definition.id}/stream",
+                json={"input": "compute", "run_id": run_id},
+                headers={"Last-Event-ID": str(pause_cursor)},
+            )
+        ).text
+    )
+    resumed_types = [t for _, t, _ in resumed]
+    assert resumed_types[0] == "tool.call.started"  # the approved batch executed
+    assert resumed_types[-1] == "run.completed"
+    assert [i for i, _, _ in resumed] == sorted(i for i, _, _ in resumed)
+    assert min(i for i, _, _ in resumed) > pause_cursor
+
+
+@pytest.mark.db
 async def test_stream_unknown_run_404(client, agent):
     resp = await client.post(
         f"/v1/agents/{agent.id}/stream",
