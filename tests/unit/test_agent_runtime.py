@@ -22,9 +22,11 @@ from jarvis.domain.events import EventSequenceError, TextDelta, validate_event_s
 from jarvis.domain.execution import ExecutionContext, RunResult
 from jarvis.domain.message import Message, ToolCall, Usage
 from jarvis.domain.tools import ToolDescriptor
+from jarvis.events.bus import InProcessEventSink
 from jarvis.models.errors import ModelBadRequestError
 from jarvis.models.factory import DefaultModelProviderFactory
 from jarvis.models.mock import MockModelProvider, turn
+from jarvis.ports.queue import ResumeRequest
 from jarvis.ports.strategy import AskHumanStep, FinishStep
 from jarvis.runtime.agent_runtime import AgentRuntime
 from jarvis.runtime.limits import RunLimits
@@ -55,18 +57,41 @@ class _RecordingRepo:
         self.started: list[RunResult] = []
         self.finished: list[RunResult] = []
         self.awaited: list[tuple[str, object]] = []
+        self.runs: dict[str, RunResult] = {}
+        self.events: dict[str, list[object]] = {}
         self.conversations: dict[str, list[Message]] = {}
         self.sequences: dict[str, list[int]] = {}
 
     # ExecutionRepo subset used by the runtime
     async def create_run(self, result):
         self.started.append(result)
+        self.runs[result.run_id] = result
 
     async def finish_run(self, result):
         self.finished.append(result)
+        self.runs[result.run_id] = result
 
-    async def mark_awaiting_input(self, run_id, awaiting_until):
+    async def mark_awaiting_input(self, run_id, awaiting_until, *, total_usage=None):
         self.awaited.append((run_id, awaiting_until))
+        if run_id in self.runs:
+            self.runs[run_id] = self.runs[run_id].model_copy(
+                update={"status": "awaiting_input", "total_usage": total_usage}
+            )
+
+    async def get(self, run_id):
+        return self.runs.get(run_id)
+
+    async def list_messages(self, run_id):
+        return list(self.messages.get(run_id, []))
+
+    def record_event(self, event):
+        """The bus persists through the sink; unit sinks are unpersisted, so
+        resume tests seed list_events manually from the first segment."""
+        self.events.setdefault(event.run_id, []).append(event)
+
+    async def list_events(self, run_id):
+        for event in self.events.get(run_id, []):
+            yield event
 
     async def save_message(self, run_id, message):
         self.messages.setdefault(run_id, []).append(message)
@@ -77,6 +102,10 @@ class _RecordingRepo:
     # ConversationRepo
     async def get_or_create(self, agent_id, session_id, *, tenant_id=None):
         return f"{agent_id}:{session_id}"
+
+    async def find(self, agent_id, session_id):
+        key = f"{agent_id}:{session_id}"
+        return key if key in self.conversations else None
 
     async def append_message(self, conversation_id, message, run_id=None):
         seq = len(self.conversations.setdefault(conversation_id, []))
@@ -571,17 +600,18 @@ class _AskHumanStrategy:
 
     name = "ask_human_fixture"
 
-    def __init__(self, question: str = "Which environment?"):
+    def __init__(self, question: str = "Which environment?", asks: int = 1):
         self._question = question
+        self._asks = asks
         self.answered_with: str | None = None
         self.calls = 0
 
     async def step(self, ctx, messages, client, tools, sink):
         self.calls += 1
-        # First step() asks; the next one (after the resume answer lands as
-        # the newest user message) finishes with the answer.
+        # Asks `asks` times, then finishes with the newest user message (the
+        # human's resume answer).
         last = messages[-1]
-        if self.calls > 1:
+        if self.calls > self._asks:
             self.answered_with = last.text
             return FinishStep(
                 assistant_message=Message(role="assistant", content=f"deploying to {last.text}")
@@ -762,3 +792,218 @@ class TestPauseStrategyAsk:
         )
         result = await runtime.run(_version(_agent()), "deploy", _ctx("run-pause-6"))
         assert result.status == "awaiting_input"
+
+
+# --- resume segments (S10, ADR 0010 §4) --------------------------------------
+
+
+def _seed_events(repo: _RecordingRepo, sink) -> None:
+    """Copy the first segment's events into the repo's durable log (the unit
+    bus has no persist callback) so the resume path can replay them."""
+    for event in sink.events:
+        repo.record_event(event)
+
+
+def _resume_sink(repo: _RecordingRepo, run_id: str) -> InProcessEventSink:
+    """A sink for the resumed segment, seeded at the durable log's next
+    sequence — the same seeding the worker does via next_event_sequence."""
+    return InProcessEventSink(run_id, sequence_offset=len(repo.events.get(run_id, [])))
+
+
+class TestResumeStrategyAsk:
+    def _runtime(self, strategy, provider, repo):
+        return AgentRuntime(
+            strategies=SimpleNamespace(resolve=lambda config: strategy),
+            tools=InMemoryToolRegistry(),
+            tool_runtime=ToolRuntime(InMemoryToolRegistry()),
+            models=DefaultModelProviderFactory(mock_provider=provider),
+            conversations=repo,
+            executions=repo,
+        )
+
+    async def test_content_resume_completes_and_strategy_sees_answer(self):
+        repo = _RecordingRepo()
+        strategy = _AskHumanStrategy("Which environment?")
+        runtime = self._runtime(strategy, MockModelProvider([turn("never")]), repo)
+        first = await runtime.run(_version(_agent()), "deploy", _ctx("run-hl-1"))
+        assert first.status == "awaiting_input"
+        assert repo.runs["run-hl-1"].status == "awaiting_input"
+        _seed_events(repo, runtime.bus.get("run-hl-1"))
+
+        sink = _resume_sink(repo, "run-hl-1")
+        result = await runtime.resume(
+            _version(_agent()),
+            "run-hl-1",
+            _ctx("run-hl-1"),
+            sink,
+            ResumeRequest(kind="content", content="prod"),
+        )
+
+        assert result.status == "succeeded"
+        assert result.final_message == "deploying to prod"
+        assert strategy.answered_with == "prod"
+        # one terminal write, and the row finished
+        assert [r.status for r in repo.finished] == ["succeeded"]
+        assert repo.runs["run-hl-1"].status == "succeeded"
+        # the answer was persisted as the newest message
+        roles = [m.role for m in repo.messages["run-hl-1"]]
+        assert roles == ["user", "assistant", "user", "assistant"]
+        # the segment continues, it does not restart: no run.started, the
+        # paused iteration closes, then the terminal
+        types = [e.type for e in sink.events]
+        assert "run.started" not in types
+        assert types == ["iteration.completed", "run.completed"]
+        # gapless ACROSS segments: the resumed sequence continues the first's
+        first_events = runtime.bus.get("run-hl-1").events
+        first_seqs = [e.sequence for e in first_events]
+        second_seqs = [e.sequence for e in sink.events]
+        assert second_seqs == list(range(len(first_seqs), len(first_seqs) + len(second_seqs)))
+        validate_event_sequence(first_events + sink.events)
+
+    async def test_resume_can_pause_again(self):
+        repo = _RecordingRepo()
+        strategy = _AskHumanStrategy(asks=2)
+        runtime = self._runtime(strategy, MockModelProvider([turn("never")]), repo)
+        agent = _agent(memory=MemoryConfig(enabled=True))
+        ctx = _ctx("run-hl-2", session_id="s1")
+        await runtime.run(_version(agent), "deploy", ctx)
+        assert repo.runs["run-hl-2"].status == "awaiting_input"
+        _seed_events(repo, runtime.bus.get("run-hl-2"))
+
+        sink1 = _resume_sink(repo, "run-hl-2")
+        paused_again = await runtime.resume(
+            _version(agent),
+            "run-hl-2",
+            _ctx("run-hl-2", session_id="s1"),
+            sink1,
+            ResumeRequest(kind="content", content="still not enough"),
+        )
+        assert paused_again.status == "awaiting_input"
+        assert repo.runs["run-hl-2"].status == "awaiting_input"
+        assert [r.status for r in repo.finished] == []  # still no terminal
+        # the answer reached the conversation transcript for the next segment
+        assert any(m.content == "still not enough" for m in repo.conversations["a1:s1"])
+        _seed_events(repo, sink1)
+
+        sink2 = _resume_sink(repo, "run-hl-2")
+        done = await runtime.resume(
+            _version(agent),
+            "run-hl-2",
+            _ctx("run-hl-2", session_id="s1"),
+            sink2,
+            ResumeRequest(kind="content", content="prod"),
+        )
+        assert done.status == "succeeded"
+        assert strategy.answered_with == "prod"
+
+    async def test_mismatched_approval_resume_degrades_to_answer_path(self):
+        repo = _RecordingRepo()
+        strategy = _AskHumanStrategy()
+        runtime = self._runtime(strategy, MockModelProvider([turn("never")]), repo)
+        await runtime.run(_version(_agent()), "deploy", _ctx("run-hl-3"))
+        _seed_events(repo, runtime.bus.get("run-hl-3"))
+
+        sink = _resume_sink(repo, "run-hl-3")
+        result = await runtime.resume(
+            _version(_agent()),
+            "run-hl-3",
+            _ctx("run-hl-3"),
+            sink,
+            ResumeRequest(kind="tool_approval", approved=True),
+        )
+        # no batch existed to execute — the loop re-invoked the strategy
+        assert result.status == "succeeded"
+        types = [e.type for e in sink.events]
+        assert "tool.call.started" not in types
+
+
+class TestResumeToolApproval:
+    def _gated_binding(self):
+        return ToolBinding(name="calculator", config={"requires_approval": True})
+
+    async def _paused(self, provider, tools, agent, run_id) -> tuple[AgentRuntime, _RecordingRepo]:
+        repo = _RecordingRepo()
+        runtime = _runtime(provider, tools=tools, repo=repo)
+        result = await runtime.run(_version(agent), "x", _ctx(run_id))
+        assert result.status == "awaiting_input"
+        _seed_events(repo, runtime.bus.get(run_id))
+        return runtime, repo
+
+    async def test_approved_batch_executes_and_run_completes(self):
+        calc, _ = _calc_binding()
+        provider = MockModelProvider(
+            [
+                turn(
+                    tool_calls=[
+                        ToolCall(id="c1", name="calculator", arguments={"expression": "6*7"})
+                    ]
+                ),
+                turn("42 it is"),
+            ]
+        )
+        agent = _agent(tools=[self._gated_binding()])
+        runtime, repo = await self._paused(provider, [calc], agent, "run-hl-4")
+
+        sink = _resume_sink(repo, "run-hl-4")
+        result = await runtime.resume(
+            _version(agent),
+            "run-hl-4",
+            _ctx("run-hl-4"),
+            sink,
+            ResumeRequest(kind="tool_approval", approved=True),
+        )
+
+        assert result.status == "succeeded"
+        assert result.final_message == "42 it is"
+        types = [e.type for e in sink.events]
+        # the paused iteration continued: the batch executes, then it closes
+        assert types[:3] == ["tool.call.started", "tool.call.completed", "iteration.completed"]
+        assert "tool.call.requested" not in types  # already emitted pre-pause
+        assert types.count("tool.call.started") == 1
+        assert types[-1] == "run.completed"
+        # the executed tool result landed in the transcript
+        tool_messages = [m for m in repo.messages["run-hl-4"] if m.role == "tool"]
+        assert tool_messages and "42" in tool_messages[-1].content
+        # sequences continue across the segment boundary
+        first = runtime.bus.get("run-hl-4").events
+        assert [e.sequence for e in sink.events] == list(
+            range(len(first), len(first) + len(sink.events))
+        )
+        validate_event_sequence(first + sink.events)
+
+    async def test_refusal_refuses_gated_and_executes_ungated(self):
+        from jarvis.tools.builtin.current_time import CurrentTimeTool
+
+        calc, _ = _calc_binding()
+        now_tool = CurrentTimeTool()
+        provider = MockModelProvider(
+            [
+                turn(
+                    tool_calls=[
+                        ToolCall(id="c1", name="calculator", arguments={"expression": "1"}),
+                        ToolCall(id="c2", name="current_time", arguments={}),
+                    ]
+                ),
+                turn("done"),
+            ]
+        )
+        agent = _agent(tools=[self._gated_binding(), ToolBinding(name="current_time")])
+        runtime, repo = await self._paused(provider, [calc, now_tool], agent, "run-hl-5")
+
+        sink = _resume_sink(repo, "run-hl-5")
+        result = await runtime.resume(
+            _version(agent),
+            "run-hl-5",
+            _ctx("run-hl-5"),
+            sink,
+            ResumeRequest(kind="tool_approval", approved=False),
+        )
+
+        assert result.status == "succeeded"
+        # only the ungated call executed
+        started = [e for e in sink.events if e.type == "tool.call.started"]
+        assert [e.tool_call_id for e in started] == ["c2"]
+        # the refused call closed with a refusal tool message
+        refused = [m for m in repo.messages["run-hl-5"] if m.tool_call_id == "c1"]
+        assert len(refused) == 1
+        assert refused[0].content == "user declined execution"

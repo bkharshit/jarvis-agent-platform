@@ -16,7 +16,7 @@ from jarvis.domain.events import RunCancelled, RunCompleted, RunStarted
 from jarvis.domain.execution import ExecutionContext, RunResult
 from jarvis.domain.message import Usage
 from jarvis.events.bus import InProcessEventSink
-from jarvis.ports.queue import RunQueueMessage
+from jarvis.ports.queue import ResumeRequest, RunQueueMessage
 from jarvis.runtime.worker import Worker, worker_persist
 
 
@@ -117,8 +117,35 @@ class ScriptedRuntime:
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.resumes: list[tuple[str, Any]] = []
         self.behaviors: dict[str, Any] = {}
         self.results: dict[str, RunResult] = {}
+
+    async def resume(
+        self, version: Any, run_id: str, ctx: ExecutionContext, sink: Any, resume_request: Any
+    ):
+        self.calls.append(run_id)
+        self.resumes.append((run_id, resume_request))
+        cursor = await sink.finalize(
+            RunCompleted(
+                event_id=str(uuid4()),
+                run_id=run_id,
+                created_at=datetime.now(UTC),
+                final_message="resumed",
+                total_usage=Usage(),
+                iterations=1,
+            )
+        )
+        result = RunResult(
+            run_id=run_id,
+            agent_id=ctx.agent_id,
+            status="succeeded",
+            final_message="resumed",
+            iterations=1,
+            event_cursor=cursor,
+        )
+        self.results[run_id] = result
+        return result
 
     async def run(self, version: Any, input: str, ctx: ExecutionContext, sink: Any = None):
         self.calls.append(ctx.run_id)
@@ -380,3 +407,70 @@ async def test_run_forever_respects_concurrency_cap():
             await loop
     assert worker.live_runs == []
     assert queue.acked == []  # cancelled blocking runs were never acked
+
+
+async def test_resume_claim_executes_and_acks():
+    worker, queue, executions, notifier, definition = _wired()
+    executions.runs["run-r1"] = RunResult(
+        run_id="run-r1",
+        agent_id=definition.id,
+        status="awaiting_input",
+        started_at=datetime.now(UTC),
+    )
+    resume = ResumeRequest(kind="content", content="prod")
+    await queue.enqueue(_message("run-r1", definition).model_copy(update={"resume": resume}))
+
+    assert await worker.step() is True
+    await _await_live(worker)
+
+    assert queue.acked == ["run-r1"]
+    runtime: ScriptedRuntime = worker._runtime  # noqa: SLF001 — test observation
+    assert [r for r, _ in runtime.resumes] == ["run-r1"]
+    assert runtime.resumes[0][1] == resume
+    # the row was flipped back to running for the segment
+    assert executions.runs["run-r1"].status == "running"
+    # the resumed sink is seeded at the durable log's next sequence, not 0
+    assert queue.messages  # the claim consumed the pending message
+    assert executions.finished == []
+
+
+async def test_stale_resume_is_acked_without_execution():
+    worker, queue, executions, _notifier, definition = _wired()
+    # the run is no longer awaiting_input (already resumed / reaped)
+    executions.runs["run-r2"] = RunResult(
+        run_id="run-r2",
+        agent_id=definition.id,
+        status="succeeded",
+        started_at=datetime.now(UTC),
+        finished_at=datetime.now(UTC),
+    )
+    await queue.enqueue(
+        _message("run-r2", definition).model_copy(
+            update={"resume": ResumeRequest(kind="content", content="late")}
+        )
+    )
+
+    assert await worker.step() is True
+    await _await_live(worker)
+
+    assert queue.acked == ["run-r2"]
+    runtime: ScriptedRuntime = worker._runtime  # noqa: SLF001 — test observation
+    assert runtime.resumes == []  # absorbed harmlessly, no events, no execution
+    assert "run-r2" not in executions.events
+
+
+async def test_resume_without_row_is_acked_without_execution():
+    worker, queue, executions, _notifier, definition = _wired()
+    await queue.enqueue(
+        _message("run-r3", definition).model_copy(
+            update={"resume": ResumeRequest(kind="tool_approval", approved=True)}
+        )
+    )
+
+    assert await worker.step() is True
+    await _await_live(worker)
+
+    assert queue.acked == ["run-r3"]
+    runtime: ScriptedRuntime = worker._runtime  # noqa: SLF001 — test observation
+    assert runtime.resumes == []
+    assert "run-r3" not in executions.events

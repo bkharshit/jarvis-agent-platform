@@ -305,10 +305,16 @@ async def test_awaiting_input_pause_transitions(container, agent):
     past = now - timedelta(hours=1)
     repo = container.executions
 
-    # Pause: running → awaiting_input with the deadline on the row.
+    # Pause: running → awaiting_input with the deadline on the row, plus
+    # the chain's usage-so-far (the resume segment re-seeds its budget from
+    # the row — the pause must write it).
     await repo.create_run(paused("run-hil-1"))
-    await repo.mark_awaiting_input("run-hil-1", past)
-    assert (await repo.get("run-hil-1")).status == "awaiting_input"
+    await repo.mark_awaiting_input(
+        "run-hil-1", past, total_usage=Usage(input_tokens=10, output_tokens=4)
+    )
+    paused_row = await repo.get("run-hil-1")
+    assert paused_row.status == "awaiting_input"
+    assert paused_row.total_usage.input_tokens == 10
     assert "run-hil-1" in await repo.expired_awaiting(now)
 
     # The guard: a non-running row never pauses (no terminal or queued run

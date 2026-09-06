@@ -195,21 +195,15 @@ class Worker:
                 await self._queue.ack(message.run_id)
                 return
 
+            # S10: a resumed segment rides the same claim path with the
+            # human's answer merged into the payload.
+            if message.resume is not None:
+                await self._execute_resume(message, version)
+                return
+
             started_at = datetime.now(UTC)
             await self._executions.mark_running(message.run_id, started_at)
-            ctx = ExecutionContext(
-                run_id=message.run_id,
-                agent_id=message.agent_id,
-                agent_version_id=message.agent_version_id,
-                tenant_id=message.tenant_id,
-                principal=message.principal,
-                session_id=message.session_id,
-                user_id=message.user_id,
-                trace_id=message.trace_id,
-                metadata=dict(message.metadata),
-                variables=dict(message.variables),
-                deadline=message.deadline,
-            )
+            ctx = self._context(message)
             heartbeat = asyncio.create_task(self._heartbeat(message.run_id, ctx))
             try:
                 result = await self._runtime.run(version, message.input, ctx, sink=sink)
@@ -221,6 +215,53 @@ class Worker:
             logger.info("run %s finished: %s", message.run_id, result.status)
         except Exception:  # noqa: BLE001 — the worker loop must never die
             logger.exception("claim execution failed for run %s", message.run_id)
+
+    async def _execute_resume(self, message: RunQueueMessage, version: AgentVersion) -> None:
+        """A resumed segment (S10, ADR 0010 §4): the payload's `resume` field
+        carries the human's answer. The claim's stale-guard requires the row
+        to still be awaiting_input — a reaped pause or an already-resumed run
+        absorbs the resume harmlessly (ack + skip, no events)."""
+        row = await self._executions.get(message.run_id)
+        if row is None or row.status != "awaiting_input":
+            await self._queue.ack(message.run_id)
+            logger.info(
+                "stale resume for run %s (status=%s) — acked, skipped",
+                message.run_id,
+                getattr(row, "status", None),
+            )
+            return
+        # The segment continues the run's gapless sequence: seed the sink at
+        # the durable log's next sequence, not at 0.
+        offset = await self._executions.next_event_sequence(message.run_id)
+        sink = InProcessEventSink(message.run_id, persist=self._persist, sequence_offset=offset)
+        started_at = datetime.now(UTC)
+        await self._executions.mark_running(message.run_id, started_at)
+        ctx = self._context(message)
+        heartbeat = asyncio.create_task(self._heartbeat(message.run_id, ctx))
+        try:
+            assert message.resume is not None  # the claim branch narrowed it
+            await self._runtime.resume(version, message.run_id, ctx, sink, message.resume)
+        finally:
+            heartbeat.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat
+        await self._queue.ack(message.run_id)
+        logger.info("run %s resumed segment finished", message.run_id)
+
+    def _context(self, message: RunQueueMessage) -> ExecutionContext:
+        return ExecutionContext(
+            run_id=message.run_id,
+            agent_id=message.agent_id,
+            agent_version_id=message.agent_version_id,
+            tenant_id=message.tenant_id,
+            principal=message.principal,
+            session_id=message.session_id,
+            user_id=message.user_id,
+            trace_id=message.trace_id,
+            metadata=dict(message.metadata),
+            variables=dict(message.variables),
+            deadline=message.deadline,
+        )
 
     async def _heartbeat(self, run_id: str, ctx: ExecutionContext) -> None:
         """Keep the lease alive and poll for cross-process cancels. A failed

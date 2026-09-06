@@ -14,7 +14,7 @@ from typing import Protocol
 from jarvis.domain.agent import AgentDefinition, AgentVersion
 from jarvis.domain.events import ExecutionEvent
 from jarvis.domain.execution import ExecutionStatus, RunResult
-from jarvis.domain.message import Message
+from jarvis.domain.message import Message, Usage
 from jarvis.domain.tools import ToolResult
 
 
@@ -53,8 +53,13 @@ class ExecutionRepo(Protocol):
 
     async def finish_run(self, result: RunResult) -> None: ...
 
-    async def mark_awaiting_input(self, run_id: str, awaiting_until: datetime) -> None:
-        """running → awaiting_input with the pause deadline (S10, ADR 0010)."""
+    async def mark_awaiting_input(
+        self, run_id: str, awaiting_until: datetime, *, total_usage: Usage | None = None
+    ) -> None:
+        """running → awaiting_input with the pause deadline (S10, ADR 0010).
+        `total_usage` lands on the row too: the resume segment re-seeds its
+        usage budget from the row, so the pause must write the chain's
+        usage-so-far (the terminal write is the only other one)."""
         ...
 
     async def get(self, run_id: str) -> RunResult | None: ...

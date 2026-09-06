@@ -40,6 +40,7 @@ from jarvis.domain.tools import ToolContext, ToolDescriptor
 from jarvis.events.bus import InProcessEventBus, InProcessEventSink
 from jarvis.models.errors import ModelAbortedError, ModelError
 from jarvis.ports.model import ModelClient, ModelProviderFactory
+from jarvis.ports.queue import ResumeRequest
 from jarvis.ports.repository import ConversationRepo, ExecutionRepo
 from jarvis.ports.strategy import (
     AskHumanStep,
@@ -242,7 +243,17 @@ class AgentRuntime:
             await self._conversations.append_message(conversation_id, user_message, ctx.run_id)  # type: ignore[union-attr]
 
         outcome = await self._loop(ctx, agent, client, sink, messages, conversation_id)
+        return await self._after_loop(ctx, sink, outcome, started_at, input)
 
+    async def _after_loop(
+        self,
+        ctx: ExecutionContext,
+        sink: InProcessEventSink,
+        outcome: LoopOutcome,
+        started_at: datetime,
+        run_input: str,
+    ) -> RunResult:
+        """Shared tail for a fresh run and a resumed segment (S10)."""
         if outcome.kind == "paused":
             pause = outcome.pause
             if pause is None:  # the loop always sets it — defensive terminal
@@ -252,7 +263,7 @@ class AgentRuntime:
                     "internal error: paused without a pause outcome",
                     "model",
                     started_at,
-                    input,
+                    run_input,
                     iterations=outcome.iterations,
                 )
             # S10 (ADR 0010 §3): the loop returned WITHOUT finalize — the run
@@ -260,12 +271,14 @@ class AgentRuntime:
             # No terminal event: exactly-one-terminal still holds for the
             # whole run; the resumed segment continues the sequence.
             if self._executions is not None and pause.awaiting_until is not None:
-                await self._executions.mark_awaiting_input(ctx.run_id, pause.awaiting_until)
+                await self._executions.mark_awaiting_input(
+                    ctx.run_id, pause.awaiting_until, total_usage=ctx.usage
+                )
             return RunResult(
                 run_id=ctx.run_id,
                 agent_id=ctx.agent_id,
                 status="awaiting_input",
-                input=input,
+                input=run_input,
                 agent_version_id=ctx.agent_version_id,
                 tenant_id=ctx.tenant_id,
                 session_id=ctx.session_id,
@@ -296,7 +309,7 @@ class AgentRuntime:
                 outcome.iterations,
                 cursor,
                 started_at,
-                result_input=input,
+                result_input=run_input,
             )
         return await self._terminal_failed(
             ctx,
@@ -304,7 +317,7 @@ class AgentRuntime:
             outcome.error or "unknown error",
             outcome.error_kind or "model",
             started_at,
-            input,
+            run_input,
             iterations=outcome.iterations,
         )
 
@@ -316,12 +329,16 @@ class AgentRuntime:
         sink: InProcessEventSink,
         messages: list[Message],
         conversation_id: str | None,
+        iteration: int = 0,
+        *,
+        entry: str = "fresh",  # "fresh" | "answer" | "batch" — resumed-segment entries (S10)
+        pending_calls: list[ToolCall] | None = None,  # the resumed batch (approval)
+        refusals: set[str] | None = None,  # call ids the human declined
     ) -> LoopOutcome:
         strategy = self._strategies.resolve(agent.strategy)
         descriptors = self._bound_descriptors(agent)
         bindings = {binding.name: binding for binding in agent.enabled_tools()}
         repair_attempted = False
-        iteration = 0
 
         while True:
             ctx.iteration = iteration
@@ -337,94 +354,137 @@ class AgentRuntime:
                         error_kind="max_iterations",
                         iterations=iteration,
                     )
-            await sink.append(
-                IterationStarted(
-                    event_id=_uuid(),
-                    run_id=ctx.run_id,
-                    created_at=_now(),
-                    iteration=iteration,
-                )
-            )
 
-            step: StepOutcome = await strategy.step(ctx, list(messages), client, descriptors, sink)
-            messages.append(step.assistant_message)
-            for extra in step.messages:
-                messages.append(extra)
-            await self._save_message(ctx, step.assistant_message)
-            for extra in step.messages:
-                await self._save_message(ctx, extra)
-            if conversation_id:
-                for message in [step.assistant_message, *step.messages]:
-                    await self._conversations.append_message(conversation_id, message, ctx.run_id)  # type: ignore[union-attr]
-
-            if isinstance(step, FinishStep):
-                final_text = step.assistant_message.text
-                if agent.output_schema is not None:
-                    ok, problem = _validate_structured(final_text, agent.output_schema)
-                    if not ok:
-                        if repair_attempted:
-                            return LoopOutcome(
-                                kind="failed",
-                                error=f"output did not match schema after repair: {problem}",
-                                error_kind="output_schema",
-                                iterations=iteration + 1,
-                            )
-                        repair_attempted = True
-                        await self._iteration_done(sink, ctx, iteration)
-                        messages.append(
-                            Message(
-                                role="developer",
-                                content=(
-                                    f"Your reply did not match the required JSON Schema: "
-                                    f"{problem}. Reply again with a corrected single "
-                                    "JSON object, no prose."
-                                ),
-                            )
+            batch_refusals: set[str] | None = None
+            if entry == "batch":
+                # S10 (ADR 0010 §4): the approved (or refused) batch executes
+                # inside the paused iteration — its IterationStarted is already
+                # in the log, and tool.call.requested already fired before the
+                # pause; neither is replayed.
+                calls = list(pending_calls or [])
+                batch_refusals = refusals
+                entry = "fresh"
+            else:
+                if entry != "answer":
+                    await sink.append(
+                        IterationStarted(
+                            event_id=_uuid(),
+                            run_id=ctx.run_id,
+                            created_at=_now(),
+                            iteration=iteration,
                         )
-                        await self._save_message(ctx, messages[-1])
-                        iteration += 1
-                        continue
-                await self._iteration_done(sink, ctx, iteration)
-                return LoopOutcome(
-                    kind="completed", final_message=final_text, iterations=iteration + 1
-                )
+                    )
+                # entry == "answer": the strategy is re-invoked inside the
+                # paused iteration (its IterationStarted is already in the
+                # log) — the human's answer is already in `messages`.
+                entry = "fresh"
 
-            if isinstance(step, AskHumanStep):
-                # S10 (ADR 0010 §3.2): the strategy wants a human answer. The
-                # assistant message is already persisted; pause the run.
-                return await self._pause(
-                    sink, ctx, PauseOutcome(reason="strategy", question=step.question), iteration
+                step: StepOutcome = await strategy.step(
+                    ctx, list(messages), client, descriptors, sink
                 )
+                messages.append(step.assistant_message)
+                for extra in step.messages:
+                    messages.append(extra)
+                await self._save_message(ctx, step.assistant_message)
+                for extra in step.messages:
+                    await self._save_message(ctx, extra)
+                if conversation_id and self._conversations is not None:
+                    for message in [step.assistant_message, *step.messages]:
+                        await self._conversations.append_message(
+                            conversation_id, message, ctx.run_id
+                        )
 
-            assert isinstance(step, ToolCallsStep)
-            # S10 (ADR 0010 §3.1): approval is checked BEFORE the batch
-            # executes. Every call gets its tool.call.requested frame; a
-            # gated batch pauses with the gated subset pending — no
-            # tool.call.started until the human answers.
-            for call in step.tool_calls:
-                await sink.append(
-                    ToolCallRequested(
-                        event_id=_uuid(),
-                        run_id=ctx.run_id,
-                        created_at=_now(),
+                if isinstance(step, FinishStep):
+                    final_text = step.assistant_message.text
+                    if agent.output_schema is not None:
+                        ok, problem = _validate_structured(final_text, agent.output_schema)
+                        if not ok:
+                            if repair_attempted:
+                                return LoopOutcome(
+                                    kind="failed",
+                                    error=f"output did not match schema after repair: {problem}",
+                                    error_kind="output_schema",
+                                    iterations=iteration + 1,
+                                )
+                            repair_attempted = True
+                            await self._iteration_done(sink, ctx, iteration)
+                            messages.append(
+                                Message(
+                                    role="developer",
+                                    content=(
+                                        f"Your reply did not match the required JSON Schema: "
+                                        f"{problem}. Reply again with a corrected single "
+                                        "JSON object, no prose."
+                                    ),
+                                )
+                            )
+                            await self._save_message(ctx, messages[-1])
+                            iteration += 1
+                            continue
+                    await self._iteration_done(sink, ctx, iteration)
+                    return LoopOutcome(
+                        kind="completed", final_message=final_text, iterations=iteration + 1
+                    )
+
+                if isinstance(step, AskHumanStep):
+                    # S10 (ADR 0010 §3.2): the strategy wants a human answer. The
+                    # assistant message is already persisted; pause the run.
+                    return await self._pause(
+                        sink,
+                        ctx,
+                        PauseOutcome(reason="strategy", question=step.question),
+                        iteration,
+                    )
+
+                assert isinstance(step, ToolCallsStep)
+                # S10 (ADR 0010 §3.1): approval is checked BEFORE the batch
+                # executes. Every call gets its tool.call.requested frame; a
+                # gated batch pauses with the gated subset pending — no
+                # tool.call.started until the human answers.
+                for call in step.tool_calls:
+                    await sink.append(
+                        ToolCallRequested(
+                            event_id=_uuid(),
+                            run_id=ctx.run_id,
+                            created_at=_now(),
+                            tool_call_id=call.id,
+                            name=call.name,
+                            arguments=dict(call.arguments),
+                        )
+                    )
+                gated = [
+                    call
+                    for call in step.tool_calls
+                    if self._approval_required(bindings, descriptors, call.name)
+                ]
+                if gated:
+                    return await self._pause(
+                        sink,
+                        ctx,
+                        PauseOutcome(reason="tool_approval", pending_calls=gated),
+                        iteration,
+                    )
+                calls = step.tool_calls
+                batch_refusals = None
+
+            for call in calls:
+                if batch_refusals and call.id in batch_refusals:
+                    # S10: the human declined this call — a refusal tool
+                    # message closes it (no started/completed events; it
+                    # never ran). Ungated calls in the batch still execute.
+                    tool_message = Message(
+                        role="tool",
+                        content="user declined execution",
                         tool_call_id=call.id,
                         name=call.name,
-                        arguments=dict(call.arguments),
                     )
-                )
-            gated = [
-                call
-                for call in step.tool_calls
-                if self._approval_required(bindings, descriptors, call.name)
-            ]
-            if gated:
-                return await self._pause(
-                    sink,
-                    ctx,
-                    PauseOutcome(reason="tool_approval", pending_calls=gated),
-                    iteration,
-                )
-            for call in step.tool_calls:
+                    messages.append(tool_message)
+                    await self._save_message(ctx, tool_message)
+                    if conversation_id and self._conversations is not None:
+                        await self._conversations.append_message(
+                            conversation_id, tool_message, ctx.run_id
+                        )
+                    continue
                 await sink.append(
                     ToolCallStarted(
                         event_id=_uuid(),
@@ -545,6 +605,189 @@ class AgentRuntime:
         if descriptor is not None:
             return bool(descriptor.annotations.get("requires_approval", False))
         return False
+
+    # --- resume (S10, ADR 0010 §4) -------------------------------------------
+
+    async def resume(
+        self,
+        version: AgentVersion,
+        run_id: str,
+        ctx: ExecutionContext,
+        sink: InProcessEventSink,
+        resume: ResumeRequest,
+    ) -> RunResult:
+        """Continue a paused run with the human's answer. Never raises.
+
+        The segment continues the run's gapless event sequence — the caller
+        supplies a sink seeded at `next_event_sequence` (a fresh sink would
+        restart at 0). Counters re-seed from the run row and the event log so
+        limits span the whole chain (usage accumulates across segments, the
+        original deadline rides ctx). Model resolution is inside the try
+        (D28): a resumed segment fails terminally, never escapes to the
+        worker as a claim failure. The loop may pause AGAIN — resume returns
+        `awaiting_input` and a later resume continues the chain."""
+        agent = version.snapshot
+        ctx.temperature = agent.temperature
+        started_at = datetime.now(UTC)
+        run_input = ""
+        self._live_tokens[run_id] = ctx
+        try:
+            if self._executions is not None:
+                row = await self._executions.get(run_id)
+                if row is not None:
+                    # started_at/input ride the chain, not the segment; usage
+                    # accumulates across segments (platform limits re-seed too).
+                    started_at = row.started_at or started_at
+                    run_input = row.input
+                    ctx.usage = row.total_usage.model_copy()
+            client = await self._models.resolve(agent.model, principal=ctx.principal)
+            result = await self._resume_segment(
+                run_input, ctx, sink, client, agent, started_at, resume
+            )
+        except ExecutionCancelled as exc:
+            result = await self._terminal_cancelled(ctx, sink, exc, started_at, run_input)
+        except ModelAbortedError as exc:
+            result = await self._terminal_cancelled(
+                ctx,
+                sink,
+                ExecutionCancelled(ctx.cancel.reason or str(exc)),
+                started_at,
+                run_input,
+            )
+        except ModelError as exc:
+            result = await self._terminal_failed(
+                ctx, sink, str(exc), "model", started_at, run_input
+            )
+        except Exception as exc:  # noqa: BLE001 — the run never crashes callers
+            result = await self._terminal_failed(
+                ctx,
+                sink,
+                f"internal error: {type(exc).__name__}: {exc}",
+                "model",
+                started_at,
+                run_input,
+            )
+        finally:
+            self._live_tokens.pop(run_id, None)
+
+        if self._executions is not None and result.status != "awaiting_input":
+            # mirror run(): a paused result already wrote its awaiting_input row
+            await self._executions.finish_run(result)
+        return result
+
+    async def _resume_segment(
+        self,
+        run_input: str,
+        ctx: ExecutionContext,
+        sink: InProcessEventSink,
+        client: ModelClient,
+        agent: AgentDefinition,
+        started_at: datetime,
+        resume: ResumeRequest,
+    ) -> RunResult:
+        # Re-seed the chain's counters from the durable log: the open
+        # iteration is the last one that STARTED (no IterationCompleted was
+        # emitted at the pause) and the pause event carries the gated batch.
+        pause_event: RunAwaitingInput | None = None
+        iteration_starts = 0
+        if self._executions is not None:
+            async for event in self._executions.list_events(ctx.run_id):
+                if isinstance(event, IterationStarted):
+                    iteration_starts += 1
+                elif isinstance(event, RunAwaitingInput):
+                    pause_event = event
+        open_iteration = max(iteration_starts - 1, 0)
+        ctx.iteration = open_iteration
+
+        conversation_id = await self._resume_conversation(ctx, agent)
+        messages = await self._rebuild_messages(agent, ctx, client, ctx.run_id, conversation_id)
+
+        entry = "answer"
+        pending_calls: list[ToolCall] | None = None
+        refusals: set[str] | None = None
+        if (
+            resume.kind == "tool_approval"
+            and pause_event is not None
+            and pause_event.reason == "tool_approval"
+            and pause_event.pending_calls
+        ):
+            # The full batch rides the persisted assistant message (the pause
+            # event only carries the gated subset). Approve → the whole batch
+            # executes (ADR 0010 §3.1); reject → gated calls are refused, the
+            # ungated remainder still executes.
+            batch = _pause_batch(messages) or list(pause_event.pending_calls)
+            entry, pending_calls = "batch", batch
+            if not resume.approved:
+                refusals = {call.id for call in pause_event.pending_calls}
+        else:
+            # A strategy pause answers with content. A mismatched resume kind
+            # (approval request against a strategy pause) degrades to the
+            # same path — the loop re-invokes the strategy with whatever the
+            # human sent.
+            if resume.kind == "content" and resume.content is not None:
+                answer = Message(role="user", content=resume.content)
+                messages.append(answer)
+                await self._save_message(ctx, answer)
+                if conversation_id and self._conversations is not None:
+                    await self._conversations.append_message(conversation_id, answer, ctx.run_id)
+
+        outcome = await self._loop(
+            ctx,
+            agent,
+            client,
+            sink,
+            messages,
+            conversation_id,
+            iteration=open_iteration,
+            entry=entry,
+            pending_calls=pending_calls,
+            refusals=refusals,
+        )
+        return await self._after_loop(ctx, sink, outcome, started_at, run_input)
+
+    async def _resume_conversation(
+        self, ctx: ExecutionContext, agent: AgentDefinition
+    ) -> str | None:
+        """Look up the run's conversation WITHOUT creating one (the pause
+        already created it on the original segment when memory is on)."""
+        if not agent.memory.enabled or not ctx.session_id or self._conversations is None:
+            return None
+        return await self._conversations.find(agent.id, ctx.session_id)
+
+    async def _rebuild_messages(
+        self,
+        agent: AgentDefinition,
+        ctx: ExecutionContext,
+        client: ModelClient,
+        run_id: str,
+        conversation_id: str | None,
+    ) -> list[Message]:
+        """Reconstruct the model's context for a resumed segment: the system
+        prompt plus the run transcript. With memory on, the conversation
+        history is the superset (prior sessions folded in with this run's
+        messages — the loop appends to both); otherwise the run's own
+        persisted transcript is exactly what the original context was."""
+        if conversation_id and self._conversations is not None:
+            transcript = await self._conversations.history(conversation_id)
+        elif self._executions is not None:
+            transcript = await self._executions.list_messages(run_id)
+        else:
+            transcript = []
+        system = self._prompt_engine.render_system(
+            PromptContext(
+                agent=agent,
+                input="",
+                variables=ctx.variables,
+                tools=self._bound_descriptors(agent),
+                schema_in_prompt=(
+                    agent.output_schema is not None
+                    and client.capabilities.structured_output != "json_schema"
+                ),
+            )
+        )
+        messages = [Message(role="system", content=system)] if system else []
+        messages.extend(transcript)
+        return messages
 
     # --- memory -------------------------------------------------------------
 
@@ -716,6 +959,16 @@ def _validate_structured(text: str, schema: dict[str, Any]) -> tuple[bool, str]:
     except jsonschema.ValidationError as exc:
         return False, exc.message
     return True, ""
+
+
+def _pause_batch(messages: list[Message]) -> list[ToolCall]:
+    """The tool-call batch the run paused on: the newest assistant message
+    that carries tool_calls (persisted before the pause). Empty when the
+    transcript holds no such message."""
+    for message in reversed(messages):
+        if message.role == "assistant" and message.tool_calls:
+            return list(message.tool_calls)
+    return []
 
 
 def _uuid() -> str:

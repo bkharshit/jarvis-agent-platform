@@ -14,7 +14,8 @@ from typing import Any, cast
 from uuid import uuid4
 
 from pydantic import TypeAdapter
-from sqlalchemy import ColumnElement, delete, func, select, update
+from sqlalchemy import ColumnElement, bindparam, delete, func, select, update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -33,7 +34,7 @@ from jarvis.domain.auth import (
 )
 from jarvis.domain.events import ExecutionEvent
 from jarvis.domain.execution import ExecutionStatus, RunResult
-from jarvis.domain.message import Message
+from jarvis.domain.message import Message, Usage
 from jarvis.domain.tools import ToolResult
 from jarvis.persistence.models import (
     DEFAULT_TENANT,
@@ -342,11 +343,17 @@ class SqlExecutionRepo:
             )
             await session.commit()
 
-    async def mark_awaiting_input(self, run_id: str, awaiting_until: datetime) -> None:
+    async def mark_awaiting_input(
+        self, run_id: str, awaiting_until: datetime, *, total_usage: Usage | None = None
+    ) -> None:
         """running → awaiting_input (S10, ADR 0010 §2): the loop paused. The
         deadline lands on the row for the sweeper's reaper; a stale guard
         (status == 'running') keeps a raced resume claim from pausing a row
-        that already moved on."""
+        that already moved on. `total_usage` writes the chain's usage-so-far
+        — the resume segment re-seeds its budget from the row."""
+        values: dict[str, object] = {"status": "awaiting_input", "awaiting_until": awaiting_until}
+        if total_usage is not None:
+            values["total_usage"] = total_usage.model_dump(mode="json")
         async with self._sessionmaker() as session:
             await session.execute(
                 update(AgentExecutionRow)
@@ -354,7 +361,7 @@ class SqlExecutionRepo:
                     AgentExecutionRow.id == run_id,
                     AgentExecutionRow.status == "running",
                 )
-                .values(status="awaiting_input", awaiting_until=awaiting_until)
+                .values(**values)
             )
             await session.commit()
 
@@ -654,8 +661,6 @@ class SqlExecutionRepo:
 
     @staticmethod
     def _load_run(row: AgentExecutionRow) -> RunResult:
-        from jarvis.domain.message import Usage
-
         return RunResult(
             run_id=row.id,
             agent_id=row.agent_id,
@@ -1226,8 +1231,15 @@ class SqlRunQueue:
                 update(RunQueueRow)
                 .where(RunQueueRow.run_id == run_id)
                 .values(
+                    # asyncpg cannot infer a dict bind's type inside
+                    # jsonb_build_object — give the merge object an explicit
+                    # JSONB-typed bindparam instead.
                     payload=RunQueueRow.payload.op("||")(
-                        func.jsonb_build_object("resume", resume.model_dump(mode="json"))
+                        bindparam(
+                            "resume_merge",
+                            {"resume": resume.model_dump(mode="json")},
+                            type_=JSONB,
+                        )
                     ),
                     status="pending",
                     claimed_by=None,
