@@ -32,8 +32,8 @@ function ToolCard({ item }: { item: Extract<TimelineItem, { kind: "tool" }> }) {
         </pre>
       )}
       {item.status === "failed" && (
-        <p className="mt-2 rounded bg-red-950 p-2 font-mono text-xs text-red-200">
-          {item.errorKind ? `[{item.errorKind}] ` : ""}
+        <p className="mt-2 rounded bg-red-950 p-2 font-mono text-xs text-red-200" data-testid={`tool-error-${item.toolCallId}`}>
+          {item.errorKind ? `[${item.errorKind}] ` : ""}
           {item.error}
         </p>
       )}
