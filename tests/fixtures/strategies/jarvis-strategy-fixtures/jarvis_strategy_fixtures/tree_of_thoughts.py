@@ -43,9 +43,9 @@ _DIVERGE_INSTRUCTION = (
 )
 _EVALUATE_INSTRUCTION = (
     "You are the evaluator in a tree-of-thoughts loop. Compare the options "
-    "above for correctness, simplicity, and risk. Then pick exactly one "
-    "winner: start your verdict line with the picked marker, the winning "
-    "option letter, and a one-line reason."
+    "above for correctness, simplicity, and risk. Do NOT repeat the options. "
+    "Reply with ONLY the verdict line, starting with the picked marker, the "
+    "winning option letter, and a one-line reason."
 )
 _EXECUTE_INSTRUCTION = (
     "You are the executor in a tree-of-thoughts loop. The transcript names "
@@ -76,11 +76,15 @@ class TreeOfThoughtsStrategy:
 
         assistant_texts = [m.text for m in messages if m.role == "assistant"]
         last_text = assistant_texts[-1] if assistant_texts else ""
+        options_present = any(options_marker in text for text in assistant_texts)
+        picked_present = any(picked_marker in text for text in assistant_texts)
 
-        if done_marker in last_text:
+        # DONE only ends the run once a winner exists — a stray "DONE:" in a
+        # diverge/evaluate reply (models love summarizing) must not end it.
+        if options_present and picked_present and done_marker in last_text:
             return FinishStep(assistant_message=messages[-1], finish_reason="stop")
 
-        if not any(options_marker in text for text in assistant_texts):
+        if not options_present:
             # Phase DIVERGE — candidate approaches, one per option marker.
             response = await _invoke(
                 ctx,
@@ -101,7 +105,7 @@ class TreeOfThoughtsStrategy:
             )
             return ToolCallsStep(assistant_message=response.message)  # think step
 
-        if not any(picked_marker in text for text in assistant_texts):
+        if not picked_present:
             # Phase EVALUATE — compare, then name the winner.
             response = await _invoke(
                 ctx,
