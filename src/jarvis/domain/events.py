@@ -103,6 +103,17 @@ class ToolCallFailed(_Event):
     kind: Literal["validation", "timeout", "internal"] = "internal"
 
 
+class ToolCallDeclined(_Event):
+    """The human declined this call (S10/ADR 0011 §3) — records the
+    *decision*, not an execution: no started/completed ever follow, no
+    tool_executions row exists. The refusal tool message in the transcript
+    is the model-facing copy; this event is the auditable one."""
+
+    type: Literal["tool.call.declined"] = "tool.call.declined"
+    tool_call_id: str
+    name: str
+
+
 # --- pause (non-terminal; the segment ends here, ADR 0010 §1) ----------------
 
 
@@ -152,6 +163,7 @@ ExecutionEvent = Annotated[
     | ToolCallStarted
     | ToolCallCompleted
     | ToolCallFailed
+    | ToolCallDeclined
     | IterationCompleted
     | RunAwaitingInput
     | RunCompleted

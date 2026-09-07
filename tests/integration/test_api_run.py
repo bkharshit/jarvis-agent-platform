@@ -247,6 +247,10 @@ async def test_resume_decisions_pause_mixed_outcomes(client, container, mock):
         e["event"]["tool_call_id"] for e in events if e["event"]["type"] == "tool.call.started"
     ]
     assert started == ["c1"]
+    declined = [
+        e["event"]["tool_call_id"] for e in events if e["event"]["type"] == "tool.call.declined"
+    ]
+    assert declined == ["c2"]  # the decision is durable (ADR 0011 §3)
     seqs = [e["event"]["sequence"] for e in events]
     assert seqs == list(range(len(seqs)))
 

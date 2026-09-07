@@ -1003,6 +1003,9 @@ class TestResumeToolApproval:
         # only the ungated call executed
         started = [e for e in sink.events if e.type == "tool.call.started"]
         assert [e.tool_call_id for e in started] == ["c2"]
+        # the decision is an event (ADR 0011 §3) — the refusal, not an execution
+        declined = [e for e in sink.events if e.type == "tool.call.declined"]
+        assert [(e.tool_call_id, e.name) for e in declined] == [("c1", "calculator")]
         # the refused call closed with a refusal tool message
         refused = [m for m in repo.messages["run-hl-5"] if m.tool_call_id == "c1"]
         assert len(refused) == 1
@@ -1043,6 +1046,8 @@ class TestResumeToolApproval:
         assert result.status == "succeeded"
         started = [e for e in sink.events if e.type == "tool.call.started"]
         assert [e.tool_call_id for e in started] == ["c1"]
+        declined = [e for e in sink.events if e.type == "tool.call.declined"]
+        assert [e.tool_call_id for e in declined] == ["c2"]
         refused = [m for m in repo.messages["run-hl-6"] if m.tool_call_id == "c2"]
         assert len(refused) == 1
         assert refused[0].content == "user declined execution"
@@ -1066,6 +1071,8 @@ class TestResumeToolApproval:
         assert result.status == "succeeded"
         started = [e for e in sink.events if e.type == "tool.call.started"]
         assert [e.tool_call_id for e in started] == ["c1"]
+        declined = [e for e in sink.events if e.type == "tool.call.declined"]
+        assert [e.tool_call_id for e in declined] == ["c2"]
         refused = [m for m in repo.messages["run-hl-7"] if m.tool_call_id == "c2"]
         assert len(refused) == 1
         assert refused[0].content == "user declined execution"

@@ -676,7 +676,7 @@ export interface components {
             /** Cursor */
             cursor: number;
             /** Event */
-            event: components["schemas"]["RunStarted"] | components["schemas"]["IterationStarted"] | components["schemas"]["ModelInvocationStarted"] | components["schemas"]["TextDelta"] | components["schemas"]["ModelInvocationCompleted"] | components["schemas"]["ToolCallRequested"] | components["schemas"]["ToolCallStarted"] | components["schemas"]["ToolCallCompleted"] | components["schemas"]["ToolCallFailed"] | components["schemas"]["IterationCompleted"] | components["schemas"]["RunAwaitingInput"] | components["schemas"]["RunCompleted"] | components["schemas"]["RunFailed"] | components["schemas"]["RunCancelled"];
+            event: components["schemas"]["RunStarted"] | components["schemas"]["IterationStarted"] | components["schemas"]["ModelInvocationStarted"] | components["schemas"]["TextDelta"] | components["schemas"]["ModelInvocationCompleted"] | components["schemas"]["ToolCallRequested"] | components["schemas"]["ToolCallStarted"] | components["schemas"]["ToolCallCompleted"] | components["schemas"]["ToolCallFailed"] | components["schemas"]["ToolCallDeclined"] | components["schemas"]["IterationCompleted"] | components["schemas"]["RunAwaitingInput"] | components["schemas"]["RunCompleted"] | components["schemas"]["RunFailed"] | components["schemas"]["RunCancelled"];
         };
         /**
          * EnvCredentialRef
@@ -1345,6 +1345,35 @@ export interface components {
              * @default 0
              */
             latency_ms: number;
+        };
+        /**
+         * ToolCallDeclined
+         * @description The human declined this call (S10/ADR 0011 §3) — records the
+         *     *decision*, not an execution: no started/completed ever follow, no
+         *     tool_executions row exists. The refusal tool message in the transcript
+         *     is the model-facing copy; this event is the auditable one.
+         */
+        ToolCallDeclined: {
+            /** Event Id */
+            event_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tool.call.declined";
+            /** Tool Call Id */
+            tool_call_id: string;
+            /** Name */
+            name: string;
         };
         /** ToolCallFailed */
         ToolCallFailed: {

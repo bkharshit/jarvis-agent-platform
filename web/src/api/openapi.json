@@ -2023,6 +2023,9 @@
                 "$ref": "#/components/schemas/ToolCallFailed"
               },
               {
+                "$ref": "#/components/schemas/ToolCallDeclined"
+              },
+              {
                 "$ref": "#/components/schemas/IterationCompleted"
               },
               {
@@ -2053,6 +2056,7 @@
                 "run.started": "#/components/schemas/RunStarted",
                 "text.delta": "#/components/schemas/TextDelta",
                 "tool.call.completed": "#/components/schemas/ToolCallCompleted",
+                "tool.call.declined": "#/components/schemas/ToolCallDeclined",
                 "tool.call.failed": "#/components/schemas/ToolCallFailed",
                 "tool.call.requested": "#/components/schemas/ToolCallRequested",
                 "tool.call.started": "#/components/schemas/ToolCallStarted"
@@ -3609,6 +3613,58 @@
           "name"
         ],
         "title": "ToolCallCompleted"
+      },
+      "ToolCallDeclined": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "type": {
+            "type": "string",
+            "const": "tool.call.declined",
+            "title": "Type",
+            "default": "tool.call.declined"
+          },
+          "tool_call_id": {
+            "type": "string",
+            "title": "Tool Call Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "run_id",
+          "tool_call_id",
+          "name"
+        ],
+        "title": "ToolCallDeclined",
+        "description": "The human declined this call (S10/ADR 0011 \u00a73) \u2014 records the\n*decision*, not an execution: no started/completed ever follow, no\ntool_executions row exists. The refusal tool message in the transcript\nis the model-facing copy; this event is the auditable one."
       },
       "ToolCallFailed": {
         "properties": {

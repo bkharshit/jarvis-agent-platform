@@ -30,6 +30,7 @@ from jarvis.domain.events import (
     RunFailed,
     RunStarted,
     ToolCallCompleted,
+    ToolCallDeclined,
     ToolCallFailed,
     ToolCallRequested,
     ToolCallStarted,
@@ -469,9 +470,20 @@ class AgentRuntime:
 
             for call in calls:
                 if batch_refusals and call.id in batch_refusals:
-                    # S10: the human declined this call — a refusal tool
-                    # message closes it (no started/completed events; it
-                    # never ran). Ungated calls in the batch still execute.
+                    # S10/ADR 0011 §3: the human declined this call — the
+                    # declined event records the *decision* (no
+                    # started/completed; it never ran), the refusal tool
+                    # message closes it in the model's context. Ungated
+                    # calls in the batch still execute.
+                    await sink.append(
+                        ToolCallDeclined(
+                            event_id=_uuid(),
+                            run_id=ctx.run_id,
+                            created_at=_now(),
+                            tool_call_id=call.id,
+                            name=call.name,
+                        )
+                    )
                     tool_message = Message(
                         role="tool",
                         content="user declined execution",

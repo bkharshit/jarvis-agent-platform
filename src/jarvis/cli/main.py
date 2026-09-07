@@ -30,6 +30,7 @@ from jarvis.domain.events import (
     RunStarted,
     TextDelta,
     ToolCallCompleted,
+    ToolCallDeclined,
     ToolCallFailed,
     ToolCallRequested,
     ToolCallStarted,
@@ -109,7 +110,10 @@ def _print_event(event: ExecutionEvent) -> None:
         detail = f"input={event.input!r}"
     elif isinstance(event, IterationStarted):
         detail = f"iteration={event.iteration}"
-    elif isinstance(event, (ToolCallRequested, ToolCallStarted, ToolCallCompleted, ToolCallFailed)):
+    elif isinstance(
+        event,
+        (ToolCallRequested, ToolCallStarted, ToolCallCompleted, ToolCallFailed, ToolCallDeclined),
+    ):
         detail = f"tool={event.name}"
         if isinstance(event, ToolCallCompleted):
             detail += f" ok={not event.is_error} latency={event.latency_ms}ms"

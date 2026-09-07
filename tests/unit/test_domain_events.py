@@ -135,6 +135,20 @@ def test_tool_call_completed_roundtrip():
     assert event.type == "tool.call.completed"
 
 
+def test_tool_call_declined_is_non_terminal_and_in_union():
+    """ADR 0011 §3: the refusal decision is an event — in the union, and
+    not terminal (execution events like started/completed never follow)."""
+    from pydantic import TypeAdapter
+
+    from jarvis.domain.events import ExecutionEvent, ToolCallDeclined, is_terminal
+
+    event = _event(ToolCallDeclined, 6, tool_call_id="tc1", name="calculator")
+    assert event.type == "tool.call.declined"
+    assert not is_terminal(event)
+    parsed = TypeAdapter(ExecutionEvent).validate_python(event.model_dump(mode="json"))
+    assert isinstance(parsed, ToolCallDeclined)
+
+
 def test_pause_event_is_not_terminal():
     from datetime import UTC, datetime, timedelta
 
