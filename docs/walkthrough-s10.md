@@ -150,9 +150,38 @@ strategy, and the model executes the approved call in a new iteration.
 **blocking** (mirrors `/run`): it returns the row for the resumed
 segment's end (which may pause again).
 
-The body is validated to exactly one answer: `{"tool_approval": true}`
-or `{"content": "..."}` — both is a 422, `{}` is a 422, blank content is
-a 422 (the route can't guess what the human meant).
+The body is validated to exactly one answer: `{"tool_approval": true}`,
+`{"content": "..."}`, or `{"decisions": {"<call_id>": bool}}` (ADR 0011) —
+two answers is a 422, `{}` is a 422, blank content is a 422 (the route
+can't guess what the human meant).
+
+### 4b. Per-call decisions (ADR 0011): approve one call, decline another
+
+A pause can carry several gated calls, and a one-boolean answer can't
+split them. `decisions` maps each pending `tool_call_id` to its verdict;
+**a call absent from the map is declined** (silence never approves), and
+unknown ids are ignored. Pause a run whose model makes two gated calls,
+then:
+
+```bash
+curl -s -X POST localhost:8001/v1/executions/$RUN_ID/resume \
+  -H 'Content-Type: application/json' \
+  -d '{"decisions": {"'"$C1_ID"'": true, "'"$C2_ID"'": false}}' --max-time 120 \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['status'], d['final_message'])"
+# → succeeded …
+
+curl -s localhost:8001/v1/executions/$RUN_ID/events | python3 -c "
+import json,sys
+evs = json.load(sys.stdin)['events']
+started = [e['event']['tool_call_id'] for e in evs if e['event']['type']=='tool.call.started']
+print('executed:', started)"
+# → executed: ['c1']   — c2 closed with a refusal tool message, never ran
+```
+
+On the web, the pause card stages each call's verdict with its
+Approve/Reject pair (selected state highlights), **Allow all** approves
+the batch, and **Submit decision** posts the map — disabled until every
+call is decided, so a missed row can't silently decline.
 
 ## 5. Reject → the loop continues with a refusal
 
@@ -285,9 +314,10 @@ cd web && npm run dev                  # → http://localhost:5173
 ```
 
 - **Run console** (`/agents/<id>/run`): a pause renders a violet card —
-  approval rows (Approve/Reject) for gated calls, an answer form for a
-  question; the resume POST is blocking and the stream re-attaches at the
-  pause cursor, replaying the resumed segment into the same timeline.
+  approval rows with staged per-call Approve/Reject (ADR 0011), Allow
+  all, one Submit; an answer form for a question; the resume POST is
+  blocking and the stream re-attaches at the pause cursor, replaying the
+  resumed segment into the same timeline.
 - **Executions**: an "Awaiting input" inbox lists paused runs (from
   `GET /v1/executions?status=awaiting_input`), above the table.
 

@@ -83,7 +83,7 @@ uv run jarvis doctor --ping-model
 | GET | `/executions` | List runs (`agent_id`, `status`, `session_id`, `limit`, `offset`) |
 | GET | `/executions/{run_id}` | Run + transcript + tool executions |
 | POST | `/executions/{run_id}/cancel` | Idempotent cancel — live token in-process, cross-process request row otherwise |
-| POST | `/executions/{run_id}/resume` | Answer a paused run (`{content}` or `{tool_approval: bool}`; blocking, mirrors `/run`) — 409 when not awaiting |
+| POST | `/executions/{run_id}/resume` | Answer a paused run (`{content}`, `{tool_approval: bool}`, or per-call `{decisions}`; blocking, mirrors `/run`) — 409 when not awaiting |
 | GET | `/executions/{run_id}/events` | Event replay: JSON, or SSE with `Accept: text/event-stream` |
 | GET | `/conversations/{agent_id}/{session_id}/messages` | Conversation history |
 | GET | `/capabilities` | Section flags + registry-derived detail the UI renders from |
@@ -178,20 +178,29 @@ validated to exactly one of:
 curl -s -X POST localhost:8000/v1/executions/<run-id>/resume \
   -H 'Content-Type: application/json' -d '{"tool_approval": true}'
 # or: -d '{"content": "Harshit"}'   (a strategy-asked question)
+# or per-call (ADR 0011): approve c1, decline c2 — a call absent from
+#     the map is declined, never run
+curl -s -X POST localhost:8000/v1/executions/<run-id>/resume \
+  -H 'Content-Type: application/json' \
+  -d '{"decisions": {"c1": true, "c2": false}}'
 ```
 
 Approve executes the gated batch; reject closes the declined calls with a
-refusal tool message (they never ran) and lets the model continue. The
-resume is blocking — it returns the row for the resumed segment's end,
-which may pause again. Limits span the chain: `max_iterations` and the
-token budget bound the whole run, not one segment.
+refusal tool message (they never ran) and lets the model continue. With
+`decisions` (ADR 0011) the gated batch is split per call: approved calls
+execute, declined ones get the refusal message, and calls absent from the
+map are declined — silence is never approval. The resume is blocking — it
+returns the row for the resumed segment's end, which may pause again.
+Limits span the chain: `max_iterations` and the token budget bound the
+whole run, not one segment.
 
 A paused run carries a deadline (`awaiting_until`, default 24h,
 `JARVIS_AWAITING_INPUT_TIMEOUT_SECONDS`); the worker's sweeper reaps
 expired pauses with the one terminal `run.cancelled` (reason
 `awaiting_input timeout`) so no run is ever stuck. Cancelling a paused
 run is immediate — nothing holds it. On the web, the run console renders
-the pause card (approval rows / answer form) and the Executions section
+the pause card (per-call approve/reject selection with an allow-all
+shortcut / answer form) and the Executions section
 gains an awaiting-input inbox, both gated on
 `executions.detail.human_in_the_loop` from `/v1/capabilities`.
 
