@@ -146,9 +146,7 @@ class RunFailed(_Event):
     # D36 (S3): "strategy" joins the kind set — a plugin strategy that is
     # missing (de-allow-listed/uninstalled) or that raises in `step`. Same
     # field, same envelope (ADR 0003 precedent: output_schema, timeout).
-    error_kind: Literal[
-        "max_iterations", "timeout", "model", "tool", "output_schema", "strategy"
-    ]
+    error_kind: Literal["max_iterations", "timeout", "model", "tool", "output_schema", "strategy"]
     total_usage: Usage
 
 

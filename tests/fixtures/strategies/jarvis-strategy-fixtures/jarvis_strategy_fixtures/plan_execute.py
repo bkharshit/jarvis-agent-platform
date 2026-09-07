@@ -8,9 +8,10 @@ uses (stateless; per-run state lives in the transcript, never on `self`):
   (empty `tool_calls` — the orchestrator persists the assistant message
   and continues the loop).
 - Phase EXECUTE: one model invocation executing the next plan step. A
-  reply starting with the done marker ends the run (`FinishStep`); tool
+  reply containing the done marker ends the run (`FinishStep`); tool
   calls are handed back; plain text is a think step (the loop continues to
-  the next plan step).
+  the next plan step). Markers match as substrings, like the plan phase —
+  real models do not reliably obey marker-placement instructions.
 
 Markers come from `StrategyConfig.params` via
 `ctx.metadata["strategy_params"]` (plan_marker / done_marker).
@@ -65,16 +66,21 @@ class PlanExecuteStrategy:
         assistant_texts = [m.text for m in messages if m.role == "assistant"]
 
         if not any(plan_marker in text for text in assistant_texts):
-            # Phase PLAN — the reply is a think step; the loop continues.
+            # Phase PLAN — the planner instruction is appended (mirroring the
+            # executor branch); the reply is a think step; the loop continues.
             response = await self._invoke(
                 ctx,
-                ModelRequest(model="", messages=messages, temperature=ctx.temperature),
+                ModelRequest(
+                    model="",
+                    messages=[*messages, developer_message(_PLAN_INSTRUCTION)],
+                    temperature=ctx.temperature,
+                ),
                 client,
                 sink,
             )
             return ToolCallsStep(assistant_message=response.message)
 
-        if assistant_texts and assistant_texts[-1].lstrip().startswith(done_marker):
+        if done_marker in (assistant_texts[-1] if assistant_texts else ""):
             return FinishStep(assistant_message=messages[-1], finish_reason="stop")
 
         # Phase EXECUTE — tools ride along; a DONE reply ends the run.
@@ -85,7 +91,7 @@ class PlanExecuteStrategy:
             temperature=ctx.temperature,
         )
         response = await self._invoke(ctx, request, client, sink)
-        if response.message.text.lstrip().startswith(done_marker):
+        if done_marker in response.message.text:
             return FinishStep(assistant_message=response.message, finish_reason="stop")
         if response.message.tool_calls:
             return ToolCallsStep(

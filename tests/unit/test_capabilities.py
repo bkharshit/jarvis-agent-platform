@@ -44,9 +44,7 @@ def _stub_container(
     return SimpleNamespace(
         settings=Settings(strategy_plugin_allowlist=allowlist or []),
         tools=SimpleNamespace(descriptors=lambda: builtins),
-        strategies=SimpleNamespace(
-            names=lambda: strategies, describe=lambda: describe or []
-        ),
+        strategies=SimpleNamespace(names=lambda: strategies, describe=lambda: describe or []),
         strategy_plugins=plugins or PluginLoadResult(),
         models=_StubFactory(),
     )

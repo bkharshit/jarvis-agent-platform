@@ -93,9 +93,7 @@ def _definition_from_create(req: AgentUpsertRequest, agent_id: str) -> AgentDefi
     return AgentDefinition(id=agent_id, **payload)
 
 
-def _validate_strategy_type(
-    container: AppContainer, strategy_type: str | None
-) -> None:
+def _validate_strategy_type(container: AppContainer, strategy_type: str | None) -> None:
     """D36: `strategy.type` is a free string in the domain; the create
     boundary validates it against the *live* registry (plugins included) so
     a typo 422s here instead of failing at run time. Update validates only

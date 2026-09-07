@@ -55,9 +55,7 @@ class Settings(BaseSettings):
     #   JARVIS_STRATEGY_PLUGIN_ALLOWLIST=plan_execute,raise_plugin
     # NoDecode: the CSV string must NOT hit pydantic-settings' implicit JSON
     # decode for complex fields (it would SettingsError before the validator).
-    strategy_plugin_allowlist: Annotated[list[str], NoDecode] = Field(
-        default_factory=list
-    )
+    strategy_plugin_allowlist: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     @field_validator("strategy_plugin_allowlist", mode="before")
     @classmethod

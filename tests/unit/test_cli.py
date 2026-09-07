@@ -193,9 +193,7 @@ def cli_container(monkeypatch: pytest.MonkeyPatch) -> _StubContainer:
 def test_agent_create_rejects_unknown_strategy_type(tmp_path, cli_container):
     yaml_file = tmp_path / "agent.yaml"
     yaml_file.write_text(
-        "name: plugin-agent\n"
-        "model: {provider: mock, model: m}\n"
-        "strategy: {type: plan_execute}\n"
+        "name: plugin-agent\nmodel: {provider: mock, model: m}\nstrategy: {type: plan_execute}\n"
     )
     result = runner.invoke(app, ["agent", "create", "--file", str(yaml_file)])
     assert result.exit_code == 1
@@ -207,9 +205,7 @@ def test_agent_create_rejects_unknown_strategy_type(tmp_path, cli_container):
 def test_agent_create_accepts_known_strategy(tmp_path, cli_container):
     yaml_file = tmp_path / "agent.yaml"
     yaml_file.write_text(
-        "name: plain-agent\n"
-        "model: {provider: mock, model: m}\n"
-        "strategy: {type: react}\n"
+        "name: plain-agent\nmodel: {provider: mock, model: m}\nstrategy: {type: react}\n"
     )
     result = runner.invoke(app, ["agent", "create", "--file", str(yaml_file)])
     assert result.exit_code == 0, result.output
