@@ -5,7 +5,7 @@ from jarvis.config import Settings
 
 class TestDefaults:
     def test_database_url_default(self):
-        assert Settings().database_url.startswith("postgresql+asyncpg://")
+        assert Settings(_env_file=None).database_url.startswith("postgresql+asyncpg://")
 
     def test_model_defaults(self):
         # `_env_file=None` pins the code defaults — a developer's local
@@ -15,7 +15,7 @@ class TestDefaults:
         assert settings.model_api_key_env == "OPENAI_API_KEY"
 
     def test_run_limits_defaults(self):
-        settings = Settings()
+        settings = Settings(_env_file=None)
         assert settings.run_max_iterations == 8
         assert settings.run_max_total_tokens is None
         assert settings.run_timeout_seconds is None

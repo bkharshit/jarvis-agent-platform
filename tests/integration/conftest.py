@@ -96,7 +96,9 @@ async def _truncate(container: AppContainer) -> None:
 
 @pytest_asyncio.fixture
 async def container(mock: MockModelProvider):
-    container = AppContainer.from_settings(Settings(), mock_provider=mock)
+    # _env_file=None: tests are hermetic — the developer's ./.env (secrets,
+    # plugin allow-list) must not leak into expectations built for defaults.
+    container = AppContainer.from_settings(Settings(_env_file=None), mock_provider=mock)
     await _truncate(container)
     # ASGITransport skips the lifespan, so the embedded worker is started
     # here — the routes are queue-backed (ADR 0008) and runs need a worker.

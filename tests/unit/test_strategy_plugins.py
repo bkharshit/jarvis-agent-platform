@@ -62,5 +62,6 @@ def test_duplicate_entry_point_names_first_wins():
 def test_settings_allowlist_parses_csv_env():
     settings = Settings(strategy_plugin_allowlist="plan_execute, raise_plugin")
     assert settings.strategy_plugin_allowlist == ["plan_execute", "raise_plugin"]
-    # a list default stays a list (programmatic construction)
-    assert Settings().strategy_plugin_allowlist == []
+    # a list default stays a list (programmatic construction); _env_file=None
+    # keeps the test hermetic — the developer's ./.env must not leak in
+    assert Settings(_env_file=None).strategy_plugin_allowlist == []

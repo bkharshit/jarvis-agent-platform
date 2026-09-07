@@ -3,20 +3,20 @@
 Diverge → evaluate → exploit, as transcript-driven phases (stateless;
 per-run state lives in the transcript, never on `self`):
 
-- Phase DIVERGE: no option marker in any assistant message yet → one
-  model invocation asking for N distinct candidate approaches, each
-  prefixed with the option marker, returned as a **think step** (empty
-  `tool_calls` — the orchestrator persists the assistant message and
-  continues the loop).
-- Phase EVALUATE: options exist but no picked marker yet → one model
-  invocation comparing the options and naming a winner (picked marker),
-  also a think step.
+- Phase DIVERGE (no assistant reply yet): one model invocation asking for
+  N distinct candidate approaches, each prefixed with the option marker,
+  returned as a **think step** (empty `tool_calls` — the orchestrator
+  persists the assistant message and continues the loop).
+- Phase EVALUATE (one reply so far): one model invocation comparing the
+  options and naming a winner, also a think step.
 - Phase EXECUTE: follow the picked approach (tools ride along). A reply
   containing the done marker ends the run (`FinishStep`); tool calls are
   handed back; plain text is a think step.
 
-Markers match as substrings — real models do not reliably obey
-marker-placement instructions. Params via `ctx.metadata["strategy_params"]`
+Phase advancement is by transcript position (assistant-turn count), not
+marker detection — live models drift on marker placement, casing, and
+wording. The done marker still gates the finish and matches as a
+case-insensitive substring. Params via `ctx.metadata["strategy_params"]`
 (num_options / options_marker / picked_marker / done_marker).
 """
 
@@ -75,16 +75,16 @@ class TreeOfThoughtsStrategy:
         done_marker = str(params.get("done_marker", "DONE:"))
 
         assistant_texts = [m.text for m in messages if m.role == "assistant"]
+        # Markers match as case-insensitive substrings, and phase advancement
+        # is by transcript position (assistant-turn count) — live models drift
+        # on marker placement ("...DONE:" at the end), casing ("picked"), and
+        # wording ("✅ B:" for "PICKED: B"); the turn count is model-proof.
+        # Markers still drive the instructions and the done check.
+        done_marker_l = done_marker.lower()
         last_text = assistant_texts[-1] if assistant_texts else ""
-        options_present = any(options_marker in text for text in assistant_texts)
-        picked_present = any(picked_marker in text for text in assistant_texts)
+        phase = len(assistant_texts)  # 0 = diverge, 1 = evaluate, >=2 = execute
 
-        # DONE only ends the run once a winner exists — a stray "DONE:" in a
-        # diverge/evaluate reply (models love summarizing) must not end it.
-        if options_present and picked_present and done_marker in last_text:
-            return FinishStep(assistant_message=messages[-1], finish_reason="stop")
-
-        if not options_present:
+        if phase == 0:
             # Phase DIVERGE — candidate approaches, one per option marker.
             response = await _invoke(
                 ctx,
@@ -105,7 +105,7 @@ class TreeOfThoughtsStrategy:
             )
             return ToolCallsStep(assistant_message=response.message)  # think step
 
-        if not picked_present:
+        if phase == 1:
             # Phase EVALUATE — compare, then name the winner.
             response = await _invoke(
                 ctx,
@@ -122,7 +122,11 @@ class TreeOfThoughtsStrategy:
             )
             return ToolCallsStep(assistant_message=response.message)  # think step
 
-        # Phase EXECUTE — tools ride along; a DONE reply ends the run.
+        # Phase EXECUTE — a winner was named (turn 2); tools ride along and a
+        # DONE reply ends the run.
+        if done_marker_l in last_text.lower():
+            return FinishStep(assistant_message=messages[-1], finish_reason="stop")
+
         response = await _invoke(
             ctx,
             ModelRequest(
@@ -137,7 +141,7 @@ class TreeOfThoughtsStrategy:
             client,
             sink,
         )
-        if done_marker in response.message.text:
+        if done_marker_l in response.message.text.lower():
             return FinishStep(assistant_message=response.message, finish_reason="stop")
         if response.message.tool_calls:
             return ToolCallsStep(

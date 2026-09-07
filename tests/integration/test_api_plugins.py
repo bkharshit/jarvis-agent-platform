@@ -37,7 +37,7 @@ async def _truncate(container: AppContainer) -> None:
 @pytest_asyncio.fixture
 async def plugin_container(mock: MockModelProvider, monkeypatch) -> AppContainer:
     monkeypatch.setenv(ALLOWLIST, "plan_execute,raise_plugin,tree_of_thoughts")
-    container = AppContainer.from_settings(Settings(), mock_provider=mock)
+    container = AppContainer.from_settings(Settings(_env_file=None), mock_provider=mock)
     await _truncate(container)
     await container.start_worker()
     yield container
@@ -160,7 +160,7 @@ async def test_de_allowlisted_create_422s_but_pinned_version_still_runs(
     mock: MockModelProvider, monkeypatch
 ):
     monkeypatch.setenv(ALLOWLIST, "plan_execute")
-    first = AppContainer.from_settings(Settings(), mock_provider=mock)
+    first = AppContainer.from_settings(Settings(_env_file=None), mock_provider=mock)
     await _truncate(first)
     # No worker on the first container: the queue is shared (ADR 0008), and
     # any worker with the plugin allow-listed would claim the run before the
@@ -179,7 +179,7 @@ async def test_de_allowlisted_create_422s_but_pinned_version_still_runs(
 
     # de-allow-list: a NEW container sees no plugins at all
     monkeypatch.delenv(ALLOWLIST)
-    second = AppContainer.from_settings(Settings(), mock_provider=mock)
+    second = AppContainer.from_settings(Settings(_env_file=None), mock_provider=mock)
     await second.start_worker()
     app2 = create_app(second.settings)
     app2.state.container = second
