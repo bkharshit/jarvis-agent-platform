@@ -41,6 +41,9 @@ function RunConsoleInner() {
   const [answering, setAnswering] = useState(false);
   /** The pending answer text for a question pause. */
   const [answer, setAnswer] = useState("");
+  /** Staged per-call verdicts for an approval pause (ADR 0011) — the
+   * Submit posts the map; a call left undecided keeps Submit disabled. */
+  const [decisions, setDecisions] = useState<Record<string, boolean>>({});
 
   const apply = useRunConsoleStore((s) => s.apply);
   const settle = useRunConsoleStore((s) => s.settle);
@@ -92,6 +95,7 @@ function RunConsoleInner() {
   function startRun() {
     if (input.trim() === "") return;
     reset();
+    setDecisions({});
     lastEventIdRef.current = null;
     runIdRef.current = null;
     setStarting(true);
@@ -102,10 +106,15 @@ function RunConsoleInner() {
     connect();
   }
 
-  async function sendResume(body: { content?: string; tool_approval?: boolean }) {
+  async function sendResume(body: {
+    content?: string;
+    tool_approval?: boolean;
+    decisions?: Record<string, boolean>;
+  }) {
     if (runId === null) return;
     setAnswering(true);
     setAnswer("");
+    setDecisions({});
     try {
       // Blocking: the route returns once the resumed segment ends (it may
       // pause again). The stream is re-attached afterwards at the pause
@@ -204,40 +213,86 @@ function RunConsoleInner() {
             <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-100">{pause.question}</p>
           )}
           {pause.pendingCalls.length > 0 && (
-            <ul className="mt-2 space-y-2">
-              {pause.pendingCalls.map((call) => (
-                <li
-                  key={call.id}
-                  className="flex items-center justify-between gap-3 rounded border border-neutral-800 bg-neutral-900 px-3 py-2"
-                  data-testid={`pending-call-${call.id}`}
+            <>
+              <ul className="mt-2 space-y-2">
+                {pause.pendingCalls.map((call) => {
+                  const chosen = decisions[call.id];
+                  return (
+                    <li
+                      key={call.id}
+                      className="flex items-center justify-between gap-3 rounded border border-neutral-800 bg-neutral-900 px-3 py-2"
+                      data-testid={`pending-call-${call.id}`}
+                    >
+                      <span className="min-w-0 text-sm text-neutral-200">
+                        <span className="font-medium">{call.name}</span>{" "}
+                        <span className="break-all font-mono text-xs text-neutral-400">
+                          {JSON.stringify(call.arguments)}
+                        </span>
+                      </span>
+                      <span className="flex shrink-0 gap-2">
+                        <button
+                          type="button"
+                          aria-pressed={chosen === true}
+                          disabled={answering}
+                          onClick={() =>
+                            setDecisions((d) => ({ ...d, [call.id]: true }))
+                          }
+                          className={
+                            chosen === true
+                              ? "cursor-pointer rounded border border-green-500 bg-green-900 px-3 py-1 text-xs font-medium text-green-200 disabled:cursor-not-allowed disabled:text-neutral-600"
+                              : "cursor-pointer rounded border border-green-800 px-3 py-1 text-xs text-green-300 hover:bg-green-950 disabled:cursor-not-allowed disabled:text-neutral-600"
+                          }
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          aria-pressed={chosen === false}
+                          disabled={answering}
+                          onClick={() =>
+                            setDecisions((d) => ({ ...d, [call.id]: false }))
+                          }
+                          className={
+                            chosen === false
+                              ? "cursor-pointer rounded border border-red-500 bg-red-900 px-3 py-1 text-xs font-medium text-red-200 disabled:cursor-not-allowed disabled:text-neutral-600"
+                              : "cursor-pointer rounded border border-red-800 px-3 py-1 text-xs text-red-300 hover:bg-red-950 disabled:cursor-not-allowed disabled:text-neutral-600"
+                          }
+                        >
+                          Reject
+                        </button>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  data-testid="allow-all"
+                  disabled={answering}
+                  onClick={() =>
+                    setDecisions(
+                      Object.fromEntries(pause.pendingCalls.map((c) => [c.id, true])),
+                    )
+                  }
+                  className="cursor-pointer rounded border border-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-900 disabled:cursor-not-allowed disabled:text-neutral-600"
                 >
-                  <span className="min-w-0 text-sm text-neutral-200">
-                    <span className="font-medium">{call.name}</span>{" "}
-                    <span className="break-all font-mono text-xs text-neutral-400">
-                      {JSON.stringify(call.arguments)}
-                    </span>
-                  </span>
-                  <span className="flex shrink-0 gap-2">
-                    <button
-                      type="button"
-                      disabled={answering}
-                      onClick={() => void sendResume({ tool_approval: true })}
-                      className="cursor-pointer rounded border border-green-800 px-3 py-1 text-xs text-green-300 hover:bg-green-950 disabled:cursor-not-allowed disabled:text-neutral-600"
-                    >
-                      Approve
-                    </button>
-                    <button
-                      type="button"
-                      disabled={answering}
-                      onClick={() => void sendResume({ tool_approval: false })}
-                      className="cursor-pointer rounded border border-red-800 px-3 py-1 text-xs text-red-300 hover:bg-red-950 disabled:cursor-not-allowed disabled:text-neutral-600"
-                    >
-                      Reject
-                    </button>
-                  </span>
-                </li>
-              ))}
-            </ul>
+                  Allow all
+                </button>
+                <button
+                  type="button"
+                  data-testid="submit-decisions"
+                  disabled={
+                    answering ||
+                    pause.pendingCalls.some((c) => decisions[c.id] === undefined)
+                  }
+                  onClick={() => void sendResume({ decisions })}
+                  className="cursor-pointer rounded bg-neutral-100 px-4 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:cursor-not-allowed disabled:text-neutral-500"
+                >
+                  Submit decision
+                </button>
+              </div>
+            </>
           )}
           {pause.pendingCalls.length === 0 && pause.question !== null && (
             <form

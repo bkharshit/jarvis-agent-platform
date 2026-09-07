@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -166,15 +166,75 @@ describe("<RunConsole/>", () => {
     expect(card).toHaveTextContent("http_get");
     expect(screen.getByTestId("pending-call-c1")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Approve" }));
+    // ADR 0011: per-call selection staged locally, one Submit posts the map.
+    await user.click(screen.getByTestId("allow-all"));
+    await user.click(screen.getByTestId("submit-decisions"));
 
     await waitFor(() => {
-      expect(bodies).toEqual([{ tool_approval: true }]);
+      expect(bodies).toEqual([{ decisions: { c1: true } }]);
     });
     // the resume re-attaches the stream at the pause cursor
     await waitFor(() => {
       const init = fetchMock.mock.calls.at(-1)?.[1] as RequestInit | undefined;
       expect(init?.headers).toMatchObject({ "Last-Event-ID": "0" });
+    });
+  });
+
+  it("stages per-call decisions and requires every call decided before submit (ADR 0011)", async () => {
+    const pause = {
+      event_id: "e2",
+      run_id: "run-9",
+      type: "run.awaiting_input",
+      reason: "tool_approval",
+      question: "",
+      pending_calls: [
+        { id: "c1", name: "calculator", arguments: { expression: "6*7" } },
+        { id: "c2", name: "http_get", arguments: { url: "https://x" } },
+      ],
+      awaiting_until: "2026-09-07T00:00:00Z",
+    };
+    const bodies: unknown[] = [];
+    const fetchMock = vi.fn(async (...args: unknown[]) => {
+      const [input, init] = args as [RequestInfo | URL, RequestInit | undefined];
+      const url = input instanceof Request ? input.url : String(input);
+      const method = input instanceof Request ? input.method : init?.method;
+      if (method === "POST" && url.includes("/resume")) {
+        const raw = input instanceof Request ? await input.text() : String(init?.body);
+        bodies.push(JSON.parse(raw));
+        return new Response(JSON.stringify({ status: "succeeded", run_id: "run-9" }), {
+          status: 200,
+        });
+      }
+      return sseResponse([frame("run.started", started), frame("run.awaiting_input", pause)]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const user = userEvent.setup();
+    renderWithProviders(<RunConsole />, {
+      initialEntries: ["/agents/agent-1/run"],
+      path: "/agents/:agentId/run",
+    });
+
+    await user.type(await screen.findByLabelText("Run input"), "hi");
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    await screen.findByTestId("pause-card");
+
+    // undecided calls keep Submit disabled — silence never approves
+    const submit = screen.getByTestId("submit-decisions");
+    expect(submit).toBeDisabled();
+
+    // approve the calculator, reject the http_get — per-call, staged
+    await user.click(
+      within(screen.getByTestId("pending-call-c1")).getByRole("button", { name: "Approve" }),
+    );
+    expect(submit).toBeDisabled(); // c2 still undecided
+    await user.click(
+      within(screen.getByTestId("pending-call-c2")).getByRole("button", { name: "Reject" }),
+    );
+    await user.click(submit);
+
+    await waitFor(() => {
+      expect(bodies).toEqual([{ decisions: { c1: true, c2: false } }]);
     });
   });
 
