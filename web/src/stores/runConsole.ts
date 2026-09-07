@@ -39,7 +39,7 @@ export interface ToolCardView {
   id: string;
   toolCallId: string;
   name: string;
-  status: "requested" | "running" | "completed" | "failed";
+  status: "requested" | "running" | "completed" | "failed" | "declined";
   arguments?: Record<string, unknown>;
   output?: string;
   isError?: boolean;
@@ -208,6 +208,12 @@ export function applyEvent(
         status: "failed",
         error: event.error,
         errorKind: event.kind,
+      }));
+    case "tool.call.declined":
+      // ADR 0011 §3: the human's decision — the call never ran.
+      return mapToolCard(base, event.tool_call_id, (card) => ({
+        ...card,
+        status: "declined",
       }));
     case "run.completed": {
       const flushed = flushPending(base);

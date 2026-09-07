@@ -139,6 +139,25 @@ describe("applyEvent", () => {
     expect(card(failed).errorKind).toBe("validation");
   });
 
+  it("folds tool.call.declined into a distinct declined card (ADR 0011 §3)", () => {
+    const requested = apply(
+      initialRunConsoleState(),
+      started(),
+      ev({ type: "tool.call.requested", tool_call_id: "t1", name: "http_get", arguments: { url: "https://x" } }),
+    );
+    const declined = apply(
+      requested,
+      ev({ type: "tool.call.declined", tool_call_id: "t1", name: "http_get" }),
+    );
+    const card = declined.items.find(
+      (i) => i.kind === "tool",
+    ) as Extract<RunConsoleState["items"][number], { kind: "tool" }>;
+    expect(card.status).toBe("declined");
+    // no output, no error — the call never ran
+    expect(card.output).toBeUndefined();
+    expect(card.error).toBeUndefined();
+  });
+
   it("dedupes by event_id (reconnect tail replay)", () => {
     const delta = ev({ type: "text.delta", text: "once" });
     const once = apply(initialRunConsoleState(), started(), delta);

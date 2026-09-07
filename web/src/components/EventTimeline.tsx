@@ -9,6 +9,7 @@ function ToolCard({ item }: { item: Extract<TimelineItem, { kind: "tool" }> }) {
     running: "text-amber-300",
     completed: "text-green-300",
     failed: "text-red-300",
+    declined: "text-violet-300",
   }[item.status];
 
   return (

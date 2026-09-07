@@ -27,4 +27,20 @@ describe("<EventTimeline/>", () => {
       "[validation] ValueError: host 'bkharshit.com' is not in the allow-list []",
     );
   });
+
+  it("renders a declined tool card as declined (ADR 0011 §3)", () => {
+    const items: TimelineItem[] = [
+      {
+        kind: "tool",
+        id: "t2",
+        toolCallId: "c2",
+        name: "current_time",
+        status: "declined",
+        arguments: {},
+      },
+    ];
+    render(<EventTimeline items={items} />);
+
+    expect(screen.getByText("declined")).toBeInTheDocument();
+  });
 });
