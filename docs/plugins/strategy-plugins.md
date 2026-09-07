@@ -137,4 +137,7 @@ allow-list of the process doing the creating**. A headless CLI
 (`jarvis agent create`) run with a different `JARVIS_STRATEGY_PLUGIN_ALLOWLIST`
 than the API server can accept a type the server can't resolve; the
 version still runs — to a persisted `strategy` failure, not a crash
-(D36). Keep the two processes' allow-lists consistent.
+(D36). Keep the two processes' allow-lists consistent. The same applies to
+**workers**: any worker that claims the run resolves the strategy against
+its own allow-list, so in a distributed deployment every worker should
+carry the same allow-list as the API.

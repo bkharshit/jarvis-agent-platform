@@ -49,7 +49,7 @@ _SECTION_FLAGS: dict[str, dict[str, Any]] = {
     "knowledge": {"enabled": False, "stage": "S8", "summary": "Datasets and retrieval"},
     "evaluations": {"enabled": False, "stage": "S11", "summary": "Datasets, runs, and scores"},
     "observability": {"enabled": False, "stage": "S7", "summary": "Traces and spans"},
-    "plugins": {"enabled": False, "stage": "S3", "summary": "Strategy plugins and discovery"},
+    "plugins": {"enabled": True, "summary": "Strategy plugins and discovery"},
     "triggers": {"enabled": False, "stage": "S13", "summary": "Cron, webhook, and event rules"},
     "settings": {"enabled": True, "summary": "Auth, tenants, API keys, BYOK credentials"},
 }
@@ -92,6 +92,20 @@ def _settings_detail(container: AppContainer) -> dict[str, Any]:
     }
 
 
+def _plugins_detail(container: AppContainer) -> dict[str, Any]:
+    """S3 (D35): the strategies listing mirrors the registry (builtins +
+    loaded plugins), and the load result reports the degenerate cases —
+    failed imports and allow-listed-but-missing names. The allow-list is
+    echoed as server config (env), never edited through the API."""
+    result = container.strategy_plugins
+    return {
+        "strategies": [info.model_dump() for info in container.strategies.describe()],
+        "failed": [info.model_dump() for info in result.failed],
+        "missing": list(result.missing),
+        "allowlist": list(container.settings.strategy_plugin_allowlist),
+    }
+
+
 async def build_capabilities(container: AppContainer) -> CapabilitiesResponse:
     """Builder — the only IO is the provider capability probe (the models
     factory resolve is async, ADR 0009 §7); unit tests pass a stub
@@ -112,6 +126,8 @@ async def build_capabilities(container: AppContainer) -> CapabilitiesResponse:
             detail = {"human_in_the_loop": True}
         elif key == "models":
             detail = await _model_providers_detail(container)
+        elif key == "plugins":
+            detail = _plugins_detail(container)
         elif key == "settings":
             detail = _settings_detail(container)
         sections[key] = SectionCapability(detail=detail, **flags)

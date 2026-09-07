@@ -1,7 +1,9 @@
 """Typed application settings (pydantic-settings, `JARVIS_` env prefix)."""
 
+from typing import Annotated
+
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -51,7 +53,11 @@ class Settings(BaseSettings):
     # Empty default — nothing loads unless opted in. The env form is a
     # comma-separated string (pydantic-settings has no list fields from env):
     #   JARVIS_STRATEGY_PLUGIN_ALLOWLIST=plan_execute,raise_plugin
-    strategy_plugin_allowlist: list[str] = Field(default_factory=list)
+    # NoDecode: the CSV string must NOT hit pydantic-settings' implicit JSON
+    # decode for complex fields (it would SettingsError before the validator).
+    strategy_plugin_allowlist: Annotated[list[str], NoDecode] = Field(
+        default_factory=list
+    )
 
     @field_validator("strategy_plugin_allowlist", mode="before")
     @classmethod
