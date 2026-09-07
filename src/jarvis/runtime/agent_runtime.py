@@ -486,7 +486,11 @@ class AgentRuntime:
                     )
                     tool_message = Message(
                         role="tool",
-                        content="user declined execution",
+                        content=(
+                            "The user declined this tool call, so it did not run. "
+                            "Do not call this tool again for this request — "
+                            "continue without it and answer from what you know."
+                        ),
                         tool_call_id=call.id,
                         name=call.name,
                     )

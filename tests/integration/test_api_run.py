@@ -293,8 +293,8 @@ async def test_resume_decisions_pause_mixed_outcomes(client, container, mock):
 
     detail = (await client.get(f"/v1/executions/{run_id}")).json()
     by_call = {m["tool_call_id"]: m["content"] for m in detail["messages"] if m["role"] == "tool"}
-    assert by_call["c1"] != "user declined execution"  # executed
-    assert by_call["c2"] == "user declined execution"  # refused, never ran
+    assert "did not run" not in by_call["c1"]  # executed
+    assert "did not run" in by_call["c2"]  # refused, never ran
 
     events = (await client.get(f"/v1/executions/{run_id}/events")).json()["events"]
     started = [

@@ -1009,7 +1009,7 @@ class TestResumeToolApproval:
         # the refused call closed with a refusal tool message
         refused = [m for m in repo.messages["run-hl-5"] if m.tool_call_id == "c1"]
         assert len(refused) == 1
-        assert refused[0].content == "user declined execution"
+        assert "declined" in refused[0].content
 
     async def _paused_two_gated(
         self, run_id
@@ -1050,7 +1050,7 @@ class TestResumeToolApproval:
         assert [e.tool_call_id for e in declined] == ["c2"]
         refused = [m for m in repo.messages["run-hl-6"] if m.tool_call_id == "c2"]
         assert len(refused) == 1
-        assert refused[0].content == "user declined execution"
+        assert "declined" in refused[0].content
         executed = [m for m in repo.messages["run-hl-6"] if m.tool_call_id == "c1"]
         assert executed and "42" in executed[-1].content
         validate_event_sequence(runtime.bus.get("run-hl-6").events + sink.events)
@@ -1075,4 +1075,4 @@ class TestResumeToolApproval:
         assert [e.tool_call_id for e in declined] == ["c2"]
         refused = [m for m in repo.messages["run-hl-7"] if m.tool_call_id == "c2"]
         assert len(refused) == 1
-        assert refused[0].content == "user declined execution"
+        assert "declined" in refused[0].content

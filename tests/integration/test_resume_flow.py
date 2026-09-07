@@ -140,7 +140,7 @@ async def test_refused_resume_continues_with_refusal_message(container, mock: Mo
 
     messages = await container.executions.list_messages(run_id)
     refused = [m for m in messages if m.tool_call_id == "c1"]
-    assert refused and refused[0].content == "user declined execution"
+    assert refused and "declined" in refused[0].content
 
 
 @pytest.mark.db
