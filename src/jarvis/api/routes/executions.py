@@ -130,11 +130,15 @@ async def resume_run(
         )
     # Attach the stream beyond the current pause frame, so the wait covers
     # only the segment the worker is about to run — the already-durable
-    # pause would otherwise end the stream immediately.
+    # pause would otherwise end the stream immediately. The old pause's row
+    # status must not end the wait either (the resumed segment may not have
+    # emitted yet, and it may pause again — the route then returns THAT row).
     last = await auth.executions.latest_event(run_id)
     after = last[0] if last is not None else None
     await container.queue.enqueue_resume(run_id, req.to_domain())
-    return await _await_segment(container, auth.executions, run_id, after)
+    return await _await_segment(
+        container, auth.executions, run_id, after, end_on_pause_status=False
+    )
 
 
 @router.get("/{run_id}/events", response_model=EventList)

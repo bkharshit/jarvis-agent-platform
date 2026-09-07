@@ -186,6 +186,60 @@ async def test_resume_content_answer_completes(client, container):
 
 
 @pytest.mark.db
+async def test_resume_can_pause_again_and_route_returns_that_row(client, container, mock):
+    """The S10 pause-again race, found live: the blocking resume attached
+    beyond the pause cursor while the row still showed the OLD
+    awaiting_input — the stream's empty-batch rule ended the wait and the
+    route 500'd ('never reached a segment end') when the resumed segment
+    paused a second time. The resume wait must cover the next segment's
+    end, whatever it is (found via mixed per-call decisions, ADR 0011)."""
+    from jarvis.models.mock import turn
+
+    mock.add_turn(
+        turn(
+            tool_calls=[
+                ToolCall(id="c1", name="calculator", arguments={"expression": "22/7"}),
+                ToolCall(id="c2", name="current_time", arguments={"timezone": "UTC"}),
+            ]
+        )
+    )
+    # the model re-asks the declined tool — a NEW gated call pauses again
+    mock.add_turn(turn(tool_calls=[ToolCall(id="c3", name="current_time", arguments={})]))
+    mock.add_turn(turn("done"))
+
+    tools = [
+        ToolBinding(name="calculator", config={"requires_approval": True}),
+        ToolBinding(name="current_time", config={"requires_approval": True}),
+    ]
+    agent = _gated_agent()
+    agent.tools = tools
+    resp = await client.post(
+        f"/v1/agents/{(await container.agents.create(agent)).id}/run",
+        json={"input": "whats 22/7 and the utc time?"},
+    )
+    run_id = resp.json()["run_id"]
+    assert resp.json()["status"] == "awaiting_input"
+
+    # approve the calculator, decline current_time → the run must come back
+    # with the SECOND pause (the model's re-asked call), not a 500
+    first = await client.post(
+        f"/v1/executions/{run_id}/resume", json={"decisions": {"c1": True, "c2": False}}
+    )
+    assert first.status_code == 200, first.json()
+    assert first.json()["status"] == "awaiting_input"
+
+    events = (await client.get(f"/v1/executions/{run_id}/events")).json()["events"]
+    declined = [
+        e["event"]["tool_call_id"] for e in events if e["event"]["type"] == "tool.call.declined"
+    ]
+    assert declined == ["c2"]
+
+    second = await client.post(f"/v1/executions/{run_id}/resume", json={"decisions": {"c3": True}})
+    assert second.status_code == 200
+    assert second.json()["status"] == "succeeded"
+
+
+@pytest.mark.db
 async def test_resume_rejects_unknown_run_and_bad_bodies(client, agent, mock):
     from jarvis.models.mock import turn
 

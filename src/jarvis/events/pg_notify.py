@@ -139,8 +139,21 @@ class PgEventStream:
     # --- EventStream port -------------------------------------------------------
 
     async def subscribe(
-        self, run_id: str, last_cursor: int | None = None
+        self,
+        run_id: str,
+        last_cursor: int | None = None,
+        *,
+        end_on_pause_status: bool = True,
     ) -> AsyncIterator[tuple[int, ExecutionEvent]]:
+        """Yield the run's events from `last_cursor` until the segment ends.
+
+        `end_on_pause_status=False` is for the resume route: it attaches
+        *beyond* the durable pause cursor while the row still shows the OLD
+        `awaiting_input` — an empty first batch then means "the resumed
+        segment hasn't emitted yet", not "the stream already ended", so the
+        old pause must not end the wait (the S10 pause-again race, found
+        live: the empty-batch return made the blocking resume 500 on a
+        run that paused a second time)."""
         if self._replay_with_cursor is None:
             raise RuntimeError("replay_cursor_fn not wired")
         await self._ensure_listening()
@@ -172,7 +185,8 @@ class PgEventStream:
                     # before subscribing (404 happens first).
                     run = await self._run_status(run_id)
                     if run is not None and (
-                        run.status in TERMINAL_STATUSES or run.status == "awaiting_input"
+                        run.status in TERMINAL_STATUSES
+                        or (run.status == "awaiting_input" and end_on_pause_status)
                     ):
                         return
                 await self._wait_for_wake(queue, run_id)

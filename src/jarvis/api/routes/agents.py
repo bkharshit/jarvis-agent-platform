@@ -227,13 +227,20 @@ async def _await_segment(
     executions: TenantScopedExecutions,
     run_id: str,
     after: int | None,
+    *,
+    end_on_pause_status: bool = True,
 ) -> RunResult:
     """Wait for the run's current segment to end (a terminal or a pause),
     then return the row once it carries that state. `after` attaches the
     stream beyond an already-durable segment end (the resume route passes
-    the pause frame's cursor)."""
+    the pause frame's cursor) — and the resume path must not treat the OLD
+    pause's row status as a stream end: an empty first batch there means
+    the resumed segment hasn't emitted yet, so it waits (the S10
+    pause-again race — without this the blocking resume 500'd)."""
     held: ExecutionEvent | None = None
-    async for _cursor, event in container.streams.subscribe(run_id, after):
+    async for _cursor, event in container.streams.subscribe(
+        run_id, after, end_on_pause_status=end_on_pause_status
+    ):
         held = event  # subscribe returns right after the terminal/pause
     # The row write trails the last event; poll until it matches. Nothing
     # streamed at all means the resume was absorbed (the run moved on
