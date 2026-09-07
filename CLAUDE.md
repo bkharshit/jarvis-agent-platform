@@ -93,6 +93,12 @@ uv run jarvis serve        # API on :8000
   0005's key-presence WHERE rewrote nulls into unparseable
   `credential_ref` blobs and 500'd every affected listing (found live in
   the walkthrough; regression-tested in test_migrations).
+- **The resume route attaches beyond the old pause — its row status must
+  not end the stream** (`end_on_pause_status=False` on the resume path
+  only, S10 pause-again race): when a resumed segment pauses again, the
+  run row still shows the OLD `awaiting_input`, and reading that as a
+  stream end made the blocking resume 500 with "never reached a segment
+  end" (found live; regression-tested in test_api_run.py).
 
 ## Working agreement
 

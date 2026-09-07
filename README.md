@@ -186,13 +186,14 @@ curl -s -X POST localhost:8000/v1/executions/<run-id>/resume \
 ```
 
 Approve executes the gated batch; reject closes the declined calls with a
-refusal tool message (they never ran) and lets the model continue. With
-`decisions` (ADR 0011) the gated batch is split per call: approved calls
-execute, declined ones get the refusal message, and calls absent from the
-map are declined — silence is never approval. The resume is blocking — it
-returns the row for the resumed segment's end, which may pause again.
-Limits span the chain: `max_iterations` and the token budget bound the
-whole run, not one segment.
+refusal tool message (they never ran — the message tells the model not to
+call the tool again and to answer from what it knows) and lets the model
+continue. With `decisions` (ADR 0011) the gated batch is split per call:
+approved calls execute, declined ones get the refusal message, and calls
+absent from the map are declined — silence is never approval. The resume
+is blocking — it returns the row for the resumed segment's end, which may
+pause again. Limits span the chain: `max_iterations` and the token budget
+bound the whole run, not one segment.
 
 A paused run carries a deadline (`awaiting_until`, default 24h,
 `JARVIS_AWAITING_INPUT_TIMEOUT_SECONDS`); the worker's sweeper reaps
@@ -200,9 +201,11 @@ expired pauses with the one terminal `run.cancelled` (reason
 `awaiting_input timeout`) so no run is ever stuck. Cancelling a paused
 run is immediate — nothing holds it. On the web, the run console renders
 the pause card (per-call approve/reject selection with an allow-all
-shortcut / answer form) and the Executions section
-gains an awaiting-input inbox, both gated on
-`executions.detail.human_in_the_loop` from `/v1/capabilities`.
+shortcut / answer form), the Executions section gains an awaiting-input
+inbox, and an `awaiting_input` run's detail page offers the same pause
+card plus Cancel run — answer a durable pause from wherever you find it.
+All of it is gated on `executions.detail.human_in_the_loop` from
+`/v1/capabilities`.
 
 ### Queue-backed runs and distributed mode (S1, ADR 0008)
 

@@ -319,7 +319,50 @@ cd web && npm run dev                  # → http://localhost:5173
   blocking and the stream re-attaches at the pause cursor, replaying the
   resumed segment into the same timeline.
 - **Executions**: an "Awaiting input" inbox lists paused runs (from
-  `GET /v1/executions?status=awaiting_input`), above the table.
+  `GET /v1/executions?status=awaiting_input`), above the table. The
+  **detail page** of an `awaiting_input` run renders the same pause card
+  (the last `run.awaiting_input` event drives it) plus a Cancel run
+  button — a durable pause is answerable from where you find it, not
+  only from the console that was watching when it happened.
+
+## 11. Fixes from live testing (2026-09-07, post-walkthrough)
+
+Four issues Harshit hit running the `approval-hin` agent against real
+gemma4:31b, in the order found:
+
+1. **One button approved everything** (§ ADR 0011) — the pause card took
+   a single batch boolean, so per-row buttons all posted the same body.
+   Fixed by the ADR 0011 decisions variant + staged selection.
+2. **Declined calls sat at "requested" forever** — no event existed for a
+   refusal. Fixed by `tool.call.declined` (D34/ADR 0011 §3): the human's
+   decision is a durable event, distinct from an execution.
+3. **Mixed decisions 500'd the resume** ("never reached a segment end")
+   when the resumed segment paused again. Root cause: the resume route
+   attaches the stream *beyond* the durable pause cursor, but the row
+   still showed the OLD `awaiting_input` — the stream's empty-batch rule
+   read that as "the stream already ended", the wait then accepted only a
+   terminal, and the second pause left it timing out into a 500. Fixed
+   with `end_on_pause_status=False` on the resume path only
+   (`3653ca1`); regression-tested by
+   `test_resume_can_pause_again_and_route_returns_that_row`.
+4. **The model re-asked declined tools** — `user declined execution`
+   gave gemma no instruction to stop, so every decline bought another
+   identical gated call (new call id → new pause → another round-trip).
+   The refusal copy now says the call did not run, forbids re-calling it
+   for the request, and directs the model to answer from what it knows
+   (`2819567`). Note the semantics this preserves: reject blocks
+   *execution*, not the answer — the model may still answer from its own
+   weights (declining the calculator does not hide arithmetic).
+
+Also fixed while live-testing the shell (not S10 proper): the run
+console's `starting` click-window flag was never cleared, freezing the
+Run button on "Running…" after the first run (`8435671`), and the
+executions detail page gained the resume/cancel actions above (`12d5feb`).
+
+Semantics deliberately left alone: in `auth_mode=anonymous`, sign-out
+returns to the anonymous principal on the default tenant — "signed out"
+and "anonymous" are the same state there (ADR 0009). Reviewed and
+accepted, 2026-09-07.
 
 ## Appendix — copy-paste-safe shell (the S2 lesson)
 
