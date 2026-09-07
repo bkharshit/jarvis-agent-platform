@@ -260,6 +260,14 @@ the code.
   `pending_calls` is the authority). Found as a live UI bug: the pause
   card rendered per-call Approve/Reject buttons that all posted the same
   batch boolean.
+- **D34 (2026-09-07) — A refusal is an event (ADR 0011 §3).** A declined
+  call emits `tool.call.declined` next to its refusal tool message. ADR
+  0010's "no events — it never ran" was right about *execution* but left
+  the human decision invisible: replay showed the call stuck at
+  `requested` forever, indistinguishable from a cancelled run. The event
+  records the decision, not an execution — no started/completed, no
+  `tool_executions` row — and the store folds it into a distinct
+  `declined` card status so live ≡ replay.
 
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 

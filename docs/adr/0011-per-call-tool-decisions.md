@@ -2,7 +2,7 @@
 
 - **Status**: Accepted
 - **Date**: 2026-09-07
-- **Amends**: ADR 0010 (§3 trigger classes, §4 resume contract), ADR 0008 (queue message)
+- **Amends**: ADR 0010 (§3 trigger classes, §4 resume contract), ADR 0008 (queue message), ADR 0003 (event union — §4 below)
 
 ## Context
 
@@ -65,7 +65,36 @@ side effects) will make it unavoidable.
   append and the resulting transcript (refusal messages / tool
   executions).
 
-### 3. What stays frozen
+### 3. A refusal becomes an event: `tool.call.declined`
+
+ADR 0010 §3.1 gave a declined call no events at all ("it never ran" — no
+`started`/`completed`). Correct about execution, but it left the *human
+decision* invisible to the log: the refusal lived only in the transcript's
+tool message, and a replayed timeline showed the call stuck at
+`requested` forever — indistinguishable from a run cancelled mid-flight.
+
+The refusal branch now emits one event per declined call, alongside the
+refusal tool message:
+
+```python
+class ToolCallDeclined(_Event):
+    type: Literal["tool.call.declined"] = "tool.call.declined"
+    tool_call_id: str
+    name: str
+```
+
+- New event type in the `ExecutionEvent` union (the ADR 0003 amendment
+  this ADR already carries). Not terminal; sits mid-segment in the
+  resumed segment like any other tool event — terminal-adjacency is
+  untouched.
+- The rule "a declined call never *executed*" still holds: no
+  `started`/`completed`/`failed`, no `tool_executions` row. The declined
+  event records the *decision*, not an execution.
+- Replay ≡ live: the store folds it into a distinct `declined` card
+  status, so the pause → decision → outcome chain reads the same in a
+  live stream and a replayed log.
+
+### 4. What stays frozen
 
 - The event envelope, terminal semantics, segment invariants, queue
   mechanics, and the exactly-one-answer blocking-resume behavior (ADR 0010
