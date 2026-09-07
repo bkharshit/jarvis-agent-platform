@@ -80,9 +80,12 @@ strategy:
     plan_marker: "PLAN:"
 ```
 
-`params` is persisted in the immutable agent version snapshot. It is
-therefore **never a place for secrets** — put credential references there
-(the platform's job, ADR 0005/0006), never key material.
+`params` reaches `step()` as `ctx.metadata["strategy_params"]` — the frozen
+Protocol takes no config argument, so the orchestrator stamps the ctx before
+the loop (the same pattern as `ctx.output_schema`). It is persisted in the
+immutable agent version snapshot. It is therefore **never a place for
+secrets** — put credential references there (the platform's job, ADR
+0005/0006), never key material.
 
 ## Packaging and entry points
 

@@ -1,5 +1,6 @@
 """Typed application settings (pydantic-settings, `JARVIS_` env prefix)."""
 
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -44,6 +45,20 @@ class Settings(BaseSettings):
     # deployments turn this off and run `jarvis worker` separately.
     embedded_worker: bool = True
     worker_concurrency: int = 4
+
+    # --- strategy plugins (S3, D35) ---------------------------------------
+    # Names of installed `jarvis.strategies` entry points that may load.
+    # Empty default — nothing loads unless opted in. The env form is a
+    # comma-separated string (pydantic-settings has no list fields from env):
+    #   JARVIS_STRATEGY_PLUGIN_ALLOWLIST=plan_execute,raise_plugin
+    strategy_plugin_allowlist: list[str] = Field(default_factory=list)
+
+    @field_validator("strategy_plugin_allowlist", mode="before")
+    @classmethod
+    def _csv_to_list(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
 
     # --- HTTP server -----------------------------------------------------
     host: str = "127.0.0.1"

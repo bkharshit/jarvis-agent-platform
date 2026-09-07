@@ -35,7 +35,14 @@ dev = [
     "mypy>=1.13",
     "types-jsonschema>=4.26.0.20260518",
     "types-pyyaml>=6.0.12.20260815",
+    # S3 (D35): the installable fixture strategies — proves the real
+    # installed-distribution -> entry-points -> allow-list -> registry chain.
+    "jarvis-strategy-fixtures",
 ]
+
+[tool.uv.sources]
+# The fixtures live in this repo; path deps in an extra need a source entry.
+jarvis-strategy-fixtures = { path = "tests/fixtures/strategies/jarvis-strategy-fixtures", editable = true }
 
 [project.scripts]
 jarvis = "jarvis.cli.main:app"

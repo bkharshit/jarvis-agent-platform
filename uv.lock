@@ -474,6 +474,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "jarvis-strategy-fixtures" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -490,6 +491,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=44.0" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
+    { name = "jarvis-strategy-fixtures", marker = "extra == 'dev'", editable = "tests/fixtures/strategies/jarvis-strategy-fixtures" },
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13" },
     { name = "pydantic", specifier = ">=2.9" },
@@ -508,6 +510,11 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
 provides-extras = ["dev"]
+
+[[package]]
+name = "jarvis-strategy-fixtures"
+version = "0.1.0"
+source = { editable = "tests/fixtures/strategies/jarvis-strategy-fixtures" }
 
 [[package]]
 name = "jsonschema"

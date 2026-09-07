@@ -32,6 +32,7 @@ from jarvis.persistence.repositories import (
 from jarvis.runtime.agent_runtime import AgentRuntime
 from jarvis.runtime.limits import RunLimits
 from jarvis.runtime.worker import Worker, worker_persist
+from jarvis.strategies.plugins import PluginLoadResult, load_strategy_plugins
 from jarvis.strategies.registry import DefaultStrategyRegistry
 from jarvis.tools.builtin.calculator import CalculatorTool
 from jarvis.tools.builtin.current_time import CurrentTimeTool
@@ -55,6 +56,7 @@ class AppContainer:
     tools: InMemoryToolRegistry
     models: DefaultModelProviderFactory
     strategies: DefaultStrategyRegistry
+    strategy_plugins: PluginLoadResult
     runtime: AgentRuntime
     limits: RunLimits
     worker: Worker
@@ -99,7 +101,16 @@ class AppContainer:
                 stored_resolver=DatabaseStoredResolver(sessionmaker, settings)
             ),
         )
-        strategies = DefaultStrategyRegistry()
+        # S3 (D35): plugins load from installed entry points behind the
+        # allow-list, exactly once here — every worker shares this container,
+        # so a plugin strategy runs on any worker. Load failures are carried
+        # in the result (capabilities reports them); `serve` boots with a
+        # broken plugin on the allow-list.
+        strategy_plugins = load_strategy_plugins(settings.strategy_plugin_allowlist)
+        strategies = DefaultStrategyRegistry(
+            extra=strategy_plugins.strategies,
+            plugin_infos=strategy_plugins.loaded,
+        )
         runtime = AgentRuntime(
             strategies=strategies,
             tools=registry,
@@ -133,6 +144,7 @@ class AppContainer:
             tools=registry,
             models=models,
             strategies=strategies,
+            strategy_plugins=strategy_plugins,
             runtime=runtime,
             limits=limits,
             worker=worker,

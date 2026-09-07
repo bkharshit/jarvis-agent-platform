@@ -336,6 +336,10 @@ class AgentRuntime:
         pending_calls: list[ToolCall] | None = None,  # the resumed batch (approval)
         refusals: set[str] | None = None,  # call ids the human declined
     ) -> LoopOutcome:
+        # S3 (D36): StrategyConfig.params flow verbatim through ctx.metadata —
+        # the frozen step() Protocol takes no config argument, so the
+        # orchestrator prepares the ctx (same pattern as output_schema).
+        ctx.metadata["strategy_params"] = dict(agent.strategy.params)
         strategy = self._strategies.resolve(agent.strategy)
         descriptors = self._bound_descriptors(agent)
         bindings = {binding.name: binding for binding in agent.enabled_tools()}

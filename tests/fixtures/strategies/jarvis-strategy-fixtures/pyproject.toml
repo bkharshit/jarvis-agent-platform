@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jarvis-strategy-fixtures"
+version = "0.1.0"
+description = "Fixture strategy plugins for JARVIS tests and the S3 walkthrough"
+requires-python = ">=3.12"
+# NOTE: no `jarvis` dependency on purpose — the local project is not on
+# PyPI, and every environment that loads these fixtures already has it
+# (dev extra of the repo itself). Third-party plugins DO declare the
+# dependency; see docs/plugins/strategy-plugins.md.
+
+[project.entry-points."jarvis.strategies"]
+plan_execute = "jarvis_strategy_fixtures.plan_execute:PlanExecuteStrategy"
+raise_plugin = "jarvis_strategy_fixtures.raise_plugin:RaisePluginStrategy"
+
+[tool.hatch.build.targets.wheel]
+packages = ["jarvis_strategy_fixtures"]
