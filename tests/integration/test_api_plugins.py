@@ -36,7 +36,7 @@ async def _truncate(container: AppContainer) -> None:
 
 @pytest_asyncio.fixture
 async def plugin_container(mock: MockModelProvider, monkeypatch) -> AppContainer:
-    monkeypatch.setenv(ALLOWLIST, "plan_execute,raise_plugin")
+    monkeypatch.setenv(ALLOWLIST, "plan_execute,raise_plugin,tree_of_thoughts")
     container = AppContainer.from_settings(Settings(), mock_provider=mock)
     await _truncate(container)
     await container.start_worker()
@@ -75,7 +75,7 @@ async def test_capabilities_lists_plugin_strategies(plugin_client):
     assert strategies["function_calling"]["origin"] == "builtin"
     assert strategies["plan_execute"]["origin"] == "plugin"
     assert strategies["plan_execute"]["distribution"] == "jarvis-strategy-fixtures"
-    assert plugins["detail"]["allowlist"] == ["plan_execute", "raise_plugin"]
+    assert plugins["detail"]["allowlist"] == ["plan_execute", "raise_plugin", "tree_of_thoughts"]
 
 
 @pytest.mark.db
@@ -98,6 +98,38 @@ async def test_plan_execute_agent_runs_end_to_end(plugin_client, mock):
     replay = (await plugin_client.get(f"/v1/executions/{result['run_id']}/events")).json()
     types = [e["event"]["type"] for e in replay["events"]]
     # three think/finish phases, each one model invocation, one terminal
+    assert types.count("model.invocation.started") == 3
+    assert types.count("run.completed") == 1
+    assert "run.failed" not in types
+
+
+@pytest.mark.db
+async def test_tree_of_thoughts_agent_runs_end_to_end(plugin_client, mock):
+    from jarvis.models.mock import turn
+
+    resp = await plugin_client.post(
+        "/v1/agents",
+        json={
+            **CREATE_BODY,
+            "name": "tot-agent",
+            "strategy": {"type": "tree_of_thoughts", "params": {"num_options": 2}},
+        },
+    )
+    assert resp.status_code == 201
+    agent_id = resp.json()["definition"]["id"]
+
+    mock.add_turn(turn("OPTION A: add directly.\nOPTION B: use a tool"))  # diverge
+    mock.add_turn(turn("PICKED: A — simplest correct path"))  # evaluate think step
+    mock.add_turn(turn("DONE: 1 + 1 = 2 via option A"))  # terminal reply
+    resp = await plugin_client.post(f"/v1/agents/{agent_id}/run", json={"input": "add"})
+    assert resp.status_code == 200
+    result = resp.json()
+    assert result["status"] == "succeeded"
+    assert result["final_message"].startswith("DONE:")
+
+    replay = (await plugin_client.get(f"/v1/executions/{result['run_id']}/events")).json()
+    types = [e["event"]["type"] for e in replay["events"]]
+    # diverge → evaluate → finish, each one model invocation, one terminal
     assert types.count("model.invocation.started") == 3
     assert types.count("run.completed") == 1
     assert "run.failed" not in types

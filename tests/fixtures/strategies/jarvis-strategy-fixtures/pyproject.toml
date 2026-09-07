@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jarvis-strategy-fixtures"
-version = "0.1.0"
+version = "0.2.0"
 description = "Fixture strategy plugins for JARVIS tests and the S3 walkthrough"
 requires-python = ">=3.12"
 # NOTE: no `jarvis` dependency on purpose — the local project is not on
@@ -15,6 +15,7 @@ requires-python = ">=3.12"
 [project.entry-points."jarvis.strategies"]
 plan_execute = "jarvis_strategy_fixtures.plan_execute:PlanExecuteStrategy"
 raise_plugin = "jarvis_strategy_fixtures.raise_plugin:RaisePluginStrategy"
+tree_of_thoughts = "jarvis_strategy_fixtures.tree_of_thoughts:TreeOfThoughtsStrategy"
 
 [tool.hatch.build.targets.wheel]
 packages = ["jarvis_strategy_fixtures"]
