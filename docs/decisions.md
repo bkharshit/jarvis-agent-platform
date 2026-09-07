@@ -249,6 +249,17 @@ the code.
   crashed resume segment never requeues — a resumed run always has prior
   events, so S1's expired-lease policy lands on terminal failure, never a
   blind re-execution the gapless sequence could not survive.
+- **D33 (2026-09-07) — Tool approval is per-call; silence is denial
+  (S10 follow-on, ADR 0011).** The resume body gains a third variant,
+  `{"decisions": {"<call_id>": bool}}`, alongside the frozen `content` and
+  `tool_approval` (batch shorthand, kept). The runtime was already
+  per-call — `refusals: set[str]` closes each declined call with a refusal
+  tool message while the rest of the batch executes — so only the contract
+  changed. Default-deny is the rule: a pending call absent from the map is
+  declined, never run; unknown ids are ignored (the pause event's
+  `pending_calls` is the authority). Found as a live UI bug: the pause
+  card rendered per-call Approve/Reject buttons that all posted the same
+  batch boolean.
 
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 
