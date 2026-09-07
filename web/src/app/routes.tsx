@@ -10,6 +10,7 @@ import { ConversationsList } from "@/sections/conversations/ConversationsList";
 import { ConversationDetailPage } from "@/sections/conversations/ConversationDetail";
 import { ToolsPage } from "@/sections/tools/ToolsPage";
 import { ModelsPage } from "@/sections/models/ModelsPage";
+import { PluginsPage } from "@/sections/plugins/PluginsPage";
 import { SettingsPage } from "@/sections/settings/SettingsPage";
 
 import { SectionGate } from "@/capabilities/SectionGate";
@@ -60,7 +61,7 @@ export function sectionRoutes() {
     { path: "/knowledge", element: gated("knowledge") },
     { path: "/evaluations", element: gated("evaluations") },
     { path: "/observability", element: gated("observability") },
-    { path: "/plugins", element: gated("plugins") },
+    { path: "/plugins", element: gated("plugins", <PluginsPage />) },
     { path: "/triggers", element: gated("triggers") },
     { path: "/settings", element: gated("settings", <SettingsPage />) },
   ];

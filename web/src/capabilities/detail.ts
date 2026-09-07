@@ -139,3 +139,45 @@ export function humanInTheLoop(capabilities: Capabilities | undefined): boolean 
   const detail = asRecord(capabilities?.sections.executions?.detail);
   return detail?.human_in_the_loop === true;
 }
+
+// --- plugins (S3, D35) ------------------------------------------------------
+
+export interface StrategyInfo {
+  name: string;
+  origin: string; // "builtin" | "plugin"
+  distribution: string | null;
+  version: string | null;
+  error: string | null;
+}
+
+export interface PluginListing {
+  strategies: StrategyInfo[];
+  failed: StrategyInfo[];
+  missing: string[];
+  allowlist: string[];
+}
+
+export function pluginListing(capabilities: Capabilities | undefined): PluginListing {
+  const detail = asRecord(capabilities?.sections.plugins?.detail);
+  if (!detail) return { strategies: [], failed: [], missing: [], allowlist: [] };
+  const toStrategy = (entry: unknown): StrategyInfo | null => {
+    const record = asRecord(entry);
+    if (!record || typeof record.name !== "string") return null;
+    return {
+      name: record.name,
+      origin: typeof record.origin === "string" ? record.origin : "plugin",
+      distribution: typeof record.distribution === "string" ? record.distribution : null,
+      version: typeof record.version === "string" ? record.version : null,
+      error: typeof record.error === "string" ? record.error : null,
+    };
+  };
+  const strategyList = Array.isArray(detail.strategies) ? detail.strategies : [];
+  const failedList = Array.isArray(detail.failed) ? detail.failed : [];
+  const nonNull = <T,>(value: T | null): value is T => value !== null;
+  return {
+    strategies: strategyList.flatMap(toStrategy).filter(nonNull),
+    failed: failedList.flatMap(toStrategy).filter(nonNull),
+    missing: stringList(detail.missing),
+    allowlist: stringList(detail.allowlist),
+  };
+}

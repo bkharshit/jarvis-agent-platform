@@ -59,7 +59,26 @@ export const TEST_CAPABILITIES: Capabilities = {
     knowledge: { enabled: false, stage: "S8", summary: "Datasets and retrieval" },
     evaluations: { enabled: false, stage: "S11", summary: "Datasets, runs, and scores" },
     observability: { enabled: false, stage: "S7", summary: "Traces and spans" },
-    plugins: { enabled: false, stage: "S3", summary: "Strategy plugins" },
+    plugins: {
+      enabled: true,
+      summary: "Strategy plugins and discovery",
+      detail: {
+        strategies: [
+          { name: "function_calling", origin: "builtin", distribution: null, version: null, error: null },
+          { name: "react", origin: "builtin", distribution: null, version: null, error: null },
+          {
+            name: "plan_execute",
+            origin: "plugin",
+            distribution: "jarvis-strategy-fixtures",
+            version: "0.1.0",
+            error: null,
+          },
+        ],
+        failed: [],
+        missing: [],
+        allowlist: ["plan_execute"],
+      },
+    },
     triggers: { enabled: false, stage: "S13", summary: "Cron, webhook, and event rules" },
     settings: {
       enabled: true,

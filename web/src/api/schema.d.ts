@@ -1097,7 +1097,7 @@ export interface components {
              * Error Kind
              * @enum {string}
              */
-            error_kind: "max_iterations" | "timeout" | "model" | "tool" | "output_schema";
+            error_kind: "max_iterations" | "timeout" | "model" | "tool" | "output_schema" | "strategy";
             total_usage: components["schemas"]["Usage"];
         };
         /**
