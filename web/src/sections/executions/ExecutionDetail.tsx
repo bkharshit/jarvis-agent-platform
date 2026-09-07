@@ -1,24 +1,32 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
 
+import { client, unwrap } from "@/api/client";
 import {
+  executionQueryKey,
   useExecution,
   useReplayEvents,
 } from "@/api/queries/executions";
 import { contentToText } from "@/components/messageContent";
 import { EventTimeline } from "@/components/EventTimeline";
+import { PauseCard } from "@/components/PauseCard";
 import { SectionGate } from "@/capabilities/SectionGate";
 import {
   flushPending,
   initialRunConsoleState,
   applyEvent,
+  type PendingCallView,
   type TimelineItem,
   type WireEvent,
 } from "@/stores/runConsole";
 
 // Execution detail: run summary, transcript, tool executions — and replay,
 // which folds the JSON event log through the SAME applyEvent reducer the
-// live console uses, so both views render identically (decision 4).
+// live console uses, so both views render identically (decision 4). S10:
+// an awaiting_input run renders the shared PauseCard here too — a pause is
+// durable, so the human can answer it from this page, not only from the
+// live console it happened in.
 
 function SummaryRow({ label, value }: { label: string; value: string }) {
   return (
@@ -59,10 +67,40 @@ function ReplayView({ runId }: { runId: string }) {
   );
 }
 
+/** The LAST run.awaiting_input in the log is the live pause — earlier ones
+ * were answered (any later event proves the run moved on). */
+function lastPauseFromEvents(
+  events: { event: WireEvent }[] | undefined,
+): { question: string | null; pendingCalls: PendingCallView[] } | null {
+  if (events === undefined) return null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i].event;
+    if (e.type === "run.awaiting_input") {
+      return {
+        question: e.question === "" ? null : e.question,
+        pendingCalls: (e.pending_calls ?? []).map((call) => ({
+          id: call.id,
+          name: call.name,
+          arguments: call.arguments ?? {},
+        })),
+      };
+    }
+  }
+  return null;
+}
+
 function ExecutionDetailInner() {
   const { runId } = useParams();
   const [showReplay, setShowReplay] = useState(false);
   const { data: detail, isPending, isError, error } = useExecution(runId);
+  const queryClient = useQueryClient();
+  /** A resume/cancel POST is in flight. */
+  const [acting, setActing] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const awaiting = detail?.run.status === "awaiting_input";
+  const { data: events } = useReplayEvents(awaiting ? runId : undefined);
+  const pause = awaiting ? lastPauseFromEvents(events?.events) : null;
 
   if (runId === undefined) {
     return (
@@ -86,6 +124,45 @@ function ExecutionDetailInner() {
   }
 
   const { run, messages, tool_executions } = detail;
+
+  async function resume(body: { content?: string; decisions?: Record<string, boolean> }) {
+    setActing(true);
+    setActionError(null);
+    try {
+      // Blocking: returns once the resumed segment ends — it may pause
+      // again, in which case the refetched row + events render the next
+      // pause card.
+      await unwrap(
+        client.POST("/v1/executions/{run_id}/resume", {
+          params: { path: { run_id: runId! } },
+          body,
+        }),
+      );
+      // Prefix key: refreshes both the detail row and the events replay.
+      await queryClient.invalidateQueries({ queryKey: executionQueryKey(runId!) });
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setActing(false);
+    }
+  }
+
+  async function cancel() {
+    setActing(true);
+    setActionError(null);
+    try {
+      await unwrap(
+        client.POST("/v1/executions/{run_id}/cancel", {
+          params: { path: { run_id: runId! } },
+        }),
+      );
+      await queryClient.invalidateQueries({ queryKey: executionQueryKey(runId!) });
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setActing(false);
+    }
+  }
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-8">
@@ -124,6 +201,35 @@ function ExecutionDetailInner() {
           value={run.started_at ? new Date(run.started_at).toLocaleString() : "—"}
         />
       </div>
+
+      {awaiting && (
+        <div className="mt-4" data-testid="awaiting-actions">
+          {pause !== null ? (
+            <PauseCard
+              question={pause.question}
+              pendingCalls={pause.pendingCalls}
+              busy={acting}
+              onSubmit={(body) => void resume(body)}
+            />
+          ) : (
+            <p className="text-sm text-neutral-400">Loading pause…</p>
+          )}
+          <div className="mt-2 flex items-center gap-3">
+            <button
+              type="button"
+              data-testid="cancel-run"
+              disabled={acting}
+              onClick={() => void cancel()}
+              className="cursor-pointer rounded border border-red-800 px-3 py-1.5 text-sm text-red-300 hover:bg-red-950 disabled:cursor-not-allowed disabled:text-neutral-600"
+            >
+              Cancel run
+            </button>
+            {actionError !== null && (
+              <p className="text-sm text-red-400" role="alert">{actionError}</p>
+            )}
+          </div>
+        </div>
+      )}
 
       {showReplay && <ReplayView runId={runId} />}
 

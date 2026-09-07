@@ -8,6 +8,7 @@ import {
   type StreamStatus,
 } from "@/api/sse";
 import { EventTimeline } from "@/components/EventTimeline";
+import { PauseCard } from "@/components/PauseCard";
 import { SectionGate } from "@/capabilities/SectionGate";
 import {
   flushPending,
@@ -39,11 +40,6 @@ function RunConsoleInner() {
   const [starting, setStarting] = useState(false);
   /** A resume POST is in flight (it blocks until the segment ends). */
   const [answering, setAnswering] = useState(false);
-  /** The pending answer text for a question pause. */
-  const [answer, setAnswer] = useState("");
-  /** Staged per-call verdicts for an approval pause (ADR 0011) — the
-   * Submit posts the map; a call left undecided keeps Submit disabled. */
-  const [decisions, setDecisions] = useState<Record<string, boolean>>({});
 
   const apply = useRunConsoleStore((s) => s.apply);
   const settle = useRunConsoleStore((s) => s.settle);
@@ -103,7 +99,6 @@ function RunConsoleInner() {
   function startRun() {
     if (input.trim() === "") return;
     reset();
-    setDecisions({});
     lastEventIdRef.current = null;
     runIdRef.current = null;
     setStarting(true);
@@ -121,8 +116,6 @@ function RunConsoleInner() {
   }) {
     if (runId === null) return;
     setAnswering(true);
-    setAnswer("");
-    setDecisions({});
     try {
       // Blocking: the route returns once the resumed segment ends (it may
       // pause again). The stream is re-attached afterwards at the pause
@@ -215,119 +208,13 @@ function RunConsoleInner() {
       </div>
 
       {status === "awaiting_input" && pause && (
-        <div className="mt-4 rounded border border-violet-800 bg-violet-950/40 p-4" data-testid="pause-card">
-          <p className="text-xs text-violet-300">Waiting for your input{answering ? " — resuming…" : ""}</p>
-          {pause.question !== null && (
-            <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-100">{pause.question}</p>
-          )}
-          {pause.pendingCalls.length > 0 && (
-            <>
-              <ul className="mt-2 space-y-2">
-                {pause.pendingCalls.map((call) => {
-                  const chosen = decisions[call.id];
-                  return (
-                    <li
-                      key={call.id}
-                      className="flex items-center justify-between gap-3 rounded border border-neutral-800 bg-neutral-900 px-3 py-2"
-                      data-testid={`pending-call-${call.id}`}
-                    >
-                      <span className="min-w-0 text-sm text-neutral-200">
-                        <span className="font-medium">{call.name}</span>{" "}
-                        <span className="break-all font-mono text-xs text-neutral-400">
-                          {JSON.stringify(call.arguments)}
-                        </span>
-                      </span>
-                      <span className="flex shrink-0 gap-2">
-                        <button
-                          type="button"
-                          aria-pressed={chosen === true}
-                          disabled={answering}
-                          onClick={() =>
-                            setDecisions((d) => ({ ...d, [call.id]: true }))
-                          }
-                          className={
-                            chosen === true
-                              ? "cursor-pointer rounded border border-green-500 bg-green-900 px-3 py-1 text-xs font-medium text-green-200 disabled:cursor-not-allowed disabled:text-neutral-600"
-                              : "cursor-pointer rounded border border-green-800 px-3 py-1 text-xs text-green-300 hover:bg-green-950 disabled:cursor-not-allowed disabled:text-neutral-600"
-                          }
-                        >
-                          Approve
-                        </button>
-                        <button
-                          type="button"
-                          aria-pressed={chosen === false}
-                          disabled={answering}
-                          onClick={() =>
-                            setDecisions((d) => ({ ...d, [call.id]: false }))
-                          }
-                          className={
-                            chosen === false
-                              ? "cursor-pointer rounded border border-red-500 bg-red-900 px-3 py-1 text-xs font-medium text-red-200 disabled:cursor-not-allowed disabled:text-neutral-600"
-                              : "cursor-pointer rounded border border-red-800 px-3 py-1 text-xs text-red-300 hover:bg-red-950 disabled:cursor-not-allowed disabled:text-neutral-600"
-                          }
-                        >
-                          Reject
-                        </button>
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-              <div className="mt-3 flex items-center justify-between gap-3">
-                <button
-                  type="button"
-                  data-testid="allow-all"
-                  disabled={answering}
-                  onClick={() =>
-                    setDecisions(
-                      Object.fromEntries(pause.pendingCalls.map((c) => [c.id, true])),
-                    )
-                  }
-                  className="cursor-pointer rounded border border-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-900 disabled:cursor-not-allowed disabled:text-neutral-600"
-                >
-                  Allow all
-                </button>
-                <button
-                  type="button"
-                  data-testid="submit-decisions"
-                  disabled={
-                    answering ||
-                    pause.pendingCalls.some((c) => decisions[c.id] === undefined)
-                  }
-                  onClick={() => void sendResume({ decisions })}
-                  className="cursor-pointer rounded bg-neutral-100 px-4 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:cursor-not-allowed disabled:text-neutral-500"
-                >
-                  Submit decision
-                </button>
-              </div>
-            </>
-          )}
-          {pause.pendingCalls.length === 0 && pause.question !== null && (
-            <form
-              className="mt-3 flex gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (answer.trim() === "") return;
-                void sendResume({ content: answer });
-              }}
-            >
-              <input
-                aria-label="Your answer"
-                className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
-                value={answer}
-                disabled={answering}
-                onChange={(e) => setAnswer(e.target.value)}
-                placeholder="Your answer…"
-              />
-              <button
-                type="submit"
-                disabled={answering || answer.trim() === ""}
-                className="cursor-pointer rounded bg-neutral-100 px-4 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:cursor-not-allowed disabled:text-neutral-500"
-              >
-                Send answer
-              </button>
-            </form>
-          )}
+        <div className="mt-4">
+          <PauseCard
+            question={pause.question}
+            pendingCalls={pause.pendingCalls}
+            busy={answering}
+            onSubmit={(body) => void sendResume(body)}
+          />
         </div>
       )}
 
