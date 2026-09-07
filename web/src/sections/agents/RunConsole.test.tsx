@@ -91,6 +91,32 @@ describe("<RunConsole/>", () => {
     expect(screen.getByText(/3 in \/ 2 out/)).toBeInTheDocument();
   });
 
+  it("re-enables Run after a run completes so another run can start", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        sseResponse([frame("run.started", started), frame("run.completed", completed)]),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const user = userEvent.setup();
+    renderWithProviders(<RunConsole />, {
+      initialEntries: ["/agents/agent-1/run"],
+      path: "/agents/:agentId/run",
+    });
+
+    await user.type(await screen.findByLabelText("Run input"), "hello");
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    await screen.findByTestId("final-message");
+
+    // The button returns from "Running…" and a second run starts with no reload.
+    const run = await screen.findByRole("button", { name: "Run" });
+    await waitFor(() => expect(run).toBeEnabled());
+    await user.click(run);
+    expect(await screen.findByTestId("final-message")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
   it("sends the cancel request against the live run", async () => {
     const fetchMock = vi.fn((...args: unknown[]) => {
       const [input] = args as [RequestInfo | URL];

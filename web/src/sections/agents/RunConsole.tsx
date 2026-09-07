@@ -71,7 +71,12 @@ function RunConsoleInner() {
   function onFrame(frame: { id: number | null; event: string; data: string }) {
     if (frame.id !== null) lastEventIdRef.current = frame.id;
     const event = JSON.parse(frame.data) as WireEvent;
-    if (event.type === "run.started") runIdRef.current = event.run_id;
+    if (event.type === "run.started") {
+      runIdRef.current = event.run_id;
+      // The run is the store's status now — clear the click-window flag or
+      // the Run button stays disabled forever after this run ends.
+      setStarting(false);
+    }
     apply(event, frame.id);
   }
 
@@ -88,6 +93,9 @@ function RunConsoleInner() {
         if (next.status === "finished") settle();
         if (next.status === "disconnected") settle();
         if (next.status === "error") settle();
+        // A stream that ends before run.started (connect failure, rejected
+        // POST) must also release the Run button.
+        if (next.status !== "connecting" && next.status !== "live") setStarting(false);
       },
     });
   }
