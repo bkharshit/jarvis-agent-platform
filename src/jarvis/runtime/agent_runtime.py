@@ -706,7 +706,7 @@ class AgentRuntime:
         pending_calls: list[ToolCall] | None = None
         refusals: set[str] | None = None
         if (
-            resume.kind == "tool_approval"
+            resume.kind in ("tool_approval", "decisions")
             and pause_event is not None
             and pause_event.reason == "tool_approval"
             and pause_event.pending_calls
@@ -714,10 +714,17 @@ class AgentRuntime:
             # The full batch rides the persisted assistant message (the pause
             # event only carries the gated subset). Approve → the whole batch
             # executes (ADR 0010 §3.1); reject → gated calls are refused, the
-            # ungated remainder still executes.
+            # ungated remainder still executes. `decisions` (ADR 0011) splits
+            # the batch per call — a call absent from the map is declined
+            # (default-deny: silence never approves).
             batch = _pause_batch(messages) or list(pause_event.pending_calls)
             entry, pending_calls = "batch", batch
-            if not resume.approved:
+            if resume.kind == "decisions":
+                decided = resume.decisions or {}
+                refusals = {
+                    call.id for call in pause_event.pending_calls if not decided.get(call.id, False)
+                }
+            elif not resume.approved:
                 refusals = {call.id for call in pause_event.pending_calls}
         else:
             # A strategy pause answers with content. A mismatched resume kind

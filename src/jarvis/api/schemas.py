@@ -118,26 +118,42 @@ class CancelResult(_Model):
 
 
 class ResumeBody(_Model):
-    """Body for POST /executions/{id}/resume (S10, ADR 0010 §4): an
-    ask_human pause answers with `content`; a tool-approval pause answers
-    with `tool_approval`. Exactly one is present — `kind` says which."""
+    """Body for POST /executions/{id}/resume (S10, ADR 0010 §4; ADR 0011):
+    an ask_human pause answers with `content`; a tool-approval pause answers
+    with `tool_approval` (batch shorthand) or `decisions` (per-call
+    verdicts — calls absent from the map are declined, ADR 0011). Exactly
+    one is present."""
 
     content: str | None = None
     tool_approval: bool | None = None
+    decisions: dict[str, bool] | None = None
 
     @model_validator(mode="after")
     def _exactly_one_answer(self) -> ResumeBody:
-        has_content = self.content is not None
-        if has_content == (self.tool_approval is not None):
-            raise ValueError("provide exactly one of `content` or `tool_approval`")
+        given = [
+            present
+            for present in (
+                self.content is not None,
+                self.tool_approval is not None,
+                self.decisions is not None,
+            )
+            if present
+        ]
+        if len(given) != 1:
+            raise ValueError("provide exactly one of `content`, `tool_approval`, or `decisions`")
         if self.content is not None and not self.content.strip():
             raise ValueError("content must not be blank")
+        if self.decisions is not None and not self.decisions:
+            raise ValueError("decisions must not be empty")
         return self
 
     def to_domain(self) -> ResumeRequest:
         if self.content is not None:
             return ResumeRequest(kind="content", content=self.content)
-        return ResumeRequest(kind="tool_approval", approved=self.tool_approval)
+        if self.tool_approval is not None:
+            return ResumeRequest(kind="tool_approval", approved=self.tool_approval)
+        assert self.decisions is not None  # validator guarantees one variant
+        return ResumeRequest(kind="decisions", decisions=self.decisions)
 
 
 class LoginRequest(_Model):

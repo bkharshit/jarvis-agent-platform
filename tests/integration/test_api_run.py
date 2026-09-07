@@ -195,12 +195,60 @@ async def test_resume_rejects_unknown_run_and_bad_bodies(client, agent, mock):
     mock.add_turn(turn("ok"))
     run = await client.post(f"/v1/agents/{agent.id}/run", json={"input": "hi"})
     run_id = run.json()["run_id"]
-    for body in ({"content": "hi", "tool_approval": True}, {}, {"tool_approval": None}):
+    for body in (
+        {"content": "hi", "tool_approval": True},
+        {"content": "hi", "decisions": {"c1": True}},
+        {},
+        {"tool_approval": None},
+        {"decisions": {}},
+    ):
         bad = await client.post(f"/v1/executions/{run_id}/resume", json=body)
         assert bad.status_code == 422, body
     # a succeeded run is not awaiting input
     late = await client.post(f"/v1/executions/{run_id}/resume", json={"content": "hi"})
     assert late.status_code == 409
+
+
+@pytest.mark.db
+async def test_resume_decisions_pause_mixed_outcomes(client, container, mock):
+    """ADR 0011: per-call verdicts — the approved call executes, the declined
+    one closes with a refusal message and never ran."""
+    from jarvis.models.mock import turn
+
+    mock.add_turn(
+        turn(
+            tool_calls=[
+                ToolCall(id="c1", name="calculator", arguments={"expression": "6*7"}),
+                ToolCall(id="c2", name="calculator", arguments={"expression": "2+2"}),
+            ]
+        )
+    )
+    mock.add_turn(turn("done"))
+    resp = await client.post(
+        f"/v1/agents/{(await container.agents.create(_gated_agent())).id}/run",
+        json={"input": "compute"},
+    )
+    run_id = resp.json()["run_id"]
+    assert resp.json()["status"] == "awaiting_input"
+
+    resumed = await client.post(
+        f"/v1/executions/{run_id}/resume", json={"decisions": {"c1": True, "c2": False}}
+    )
+    assert resumed.status_code == 200
+    assert resumed.json()["status"] == "succeeded"
+
+    detail = (await client.get(f"/v1/executions/{run_id}")).json()
+    by_call = {m["tool_call_id"]: m["content"] for m in detail["messages"] if m["role"] == "tool"}
+    assert by_call["c1"] != "user declined execution"  # executed
+    assert by_call["c2"] == "user declined execution"  # refused, never ran
+
+    events = (await client.get(f"/v1/executions/{run_id}/events")).json()["events"]
+    started = [
+        e["event"]["tool_call_id"] for e in events if e["event"]["type"] == "tool.call.started"
+    ]
+    assert started == ["c1"]
+    seqs = [e["event"]["sequence"] for e in events]
+    assert seqs == list(range(len(seqs)))
 
 
 @pytest.mark.db

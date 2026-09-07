@@ -2804,12 +2804,26 @@
               }
             ],
             "title": "Tool Approval"
+          },
+          "decisions": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "boolean"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decisions"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "ResumeBody",
-        "description": "Body for POST /executions/{id}/resume (S10, ADR 0010 \u00a74): an\nask_human pause answers with `content`; a tool-approval pause answers\nwith `tool_approval`. Exactly one is present \u2014 `kind` says which."
+        "description": "Body for POST /executions/{id}/resume (S10, ADR 0010 \u00a74; ADR 0011):\nan ask_human pause answers with `content`; a tool-approval pause answers\nwith `tool_approval` (batch shorthand) or `decisions` (per-call\nverdicts \u2014 calls absent from the map are declined, ADR 0011). Exactly\none is present."
       },
       "RunAwaitingInput": {
         "properties": {

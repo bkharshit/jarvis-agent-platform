@@ -13,21 +13,35 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from jarvis.domain.auth import Principal
 
 
 class ResumeRequest(BaseModel):
-    """The human's answer to a pause (S10, ADR 0010 §4). Strategy pauses
-    carry `content` (the answer text); tool-approval pauses carry `approved`.
-    The other field is None — `kind` says which."""
+    """The human's answer to a pause (S10, ADR 0010 §4; ADR 0011). Strategy
+    pauses carry `content` (the answer text); tool-approval pauses carry
+    `approved` (the batch shorthand) or `decisions` (per-call verdicts,
+    ADR 0011 — calls absent from the map are declined). The other fields
+    are None — `kind` says which."""
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["content", "tool_approval"]
+    kind: Literal["content", "tool_approval", "decisions"]
     content: str | None = None
     approved: bool | None = None
+    decisions: dict[str, bool] | None = None
+
+    @model_validator(mode="after")
+    def _kind_carries_its_field(self) -> ResumeRequest:
+        field_by_kind: dict[str, str | None] = {
+            "content": self.content,
+            "tool_approval": None if self.approved is None else "set",
+            "decisions": None if not self.decisions else "set",
+        }
+        if field_by_kind.get(self.kind) is None:
+            raise ValueError(f"kind {self.kind!r} requires its answer field")
+        return self
 
 
 class RunQueueMessage(BaseModel):

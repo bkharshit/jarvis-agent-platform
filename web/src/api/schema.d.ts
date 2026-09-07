@@ -969,15 +969,21 @@ export interface components {
         };
         /**
          * ResumeBody
-         * @description Body for POST /executions/{id}/resume (S10, ADR 0010 §4): an
-         *     ask_human pause answers with `content`; a tool-approval pause answers
-         *     with `tool_approval`. Exactly one is present — `kind` says which.
+         * @description Body for POST /executions/{id}/resume (S10, ADR 0010 §4; ADR 0011):
+         *     an ask_human pause answers with `content`; a tool-approval pause answers
+         *     with `tool_approval` (batch shorthand) or `decisions` (per-call
+         *     verdicts — calls absent from the map are declined, ADR 0011). Exactly
+         *     one is present.
          */
         ResumeBody: {
             /** Content */
             content?: string | null;
             /** Tool Approval */
             tool_approval?: boolean | null;
+            /** Decisions */
+            decisions?: {
+                [key: string]: boolean;
+            } | null;
         };
         /**
          * RunAwaitingInput

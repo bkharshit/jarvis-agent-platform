@@ -80,6 +80,26 @@ class TestResumeRequest:
         with pytest.raises(ValidationError):
             ResumeRequest(kind="weird")  # type: ignore[arg-type]
 
+    def test_decisions_resume_roundtrip(self):
+        from jarvis.ports.queue import ResumeRequest
+
+        resume = ResumeRequest(kind="decisions", decisions={"c1": True, "c2": False})
+        restored = ResumeRequest.model_validate(resume.model_dump(mode="json"))
+        assert restored == resume
+        assert restored.decisions == {"c1": True, "c2": False}
+
+    def test_kind_requires_its_answer_field(self):
+        from jarvis.ports.queue import ResumeRequest
+
+        with pytest.raises(ValidationError):
+            ResumeRequest(kind="decisions")  # no map
+        with pytest.raises(ValidationError):
+            ResumeRequest(kind="decisions", decisions={})  # empty map
+        with pytest.raises(ValidationError):
+            ResumeRequest(kind="tool_approval")  # no boolean
+        with pytest.raises(ValidationError):
+            ResumeRequest(kind="content")  # no text
+
     def test_message_carries_resume_roundtrip(self):
         from jarvis.ports.queue import ResumeRequest, RunQueueMessage
 

@@ -1007,3 +1007,65 @@ class TestResumeToolApproval:
         refused = [m for m in repo.messages["run-hl-5"] if m.tool_call_id == "c1"]
         assert len(refused) == 1
         assert refused[0].content == "user declined execution"
+
+    async def _paused_two_gated(
+        self, run_id
+    ) -> tuple[AgentRuntime, _RecordingRepo, AgentDefinition]:
+        calc, _ = _calc_binding()
+        provider = MockModelProvider(
+            [
+                turn(
+                    tool_calls=[
+                        ToolCall(id="c1", name="calculator", arguments={"expression": "6*7"}),
+                        ToolCall(id="c2", name="calculator", arguments={"expression": "2+2"}),
+                    ]
+                ),
+                turn("done"),
+            ]
+        )
+        agent = _agent(tools=[self._gated_binding()])
+        runtime, repo = await self._paused(provider, [calc], agent, run_id)
+        return runtime, repo, agent
+
+    async def test_decisions_approve_one_refuse_one(self):
+        # ADR 0011: per-call verdicts — c1 executes, c2 is refused.
+        runtime, repo, agent = await self._paused_two_gated("run-hl-6")
+
+        sink = _resume_sink(repo, "run-hl-6")
+        result = await runtime.resume(
+            _version(agent),
+            "run-hl-6",
+            _ctx("run-hl-6"),
+            sink,
+            ResumeRequest(kind="decisions", decisions={"c1": True, "c2": False}),
+        )
+
+        assert result.status == "succeeded"
+        started = [e for e in sink.events if e.type == "tool.call.started"]
+        assert [e.tool_call_id for e in started] == ["c1"]
+        refused = [m for m in repo.messages["run-hl-6"] if m.tool_call_id == "c2"]
+        assert len(refused) == 1
+        assert refused[0].content == "user declined execution"
+        executed = [m for m in repo.messages["run-hl-6"] if m.tool_call_id == "c1"]
+        assert executed and "42" in executed[-1].content
+        validate_event_sequence(runtime.bus.get("run-hl-6").events + sink.events)
+
+    async def test_decisions_default_denies_unmentioned_calls(self):
+        # A call absent from the map is declined — silence never approves.
+        runtime, repo, agent = await self._paused_two_gated("run-hl-7")
+
+        sink = _resume_sink(repo, "run-hl-7")
+        result = await runtime.resume(
+            _version(agent),
+            "run-hl-7",
+            _ctx("run-hl-7"),
+            sink,
+            ResumeRequest(kind="decisions", decisions={"c1": True}),
+        )
+
+        assert result.status == "succeeded"
+        started = [e for e in sink.events if e.type == "tool.call.started"]
+        assert [e.tool_call_id for e in started] == ["c1"]
+        refused = [m for m in repo.messages["run-hl-7"] if m.tool_call_id == "c2"]
+        assert len(refused) == 1
+        assert refused[0].content == "user declined execution"
