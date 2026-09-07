@@ -269,6 +269,32 @@ the code.
   `tool_executions` row — and the store folds it into a distinct
   `declined` card status so live ≡ replay.
 
+- **D35 (2026-09-07) — Plugins load from installed entry-points behind a
+  Settings allow-list (S3).** Third-party strategies are *packages*:
+  discovery reads `importlib.metadata.entry_points(group="jarvis.strategies")`
+  once at container build; an entry point loads **only if its name is in
+  `Settings.strategy_plugin_allowlist`** (env `JARVIS_STRATEGY_PLUGIN_ALLOWLIST`,
+  comma-separated; empty default — nothing loads unless opted in). The
+  filesystem is never scanned; there is no hot load — install/uninstall is
+  `pip|uv install` + restart. Three degenerate cases are facts the API
+  reports, never boot crashes: an allow-listed name with no installed entry
+  point is recorded as `missing`; an allow-listed plugin that raises on
+  import is recorded with its error and skipped (the rest still load);
+  installed-but-not-allow-listed is skipped silently. *(strategies/plugins.py;
+  `docs/plugins/strategy-plugins.md`)*
+- **D36 (2026-09-07) — `StrategyConfig.type` widens to `str`; the registry
+  boundary owns validation (S3).** The domain Literal becomes `str` (a
+  superset — every existing snapshot and YAML stays valid; no migration).
+  Typo protection moves to the **create boundary**: API create/update
+  validates `strategy.type` against the live registry (422 naming the known
+  strategies); `jarvis agent create` does the same with a friendly error.
+  The **resolve boundary** stays authoritative for already-pinned versions:
+  a snapshot whose strategy is gone fails as a persisted terminal
+  `run.failed` with `error_kind="strategy"` (a new value on the frozen
+  envelope's existing field, ADR 0003 precedent) — never an exception past
+  the runtime, never a worker retry loop. A plugin whose `step` raises is
+  caught at the step call site and maps to the same kind.
+
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 
 Redis/queues · plugins & marketplace · multi-tenancy/auth · RAG · workflow
