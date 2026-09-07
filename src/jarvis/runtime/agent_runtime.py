@@ -55,7 +55,7 @@ from jarvis.prompt.engine import PromptContext, PromptEngine
 from jarvis.runtime.limits import RunLimits
 from jarvis.tools.runtime import ToolRuntime
 
-ErrorKind = Literal["max_iterations", "timeout", "model", "tool", "output_schema"]
+ErrorKind = Literal["max_iterations", "timeout", "model", "tool", "output_schema", "strategy"]
 
 DEFAULT_AWAITING_INPUT_TIMEOUT_SECONDS = 86_400.0
 
@@ -340,7 +340,13 @@ class AgentRuntime:
         # the frozen step() Protocol takes no config argument, so the
         # orchestrator prepares the ctx (same pattern as output_schema).
         ctx.metadata["strategy_params"] = dict(agent.strategy.params)
-        strategy = self._strategies.resolve(agent.strategy)
+        try:
+            strategy = self._strategies.resolve(agent.strategy)
+        except KeyError as exc:
+            # D36: a snapshot whose strategy is gone (plugin uninstalled or
+            # de-allow-listed) terminal-fails with its own kind — never an
+            # exception past the runtime, never a worker retry loop.
+            return LoopOutcome(kind="failed", error=str(exc), error_kind="strategy")
         descriptors = self._bound_descriptors(agent)
         bindings = {binding.name: binding for binding in agent.enabled_tools()}
         repair_attempted = False
@@ -384,9 +390,21 @@ class AgentRuntime:
                 # log) — the human's answer is already in `messages`.
                 entry = "fresh"
 
-                step: StepOutcome = await strategy.step(
-                    ctx, list(messages), client, descriptors, sink
-                )
+                try:
+                    step: StepOutcome = await strategy.step(
+                        ctx, list(messages), client, descriptors, sink
+                    )
+                except (ExecutionCancelled, ModelAbortedError, ModelError):
+                    # the outer handlers own those (their kinds, their retries)
+                    raise
+                except Exception as exc:  # noqa: BLE001 — D36: a broken plugin
+                    # is a persisted terminal strategy failure, never a crash.
+                    return LoopOutcome(
+                        kind="failed",
+                        error=f"strategy {agent.strategy.type!r} raised "
+                        f"{type(exc).__name__}: {exc}",
+                        error_kind="strategy",
+                    )
                 messages.append(step.assistant_message)
                 for extra in step.messages:
                     messages.append(extra)

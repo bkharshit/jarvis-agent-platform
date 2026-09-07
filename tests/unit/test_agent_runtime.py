@@ -18,7 +18,12 @@ from jarvis.domain.agent import (
     StrategyConfig,
     ToolBinding,
 )
-from jarvis.domain.events import EventSequenceError, TextDelta, validate_event_sequence
+from jarvis.domain.events import (
+    EventSequenceError,
+    TextDelta,
+    is_terminal,
+    validate_event_sequence,
+)
 from jarvis.domain.execution import ExecutionContext, RunResult
 from jarvis.domain.message import Message, ToolCall, Usage
 from jarvis.domain.tools import ToolDescriptor
@@ -1076,3 +1081,64 @@ class TestResumeToolApproval:
         refused = [m for m in repo.messages["run-hl-7"] if m.tool_call_id == "c2"]
         assert len(refused) == 1
         assert "declined" in refused[0].content
+
+
+class TestStrategyFailureKind:
+    """S3 (D36): a broken plugin is a persisted terminal `strategy` failure —
+    exactly one terminal event, no exception past the runtime, no worker
+    retry loop."""
+
+    def _runtime_with(self, strategies) -> AgentRuntime:
+        registry = InMemoryToolRegistry()
+        return AgentRuntime(
+            strategies=strategies,
+            tools=registry,
+            tool_runtime=ToolRuntime(registry),
+            models=DefaultModelProviderFactory(mock_provider=MockModelProvider()),
+            conversations=None,
+            executions=None,
+        )
+
+    async def test_raising_strategy_is_terminal_strategy_failure(self):
+        class _Boom:
+            @property
+            def name(self) -> str:
+                return "boom"
+
+            async def step(self, ctx, messages, client, tools, sink):
+                raise RuntimeError("kaboom")
+
+        runtime = self._runtime_with(DefaultStrategyRegistry(extra={"boom": _Boom()}))
+        sink = InProcessEventSink("run-boom")
+        result = await runtime.run(
+            _version(_agent(strategy=StrategyConfig(type="boom"))), "hi", _ctx("run-boom"), sink
+        )
+
+        assert result.status == "failed"
+        assert result.error_kind == "strategy"
+        assert "kaboom" in (result.error or "")
+        terminal = [e for e in sink.events if is_terminal(e)]
+        assert len(terminal) == 1
+        assert terminal[0].type == "run.failed"
+        assert terminal[0].error_kind == "strategy"
+
+    async def test_unknown_strategy_on_pinned_snapshot_is_terminal_strategy_failure(self):
+        # A snapshot whose strategy is gone (plugin uninstalled/de-allow-listed):
+        # the resolve boundary owns it — persisted terminal failure, not a crash.
+        runtime = self._runtime_with(DefaultStrategyRegistry())
+        sink = InProcessEventSink("run-ghost")
+        result = await runtime.run(
+            _version(_agent(strategy=StrategyConfig(type="plan_execute"))),
+            "hi",
+            _ctx("run-ghost"),
+            sink,
+        )
+
+        assert result.status == "failed"
+        assert result.error_kind == "strategy"
+        assert "plan_execute" in (result.error or "")
+        assert "function_calling" in (result.error or "")  # known list named
+        terminal = [e for e in sink.events if is_terminal(e)]
+        assert len(terminal) == 1
+        assert terminal[0].type == "run.failed"
+        assert terminal[0].error_kind == "strategy"
