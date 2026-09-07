@@ -207,6 +207,36 @@ card plus Cancel run — answer a durable pause from wherever you find it.
 All of it is gated on `executions.detail.human_in_the_loop` from
 `/v1/capabilities`.
 
+### Plugin strategies (S3, D35/D36)
+
+The loop recipe — how an agent thinks, turn by turn — is pluggable. Ship a
+new strategy (plan-and-execute, tree-of-thoughts, reflection loops, …) as
+an ordinary pip package that declares an entry point:
+
+```toml
+[project.entry-points."jarvis.strategies"]
+plan_execute = "my_pkg.strategies:PlanExecute"
+```
+
+Nothing loads by default: a strategy runs only if its name is on
+`JARVIS_STRATEGY_PLUGIN_ALLOWLIST` (comma-separated; install the package,
+set the list, restart — there is no hot load). At boot the loader records
+import failures and absent names instead of crashing, and `/v1/capabilities`
+reports every strategy with its origin (`builtin`/`plugin`), distribution,
+and version — the **Plugins** page in the web UI renders exactly that, and
+the agent editor's strategy dropdown offers whatever is loaded.
+
+The boundaries refuse, honestly: creating an agent with an unknown strategy
+type is a 422 (API) / exit 1 (CLI) naming the known set; a run whose pinned
+version references a plugin that is no longer loaded ends as a persisted
+`run.failed` with `error_kind: "strategy"`; a plugin whose `step()` raises
+gets the same treatment — a run never escapes the runtime. The full
+third-party contract (one model invocation per step, never loop, never emit
+terminal events, forward `text.delta` for a live transcript) is pinned in
+`docs/plugins/strategy-plugins.md`, with working samples in
+`tests/fixtures/strategies/jarvis-strategy-fixtures` (`plan_execute`,
+`tree_of_thoughts`) and a live walkthrough in `docs/walkthrough-s3.md`.
+
 ### Queue-backed runs and distributed mode (S1, ADR 0008)
 
 Every API run is enqueued in Postgres and executed by a worker; the API
@@ -243,7 +273,8 @@ one published version.
 ```yaml
 name: my-agent
 model: {provider: openai_compatible, model: gpt-4o-mini}
-strategy: {type: function_calling}   # or: react
+strategy: {type: function_calling}   # or: react, or a plugin strategy
+                                     # (S3) — must be on the plugin allow-list
 tools:
   - name: calculator
   - name: http_get

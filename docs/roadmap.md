@@ -192,6 +192,14 @@ anonymous-mode notice.
 
 ## S3 — Plugin strategies
 
+> **Shipped 2026-09-08** (commits `1d723f1..80b46be` + live-test fixes and
+> docs; see `docs/plugins/strategy-plugins.md` for the pinned third-party
+> contract and `docs/walkthrough-s3.md` for the live walkthrough). Sample
+> plugins: `plan_execute`, `tree_of_thoughts`, `raise_plugin` in
+> `tests/fixtures/strategies/jarvis-strategy-fixtures`. UI: the Plugins
+> page lists every strategy with origin/dist/version from
+> `/v1/capabilities`; the agent editor offers loaded plugin strategies.
+
 **Goal:** third-party loop strategies (e.g. plan-and-execute, tree-of-thought)
 installed without touching the core.
 

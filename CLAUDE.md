@@ -99,6 +99,30 @@ uv run jarvis serve        # API on :8000
   run row still shows the OLD `awaiting_input`, and reading that as a
   stream end made the blocking resume 500 with "never reached a segment
   end" (found live; regression-tested in test_api_run.py).
+- **CSV env fields need `Annotated[list[str], NoDecode]` + a
+  mode="before" validator** (S3, D35) — pydantic-settings treats a plain
+  `list[str]` env value as JSON and explodes on `a,b`. Same for any
+  complex-typed env field.
+- **The CLI is its own process** (S3, found live): an allow-list inlined
+  on the `serve` command line leaves the `jarvis` CLI process without it
+  (`agent create` rejects plugin strategies). Export
+  `JARVIS_STRATEGY_PLUGIN_ALLOWLIST` for the whole shell session.
+- **Strategy phases advance by transcript position (assistant-turn
+  count), never marker detection** (S3, found live): models drift on
+  marker placement ("…DONE:" at the end), casing, and wording
+  ("✅ B:" for "PICKED:"). Markers stay in instructions + case-insensitive
+  substring done checks; the turn count decides the phase.
+- **Plugins must stream `text.delta` via `client.stream()` like
+  function_calling does** (S3, found live) — a plugin that only
+  `generate()`s produces runs whose console iterations render empty.
+- **Tests are hermetic: `Settings(_env_file=None)`** (S3, found live) —
+  the developer's gitignored `./.env` (secrets, allow-lists, run limits)
+  leaks into bare `Settings()` and silently changes expectations.
+- **There are two `max_iterations` caps** (ADR 0004): the platform
+  `RunLimits` (`JARVIS_RUN_MAX_ITERATIONS`, enforced at loop top) and the
+  per-agent value from the definition snapshot (loop bottom). Per-agent can
+  only be *tighter* — a UI editor allowing 32 cannot raise the platform
+  ceiling, and the failure message does not yet say which cap fired.
 
 ## Working agreement
 
