@@ -1241,11 +1241,8 @@ export interface components {
         };
         /** StrategyConfig */
         StrategyConfig: {
-            /**
-             * Type
-             * @enum {string}
-             */
-            type: "function_calling" | "react";
+            /** Type */
+            type: string;
             /** Params */
             params?: {
                 [key: string]: unknown;

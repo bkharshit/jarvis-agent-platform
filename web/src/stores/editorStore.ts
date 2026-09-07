@@ -34,7 +34,7 @@ export interface AgentDraft {
   system_prompt: string;
   user_prompt_template: string;
   tools: ToolDraft[];
-  strategy: { type: "function_calling" | "react"; params: string };
+  strategy: { type: string; params: string }; // S3: plugins widen the set; options come from capabilities
   memory: { enabled: boolean; max_messages: number; session_key: string };
   max_iterations: number;
   temperature: number;

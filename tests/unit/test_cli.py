@@ -71,9 +71,24 @@ class SimpleRow:
         self.name = name
 
 
+class _StubStrategies:
+    def names(self) -> list[str]:
+        return ["function_calling", "react"]
+
+
+class _StubAgents:
+    def __init__(self):
+        self.created: list = []
+
+    async def create(self, definition) -> None:
+        self.created.append(definition)
+
+
 class _StubContainer:
     def __init__(self) -> None:
         self.auth = _StubAuth()
+        self.strategies = _StubStrategies()
+        self.agents = _StubAgents()
 
     async def aclose(self) -> None:
         pass
@@ -160,3 +175,43 @@ def test_api_key_unknown_email_fails(stub):
     result = runner.invoke(app, ["api-key", "create", "nobody@acme.test"])
     assert result.exit_code == 1
     assert "no user" in result.output
+
+
+# --- agent create: D36 create-boundary strategy validation ------------------
+
+
+@pytest.fixture
+def cli_container(monkeypatch: pytest.MonkeyPatch) -> _StubContainer:
+    from jarvis.cli.main import console
+
+    console.width = 200
+    container = _StubContainer()
+    monkeypatch.setattr("jarvis.cli.main._container", lambda: container)
+    return container
+
+
+def test_agent_create_rejects_unknown_strategy_type(tmp_path, cli_container):
+    yaml_file = tmp_path / "agent.yaml"
+    yaml_file.write_text(
+        "name: plugin-agent\n"
+        "model: {provider: mock, model: m}\n"
+        "strategy: {type: plan_execute}\n"
+    )
+    result = runner.invoke(app, ["agent", "create", "--file", str(yaml_file)])
+    assert result.exit_code == 1
+    assert "plan_execute" in result.output  # the typo
+    assert "function_calling" in result.output  # the known list
+    assert cli_container.agents.created == []
+
+
+def test_agent_create_accepts_known_strategy(tmp_path, cli_container):
+    yaml_file = tmp_path / "agent.yaml"
+    yaml_file.write_text(
+        "name: plain-agent\n"
+        "model: {provider: mock, model: m}\n"
+        "strategy: {type: react}\n"
+    )
+    result = runner.invoke(app, ["agent", "create", "--file", str(yaml_file)])
+    assert result.exit_code == 0, result.output
+    assert len(cli_container.agents.created) == 1
+    assert cli_container.agents.created[0].strategy.type == "react"

@@ -89,9 +89,16 @@ class TestAgentDefinition:
         with pytest.raises(ValidationError):
             self._definition(max_iterations=33)
 
-    def test_strategy_type_limited(self):
+    def test_strategy_type_is_a_free_string(self):
+        # D36: the domain no longer closes the set — arbitrary types are
+        # valid domain data; unknown-type protection lives at the create
+        # boundary (API 422 / CLI error, against the live registry).
+        agent = self._definition(strategy=StrategyConfig(type="plan_execute"))
+        assert agent.strategy.type == "plan_execute"
+
+    def test_strategy_type_not_blank(self):
         with pytest.raises(ValidationError):
-            self._definition(strategy=StrategyConfig(type="bogus"))
+            self._definition(strategy=StrategyConfig(type=""))
 
     def test_enabled_tools_filters(self):
         agent = self._definition(

@@ -253,6 +253,17 @@ def agent_create(
 
         payload = _definition_from_file(file)
         definition = AgentDefinition(id=str(uuid4()), **payload)
+        # D36: the CLI bypasses the API's create validation, so it runs the
+        # same live-registry check here — a YAML typo must fail here, not at
+        # run time. (The registry reflects this process's allow-list; the
+        # plugin contract doc flags cross-process allow-list drift.)
+        known = container.strategies.names()
+        if definition.strategy.type not in known:
+            err_console.print(
+                f"[red]unknown strategy type[/red] {definition.strategy.type!r} "
+                f"(known: {', '.join(known)})"
+            )
+            raise typer.Exit(1)
         await container.agents.create(definition)
         console.print(f"[green]created[/green] {definition.name} ({definition.id}) v1")
 

@@ -93,12 +93,45 @@ def _definition_from_create(req: AgentUpsertRequest, agent_id: str) -> AgentDefi
     return AgentDefinition(id=agent_id, **payload)
 
 
+def _validate_strategy_type(
+    container: AppContainer, strategy_type: str | None
+) -> None:
+    """D36: `strategy.type` is a free string in the domain; the create
+    boundary validates it against the *live* registry (plugins included) so
+    a typo 422s here instead of failing at run time. Update validates only
+    when the payload carries a strategy — an agent pinned to a
+    since-removed plugin must stay editable."""
+    if strategy_type is None:
+        return
+    known = container.strategies.names()
+    if strategy_type not in known:
+        raise ApiError(
+            422,
+            "validation",
+            f"unknown strategy type {strategy_type!r} (known: {', '.join(known)})",
+            details={
+                "errors": [
+                    {
+                        "loc": ["body", "strategy", "type"],
+                        "msg": f"unknown strategy type {strategy_type!r}",
+                        "type": "value_error",
+                    }
+                ]
+            },
+        )
+
+
 # --- CRUD -------------------------------------------------------------------
 
 
 @router.post("", status_code=201)
-async def create_agent(req: AgentUpsertRequest, auth: AuthContext = AuthDep) -> AgentDetail:
+async def create_agent(
+    req: AgentUpsertRequest,
+    auth: AuthContext = AuthDep,
+    container: AppContainer = ContainerDep,
+) -> AgentDetail:
     definition = _definition_from_create(req, agent_id=str(uuid4()))
+    _validate_strategy_type(container, definition.strategy.type)
     try:
         await auth.agents.create(definition)
     except IntegrityError:
@@ -131,12 +164,16 @@ async def get_agent_version(
 
 @router.patch("/{agent_id}")
 async def update_agent(
-    agent_id: str, req: AgentUpsertRequest, auth: AuthContext = AuthDep
+    agent_id: str,
+    req: AgentUpsertRequest,
+    auth: AuthContext = AuthDep,
+    container: AppContainer = ContainerDep,
 ) -> AgentDetail:
     definition = await _require_definition(auth, agent_id)
     payload = req.model_dump(exclude_unset=True)
     if not payload:
         return await _detail(auth, definition)
+    _validate_strategy_type(container, req.strategy.type if req.strategy else None)
     # Rebuild through model_validate: model_dump deep-dumps nested models
     # (model/strategy/memory → dicts), and model_copy does not re-validate —
     # the updated definition must hold typed fields, not raw dicts.

@@ -64,6 +64,34 @@ async def test_validation_error_envelope(client):
 
 
 @pytest.mark.db
+async def test_create_rejects_unknown_strategy_type(client):
+    # D36: the domain type is a free string; the create boundary 422s with
+    # the live registry's known list.
+    resp = await client.post(
+        "/v1/agents", json={**CREATE_BODY, "strategy": {"type": "plan_execute"}}
+    )
+    assert resp.status_code == 422
+    error = resp.json()["error"]
+    assert error["kind"] == "validation"
+    assert "plan_execute" in error["message"]
+    assert "function_calling" in error["message"]  # the known list is named
+    assert error["details"]["errors"][0]["loc"] == ["body", "strategy", "type"]
+
+
+@pytest.mark.db
+async def test_patch_rejects_unknown_strategy_but_keeps_agent_editable(client):
+    agent_id = (await client.post("/v1/agents", json=CREATE_BODY)).json()["definition"]["id"]
+    resp = await client.patch(
+        f"/v1/agents/{agent_id}", json={"strategy": {"type": "tree_of_thought"}}
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["kind"] == "validation"
+    # a payload that doesn't touch strategy is unaffected
+    resp = await client.patch(f"/v1/agents/{agent_id}", json={"description": "edited"})
+    assert resp.status_code == 200
+
+
+@pytest.mark.db
 async def test_delete_refused_with_executions(client, agent, mock):
     from jarvis.models.mock import turn
 

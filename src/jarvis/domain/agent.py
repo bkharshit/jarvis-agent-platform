@@ -55,7 +55,12 @@ class MemoryConfig(_Model):
 
 
 class StrategyConfig(_Model):
-    type: Literal["function_calling", "react"]
+    # D36: `type` is a plain string — the closed Literal lived here only
+    # while the registry was closed twice. Typo protection now lives at the
+    # create boundary (API 422 / CLI error, against the live registry); the
+    # resolve boundary terminal-fails a snapshot whose strategy is gone
+    # (error_kind="strategy"). Existing snapshots and YAML stay valid.
+    type: str = Field(min_length=1)
     params: dict[str, Any] = Field(default_factory=dict)
 
 

@@ -3415,10 +3415,7 @@
         "properties": {
           "type": {
             "type": "string",
-            "enum": [
-              "function_calling",
-              "react"
-            ],
+            "minLength": 1,
             "title": "Type"
           },
           "params": {
