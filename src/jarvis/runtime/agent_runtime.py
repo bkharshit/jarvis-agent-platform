@@ -53,6 +53,8 @@ from jarvis.ports.strategy import (
 from jarvis.ports.tools import ToolRegistry
 from jarvis.prompt.engine import PromptContext, PromptEngine
 from jarvis.runtime.limits import RunLimits
+from jarvis.tools.mcp.errors import McpResolutionError
+from jarvis.tools.mcp.provider import McpTooling, McpToolProvider
 from jarvis.tools.runtime import ToolRuntime
 
 ErrorKind = Literal["max_iterations", "timeout", "model", "tool", "output_schema", "strategy"]
@@ -95,6 +97,7 @@ class AgentRuntime:
         executions: ExecutionRepo | None = None,
         conversations: ConversationRepo | None = None,
         limits: RunLimits | None = None,
+        mcp: McpToolProvider | None = None,
     ) -> None:
         self._strategies = strategies
         self._tools = tools
@@ -105,6 +108,7 @@ class AgentRuntime:
         self._executions = executions
         self._conversations = conversations
         self._limits = limits
+        self._mcp = mcp
         self._live_tokens: dict[str, ExecutionContext] = {}
 
     @property
@@ -161,7 +165,13 @@ class AgentRuntime:
             # (D5), never an exception past the runtime (which the worker
             # would treat as a claim failure and retry forever).
             client = await self._models.resolve(agent.model, principal=ctx.principal)
-            result = await self._execute(version, input, ctx, sink, client, agent, started_at)
+            # S4 (D38): MCP toolset resolution is the same seam, third
+            # application — its failure is a persisted terminal `tool`
+            # state naming the server, before any token is spent.
+            tooling = await self._resolve_tooling(agent, ctx)
+            result = await self._execute(
+                version, input, ctx, sink, client, agent, started_at, tooling
+            )
         except ExecutionCancelled as exc:
             result = await self._terminal_cancelled(ctx, sink, exc, started_at, input)
         except ModelAbortedError as exc:
@@ -178,6 +188,10 @@ class AgentRuntime:
             )
         except ModelError as exc:
             result = await self._terminal_failed(ctx, sink, str(exc), "model", started_at, input)
+        except McpResolutionError as exc:
+            # S4 (D38): the boundary fails honestly — exactly one persisted
+            # terminal run.failed with error_kind="tool", the server named.
+            result = await self._terminal_failed(ctx, sink, str(exc), "tool", started_at, input)
         except Exception as exc:  # noqa: BLE001 — the run never crashes callers
             result = await self._terminal_failed(
                 ctx,
@@ -208,43 +222,51 @@ class AgentRuntime:
         client: ModelClient,
         agent: AgentDefinition,
         started_at: datetime,
+        tooling: McpTooling,
     ) -> RunResult:
-        history, conversation_id = await self._load_memory(ctx, agent)
+        try:
+            history, conversation_id = await self._load_memory(ctx, agent)
 
-        messages = self._prompt_engine.build(
-            PromptContext(
-                agent=agent,
-                input=input,
-                variables=ctx.variables,
-                history=history,
-                tools=self._bound_descriptors(agent),
-                schema_in_prompt=(
-                    agent.output_schema is not None
-                    and client.capabilities.structured_output != "json_schema"
-                ),
+            messages = self._prompt_engine.build(
+                PromptContext(
+                    agent=agent,
+                    input=input,
+                    variables=ctx.variables,
+                    history=history,
+                    tools=self._bound_descriptors(agent, tooling.registry),
+                    schema_in_prompt=(
+                        agent.output_schema is not None
+                        and client.capabilities.structured_output != "json_schema"
+                    ),
+                )
             )
-        )
-        ctx.output_schema = agent.output_schema
-        ctx.structured_mode = client.capabilities.structured_output
+            ctx.output_schema = agent.output_schema
+            ctx.structured_mode = client.capabilities.structured_output
 
-        await sink.append(
-            RunStarted(
-                event_id=_uuid(),
-                run_id=ctx.run_id,
-                created_at=_now(),
-                agent_id=agent.id,
-                agent_version_id=version.id,
-                session_id=ctx.session_id,
-                input=input,
+            await sink.append(
+                RunStarted(
+                    event_id=_uuid(),
+                    run_id=ctx.run_id,
+                    created_at=_now(),
+                    agent_id=agent.id,
+                    agent_version_id=version.id,
+                    session_id=ctx.session_id,
+                    input=input,
+                )
             )
-        )
-        user_message = messages[-1]
-        await self._save_message(ctx, user_message)
-        if conversation_id:
-            await self._conversations.append_message(conversation_id, user_message, ctx.run_id)  # type: ignore[union-attr]
+            user_message = messages[-1]
+            await self._save_message(ctx, user_message)
+            if conversation_id:
+                await self._conversations.append_message(conversation_id, user_message, ctx.run_id)  # type: ignore[union-attr]
 
-        outcome = await self._loop(ctx, agent, client, sink, messages, conversation_id)
-        return await self._after_loop(ctx, sink, outcome, started_at, input)
+            outcome = await self._loop(
+                ctx, agent, client, sink, messages, conversation_id, tooling=tooling
+            )
+            return await self._after_loop(ctx, sink, outcome, started_at, input)
+        finally:
+            # S4 (D38): the segment's MCP connections close with the
+            # segment — completed, failed, cancelled, or paused alike.
+            await tooling.aclose()
 
     async def _after_loop(
         self,
@@ -332,6 +354,7 @@ class AgentRuntime:
         conversation_id: str | None,
         iteration: int = 0,
         *,
+        tooling: McpTooling | None = None,  # the segment's resolved toolset (S4)
         entry: str = "fresh",  # "fresh" | "answer" | "batch" — resumed-segment entries (S10)
         pending_calls: list[ToolCall] | None = None,  # the resumed batch (approval)
         refusals: set[str] | None = None,  # call ids the human declined
@@ -347,7 +370,8 @@ class AgentRuntime:
             # de-allow-listed) terminal-fails with its own kind — never an
             # exception past the runtime, never a worker retry loop.
             return LoopOutcome(kind="failed", error=str(exc), error_kind="strategy")
-        descriptors = self._bound_descriptors(agent)
+        segment_tooling = tooling or self._default_tooling()
+        descriptors = self._bound_descriptors(agent, segment_tooling.registry)
         bindings = {binding.name: binding for binding in agent.enabled_tools()}
         repair_attempted = False
 
@@ -533,7 +557,7 @@ class AgentRuntime:
                     )
                 )
                 binding = bindings.get(call.name)
-                result = await self._tool_runtime.execute(
+                result = await segment_tooling.tool_runtime.execute(
                     call,
                     ToolContext(
                         run_id=ctx.run_id,
@@ -679,8 +703,9 @@ class AgentRuntime:
                     run_input = row.input
                     ctx.usage = row.total_usage.model_copy()
             client = await self._models.resolve(agent.model, principal=ctx.principal)
+            tooling = await self._resolve_tooling(agent, ctx)  # S4 (D38): re-resolve per segment
             result = await self._resume_segment(
-                run_input, ctx, sink, client, agent, started_at, resume
+                run_input, ctx, sink, client, agent, started_at, resume, tooling
             )
         except ExecutionCancelled as exc:
             result = await self._terminal_cancelled(ctx, sink, exc, started_at, run_input)
@@ -696,6 +721,10 @@ class AgentRuntime:
             result = await self._terminal_failed(
                 ctx, sink, str(exc), "model", started_at, run_input
             )
+        except McpResolutionError as exc:
+            # S4 (D38): same honest boundary as a fresh run — one persisted
+            # terminal `tool` failure, the server named.
+            result = await self._terminal_failed(ctx, sink, str(exc), "tool", started_at, run_input)
         except Exception as exc:  # noqa: BLE001 — the run never crashes callers
             result = await self._terminal_failed(
                 ctx,
@@ -722,6 +751,27 @@ class AgentRuntime:
         agent: AgentDefinition,
         started_at: datetime,
         resume: ResumeRequest,
+        tooling: McpTooling,
+    ) -> RunResult:
+        try:
+            return await self._resume_segment_body(
+                run_input, ctx, sink, client, agent, started_at, resume, tooling
+            )
+        finally:
+            # S4 (D38): the resumed segment's MCP connections close with the
+            # segment; a later resume re-resolves and reconnects.
+            await tooling.aclose()
+
+    async def _resume_segment_body(
+        self,
+        run_input: str,
+        ctx: ExecutionContext,
+        sink: InProcessEventSink,
+        client: ModelClient,
+        agent: AgentDefinition,
+        started_at: datetime,
+        resume: ResumeRequest,
+        tooling: McpTooling,
     ) -> RunResult:
         # Re-seed the chain's counters from the durable log: the open
         # iteration is the last one that STARTED (no IterationCompleted was
@@ -738,7 +788,9 @@ class AgentRuntime:
         ctx.iteration = open_iteration
 
         conversation_id = await self._resume_conversation(ctx, agent)
-        messages = await self._rebuild_messages(agent, ctx, client, ctx.run_id, conversation_id)
+        messages = await self._rebuild_messages(
+            agent, ctx, client, ctx.run_id, conversation_id, tooling.registry
+        )
 
         entry = "answer"
         pending_calls: list[ToolCall] | None = None
@@ -784,6 +836,7 @@ class AgentRuntime:
             messages,
             conversation_id,
             iteration=open_iteration,
+            tooling=tooling,
             entry=entry,
             pending_calls=pending_calls,
             refusals=refusals,
@@ -806,12 +859,15 @@ class AgentRuntime:
         client: ModelClient,
         run_id: str,
         conversation_id: str | None,
+        registry: ToolRegistry | None = None,
     ) -> list[Message]:
         """Reconstruct the model's context for a resumed segment: the system
         prompt plus the run transcript. With memory on, the conversation
         history is the superset (prior sessions folded in with this run's
         messages — the loop appends to both); otherwise the run's own
-        persisted transcript is exactly what the original context was."""
+        persisted transcript is exactly what the original context was. The
+        system prompt renders against the SEGMENT's registry (S4: the
+        fresh segment's resolved tools must match what it can execute)."""
         if conversation_id and self._conversations is not None:
             transcript = await self._conversations.history(conversation_id)
         elif self._executions is not None:
@@ -823,7 +879,7 @@ class AgentRuntime:
                 agent=agent,
                 input="",
                 variables=ctx.variables,
-                tools=self._bound_descriptors(agent),
+                tools=self._bound_descriptors(agent, registry),
                 schema_in_prompt=(
                     agent.output_schema is not None
                     and client.capabilities.structured_output != "json_schema"
@@ -984,14 +1040,34 @@ class AgentRuntime:
             event_cursor=cursor,
         )
 
-    def _bound_descriptors(self, agent: AgentDefinition) -> list[ToolDescriptor]:
+    def _bound_descriptors(
+        self, agent: AgentDefinition, registry: ToolRegistry | None = None
+    ) -> list[ToolDescriptor]:
+        """Descriptors for the bound tool names, against the SEGMENT's
+        registry (S4: the resolved view includes MCP wrappers); unknown
+        binding names are skipped, not fatal."""
+        registry = registry or self._default_tooling().registry
         descriptors = []
         for binding in agent.enabled_tools():
             try:
-                descriptors.append(self._tools.get(binding.name).descriptor)
+                descriptors.append(registry.get(binding.name).descriptor)
             except KeyError:
                 continue  # unknown binding names are skipped, not fatal
         return descriptors
+
+    async def _resolve_tooling(self, agent: AgentDefinition, ctx: ExecutionContext) -> McpTooling:
+        """S4 (D38): eager per-segment MCP resolution. No MCP configured or
+        no `mcp__*` bindings → the builtin registry, byte-identical to
+        today; any resolution failure raises McpResolutionError (caught in
+        run()/resume()'s try — D28 pattern)."""
+        if self._mcp is None:
+            return self._default_tooling()
+        return await self._mcp.resolve(agent.enabled_tools(), tenant_id=ctx.tenant_id)
+
+    def _default_tooling(self) -> McpTooling:
+        return McpTooling(
+            registry=self._tools, tool_runtime=self._tool_runtime, aclose=_no_op_close
+        )
 
 
 def _validate_structured(text: str, schema: dict[str, Any]) -> tuple[bool, str]:
@@ -1014,6 +1090,10 @@ def _pause_batch(messages: list[Message]) -> list[ToolCall]:
         if message.role == "assistant" and message.tool_calls:
             return list(message.tool_calls)
     return []
+
+
+async def _no_op_close() -> None:
+    """The default tooling's aclose — builtins hold no connections."""
 
 
 def _uuid() -> str:

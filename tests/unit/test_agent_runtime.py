@@ -697,9 +697,14 @@ class TestPauseToolApproval:
         assert [c.name for c in pending] == ["current_time"]
 
     async def test_binding_config_wins_over_descriptor(self):
-        calc, _ = _calc_binding()
-        calc.descriptor.annotations = {"requires_approval": True}
+        # copy, never mutate: DESCRIPTOR is a module-level singleton shared by
+        # every CalculatorTool() — an in-place mutation leaks into other tests
+        from jarvis.tools.builtin.calculator import DESCRIPTOR, CalculatorTool
 
+        calc = CalculatorTool()
+        calc._descriptor = DESCRIPTOR.model_copy(
+            update={"annotations": {"requires_approval": True}}
+        )
         # Binding says NOT required — the descriptor's gate is overridden.
         provider = MockModelProvider(
             [
