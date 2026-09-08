@@ -262,8 +262,14 @@ function AddServerForm() {
 function McpPanel() {
   const { data: whoami } = useWhoami();
   const { data: servers, isPending, isError, error } = useMcpServers();
-  // Anonymous mode is the default tenant's full access (the API's own rule).
-  const canManage = whoami === null || whoami?.role === "owner" || whoami?.role === "admin";
+  // Anonymous mode is the default tenant's full access (the API's own rule):
+  // the whoami route answers 200 with mode:"anonymous", role:null — NOT a
+  // null whoami. Only a signed-in member loses the mutating controls.
+  const canManage =
+    whoami != null &&
+    (whoami.mode === "anonymous" ||
+      whoami.role === "owner" ||
+      whoami.role === "admin");
 
   return (
     <section className="mt-10" aria-label="MCP servers">

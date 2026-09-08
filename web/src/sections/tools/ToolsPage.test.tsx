@@ -121,6 +121,29 @@ describe("<ToolsPage/> MCP panel (S4)", () => {
     expect(await screen.findByText("Added MCP server weather")).toBeInTheDocument();
   });
 
+  it("keeps the mutating controls in anonymous mode — whoami is an object with role null, not null", async () => {
+    // The backend's anonymous whoami answers 200 {mode:"anonymous", role:null}.
+    // Treating that as "not a manager" hid the panel's buttons from the
+    // single-user local mode that has full API access (found live).
+    server.use(
+      http.get("/v1/auth/whoami", () =>
+        HttpResponse.json({
+          tenant_id: "default",
+          mode: "anonymous",
+          user_id: null,
+          email: null,
+          display_name: "",
+          role: null,
+        }),
+      ),
+    );
+    renderWithProviders(<ToolsPage />, { initialEntries: ["/tools"] });
+
+    expect(await screen.findByText("fixtures")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add server" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
+  });
+
   it("hides the mutating controls from a member — the API stays the enforcer", async () => {
     server.use(
       http.get("/v1/auth/whoami", () =>
