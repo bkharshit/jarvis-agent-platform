@@ -295,6 +295,42 @@ the code.
   the runtime, never a worker retry loop. A plugin whose `step` raises is
   caught at the step call site and maps to the same kind.
 
+- **D37 (2026-09-08) — MCP servers are tenant-scoped rows; agents bind
+  tool names (S4, ADR 0012).** An MCP server is a `mcp_servers` row —
+  tenant-scoped like agents (NULL tenant = shared), slug name unique per
+  tenant and **immutable** (thousands of version snapshots join on it),
+  typed JSONB config carrying `EnvCredentialRef` values (secrets stay
+  references, ADR 0005). `ToolBinding` is unchanged: an agent binds the
+  discovered tool name `mcp__<server>__<tool>` exactly like `calculator`;
+  the snapshot pins the *name*, the platform resolves connectivity at run
+  time — the `credential_ref` precedent. The roadmap sketch's
+  binding-config-carries-transport is rejected: the "Tools → MCP server
+  management" UI item demands a registry, and one server change shouldn't
+  require touching every agent. Server management is admin/owner-only
+  (members-route pattern); members list/probe; foreign tenants 404 (D29).
+  Discovery is not exposure: binding selection is the allow-list (D35
+  philosophy), and unknown/drifted names degrade exactly as builtins
+  already do — skipped at prompt build, "unknown tool" error result if
+  called.
+- **D38 (2026-09-08) — MCP toolsets resolve eagerly per segment, inside
+  the runtime's try (S4, ADR 0012).** The D28 pattern's third application
+  (model → strategy → tools): each run segment groups its enabled
+  `mcp__*` bindings by server, connects, lists tools, and builds a
+  per-run registry view (builtins + MCP wrappers) before prompt build —
+  inside `run()`/`resume()`'s try, after model resolve. Resolution failure
+  (missing, disabled, unreachable, absent env var, protocol error) is a
+  persisted terminal `run.failed` with the existing `error_kind="tool"`
+  naming the server — never an exception past the runtime, never a worker
+  retry loop. Per-call failures after resolve stay recoverable error
+  `ToolResult`s through the unchanged `ToolRuntime` envelope (validation,
+  timeout, cancellation, truncation apply to MCP for free). Connections
+  close with the segment — complete, fail, cancel, or pause; a resumed
+  segment re-resolves. MCP descriptors default
+  `annotations.requires_approval=True` (binding config can ungate):
+  an external server is an arbitrary side-effect surface, and ADR 0011
+  already gives the human per-call verdicts. Agents with no `mcp__*`
+  bindings resolve nothing — behavior byte-identical to today.
+
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 
 Redis/queues · plugins & marketplace · multi-tenancy/auth · RAG · workflow
@@ -304,5 +340,6 @@ Each deferral names its seam in `docs/roadmap.md` (stages S1–S14) — the
 deferral is a sequencing decision, not an architectural rejection.
 (*Frontend* was on this list until 2026-09-04 — decision 1.6 moved it to a
 parallel track: the shell ships now against Phase 1, and each backend stage
-enables its UI section as it lands. Since then, multi-tenancy/auth (S2) and
-human-in-the-loop (S10) have landed; the rest remain staged.)
+enables its UI section as it lands. Since then, multi-tenancy/auth (S2),
+human-in-the-loop (S10), and plugin strategies (S3) have landed; MCP (S4)
+is planned (ADR 0012); the rest remain staged.)
