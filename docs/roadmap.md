@@ -577,3 +577,28 @@ Deliberately NOT sketched further here: if this graduates to a stage, it
 needs its own ADR-level design (trust model, injection defenses, storage).
 Recorded 2026-09-08 from a product discussion right after S3's plugin
 install UX (`jarvis plugin new/install`) landed.
+
+---
+
+## Parked idea — Plugins-page "Add plugin" UI (proposed 2026-09-08)
+
+The Plugins page is read-only today (strategy listing + allow-list panel);
+install/scaffold is CLI-only (`jarvis plugin new/install`). A UI version
+would complete the no-terminal user story:
+
+- an **Add plugin** panel on the Plugins page, **admin-only** and gated on
+  `auth_mode: required` — disabled in anonymous mode (installing a package
+  on the server machine is effectively remote code installation and must
+  never be one click for an unauthenticated caller);
+- **source field**: local path (single-node installs) or PyPI name; the
+  backend reuses the CLI's install logic (one implementation, no new
+  contract — no ports/ changes, no ADR);
+- **result panel**: strategies discovered, allow-list updated, and an
+  honest **"restart required to load"** banner (there is no hot load — the
+  UI must never imply the plugin is live before a restart);
+- failure cases surfaced as-is: not a plugin package (no `jarvis.strategies`
+  entry points), install failed, already allow-listed.
+
+Companion to the markdown skill packs idea above — both are about making
+skill/plugin management a product surface instead of a terminal ritual;
+both need the security model designed before any UI ships.
