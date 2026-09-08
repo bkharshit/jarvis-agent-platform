@@ -550,3 +550,30 @@ lines above and the contract table in
 `docs/architecture/frontend-architecture.md`). Each stage still gets its
 own implementation-plan-style doc (commit sequence, gates, tests) at build
 time, the way Phase 1 did.
+---
+
+## Parked idea — agent-level markdown skill packs (proposed 2026-09-08, post-S14)
+
+Claude Code-style skills are **markdown instruction files** (`npx skills add
+<repo> --skill <name>` downloads text, no code). JARVIS deliberately has no
+equivalent yet — S3 covers *thinking styles* (code, pip packages) and S4
+covers *capabilities* (MCP servers). The third kind — an instruction pack a
+user attaches to ONE agent — is a parked idea, roughly:
+
+- **UI option to add a skill to an agent**: paste markdown or fetch from an
+  external source (`npx skills add`-style repo URL, or any skill format).
+- **Verification + guardrails before it lands**: size caps, prompt-injection
+  scanning (the skill is untrusted text that will sit next to user input),
+  provenance shown in the UI (where it came from, when).
+- **Landing place**: the skill's content becomes part of that agent's
+  prompt assembly — as an instruction block (system-prompt section) or a
+  dedicated per-agent memory section — NOT as code, NOT as a global
+  platform change. Per-agent, not per-tenant, unless a sharing model is
+  designed later.
+- **Versioning**: the skill rides the agent definition snapshot (immutable
+  versions, D1), so a run replays exactly the skill text it ran with.
+
+Deliberately NOT sketched further here: if this graduates to a stage, it
+needs its own ADR-level design (trust model, injection defenses, storage).
+Recorded 2026-09-08 from a product discussion right after S3's plugin
+install UX (`jarvis plugin new/install`) landed.
