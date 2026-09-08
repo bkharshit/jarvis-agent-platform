@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     # pause-reaper cancels it (S10, ADR 0010 §6) — no run is ever stuck.
     awaiting_input_timeout_seconds: float = 86_400.0
 
+    # --- MCP tool providers (S4, ADR 0012) --------------------------------
+    # Per-server connect + tools/list budget. Per-CALL timeouts ride binding
+    # config through the ToolRuntime envelope — this is the one new knob.
+    mcp_connect_timeout: float = 15.0
+
     # --- distributed runs (S1, ADR 0008) ----------------------------------
     # Every run goes through the queue. `serve` embeds a worker by default
     # so one process behaves like Phase 1 from the outside; distributed
