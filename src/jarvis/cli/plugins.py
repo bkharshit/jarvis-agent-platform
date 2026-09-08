@@ -99,6 +99,9 @@ from jarvis.models.types import (
     ModelResponse,
     UsageDelta,
 )
+from jarvis.models.types import (
+    TextDelta as ModelTextDelta,
+)
 from jarvis.ports.events import EventSink
 from jarvis.ports.model import ModelClient
 from jarvis.ports.strategy import FinishStep, StepOutcome
@@ -147,7 +150,10 @@ async def _invoke(
     model = request.model
     if client.capabilities.streaming:
         async for delta in client.stream(request, cancel=ctx.cancel):
-            if isinstance(delta, TextDelta):
+            # NOTE: the stream delta and the sink event are two different
+            # classes, both named TextDelta — isinstance-check the MODEL
+            # delta, append the DOMAIN event.
+            if isinstance(delta, ModelTextDelta):
                 text_parts.append(delta.text)
                 await sink.append(
                     TextDelta(

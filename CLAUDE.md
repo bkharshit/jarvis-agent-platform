@@ -115,6 +115,13 @@ uv run jarvis serve        # API on :8000
 - **Plugins must stream `text.delta` via `client.stream()` like
   function_calling does** (S3, found live) — a plugin that only
   `generate()`s produces runs whose console iterations render empty.
+- **A plugin must distinguish the two `TextDelta` classes** (S3, found
+  live): `jarvis.models.types.TextDelta` is the stream delta
+  `client.stream()` yields; `jarvis.domain.events.TextDelta` is the sink
+  event. An isinstance check against the *event* class silently drops
+  every delta — empty console iteration AND an empty persisted assistant
+  message, while the run still "succeeds". Import with `as
+  ModelTextDelta` (see the fixture invoke helper).
 - **Tests are hermetic: `Settings(_env_file=None)`** (S3, found live) —
   the developer's gitignored `./.env` (secrets, allow-lists, run limits)
   leaks into bare `Settings()` and silently changes expectations.

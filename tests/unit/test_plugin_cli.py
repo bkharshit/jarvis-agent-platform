@@ -60,6 +60,19 @@ class TestScaffold:
         toml = (tmp_path / "my_strategy/pyproject.toml").read_text()
         assert "dependencies" not in toml
 
+    def test_template_distinguishes_stream_delta_from_sink_event(self, tmp_path, monkeypatch):
+        # Two classes share the name TextDelta — jarvis.models.types (the
+        # stream delta client.stream() yields) and jarvis.domain.events (the
+        # sink event). Found live: a plugin that isinstance-checked the EVENT
+        # class silently dropped every text.delta — empty console iteration
+        # AND an empty persisted assistant message, with the run still
+        # "succeeding". The template must check the model delta.
+        monkeypatch.chdir(tmp_path)
+        _invoke("new", "my-strategy")
+        src = (tmp_path / "my_strategy/src/jarvis_my_strategy/strategy.py").read_text()
+        assert "TextDelta as ModelTextDelta" in src
+        assert "isinstance(delta, ModelTextDelta)" in src
+
 
 class TestAppendAllowlist:
     def test_creates_the_env_file(self, tmp_path):
