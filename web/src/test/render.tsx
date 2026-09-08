@@ -28,7 +28,12 @@ export const TEST_CAPABILITIES: Capabilities = {
           },
           { name: "current_time", description: "Current UTC time.", parameters: {} },
         ],
-        mcp: { enabled: false, stage: "S4" },
+        mcp: {
+          enabled: true,
+          servers: [
+            { id: "mcp-1", name: "fixtures", transport: "stdio", enabled: true },
+          ],
+        },
       },
     },
     models: {

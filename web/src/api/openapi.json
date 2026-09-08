@@ -925,6 +925,234 @@
         }
       }
     },
+    "/v1/mcp/servers": {
+      "get": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "List Servers",
+        "operationId": "list_servers_v1_mcp_servers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerList"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Create Server",
+        "operationId": "create_server_v1_mcp_servers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpServerCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServer"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/mcp/servers/{server_id}": {
+      "get": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Get Server",
+        "operationId": "get_server_v1_mcp_servers__server_id__get",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Server Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServer"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Update Server",
+        "operationId": "update_server_v1_mcp_servers__server_id__patch",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Server Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpServerPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServer"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Delete Server",
+        "operationId": "delete_server_v1_mcp_servers__server_id__delete",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Server Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/mcp/servers/{server_id}/probe": {
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Probe Server",
+        "description": "Connect fresh through the provider's connection path \u2014 no registry\nside effects, nothing persisted. Any member may probe; a resolution\nfailure is a 502 in the frozen error envelope (the server is reachable\nenough to exist but not to talk to).",
+        "operationId": "probe_server_v1_mcp_servers__server_id__probe_post",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Server Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpProbeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/api-keys": {
       "get": {
         "tags": [
@@ -2323,6 +2551,270 @@
         ],
         "title": "LoginRequest",
         "description": "Body for /auth/login. Plain string email \u2014 validation parity with\nmembers invites, no email-validator dependency."
+      },
+      "McpHttpConfig": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "http",
+            "title": "Type"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "headers": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EnvCredentialRef"
+            },
+            "type": "object",
+            "title": "Headers"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "url"
+        ],
+        "title": "McpHttpConfig",
+        "description": "A streamable-HTTP server. Headers carry env-var references \u2014 the\nresolved values are used at connect time and never stored."
+      },
+      "McpProbeResponse": {
+        "properties": {
+          "server": {
+            "$ref": "#/components/schemas/McpServer"
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/ToolDescriptor"
+            },
+            "type": "array",
+            "title": "Tools"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "server",
+          "tools"
+        ],
+        "title": "McpProbeResponse",
+        "description": "POST /mcp/servers/{id}/probe \u2014 a fresh connect + tools/list, no\npersistence, no registry side effects (D37 \u00a74)."
+      },
+      "McpServer": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "config": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/McpStdioConfig"
+              },
+              {
+                "$ref": "#/components/schemas/McpHttpConfig"
+              }
+            ],
+            "title": "Config",
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "http": "#/components/schemas/McpHttpConfig",
+                "stdio": "#/components/schemas/McpStdioConfig"
+              }
+            }
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "config"
+        ],
+        "title": "McpServer",
+        "description": "One configured MCP server. `tenant_id=None` = platform-shared\n(visible to every tenant, the agents-repo convention); name is immutable\nonce created \u2014 it is the join key from agent version snapshots."
+      },
+      "McpServerCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name"
+          },
+          "config": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/McpStdioConfig"
+              },
+              {
+                "$ref": "#/components/schemas/McpHttpConfig"
+              }
+            ],
+            "title": "Config",
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "http": "#/components/schemas/McpHttpConfig",
+                "stdio": "#/components/schemas/McpStdioConfig"
+              }
+            }
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "config"
+        ],
+        "title": "McpServerCreate",
+        "description": "POST /mcp/servers \u2014 config carries env-var NAMES only (ADR 0005);\nthe values resolve from the process env at connect time."
+      },
+      "McpServerList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/McpServer"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "McpServerList",
+        "description": "GET /mcp/servers \u2014 responses reuse the domain model directly."
+      },
+      "McpServerPatch": {
+        "properties": {
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/McpStdioConfig"
+                  },
+                  {
+                    "$ref": "#/components/schemas/McpHttpConfig"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "type",
+                  "mapping": {
+                    "http": "#/components/schemas/McpHttpConfig",
+                    "stdio": "#/components/schemas/McpStdioConfig"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "McpServerPatch",
+        "description": "PATCH /mcp/servers/{id} \u2014 `enabled` and `config` only. A patch that\ncarries `name` is a 422: the name is the join key from agent version\nsnapshots (D37), immutable once created."
+      },
+      "McpStdioConfig": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "stdio",
+            "title": "Type"
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Command"
+          },
+          "args": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Args"
+          },
+          "env": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EnvCredentialRef"
+            },
+            "type": "object",
+            "title": "Env"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "command"
+        ],
+        "title": "McpStdioConfig",
+        "description": "A server launched as a local subprocess (the fixture server's shape)."
       },
       "MemberCreate": {
         "properties": {
@@ -3836,6 +4328,35 @@
           "name"
         ],
         "title": "ToolCallStarted"
+      },
+      "ToolDescriptor": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Parameters"
+          },
+          "annotations": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Annotations"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "description"
+        ],
+        "title": "ToolDescriptor"
       },
       "ToolResult": {
         "properties": {

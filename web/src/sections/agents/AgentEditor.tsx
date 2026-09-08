@@ -7,11 +7,13 @@ import { useModelList } from "@/api/queries/models";
 import { useCredentials } from "@/api/queries/settings";
 import {
   builtinTools,
+  mcpServers,
   modelDefaults,
   modelProviders,
   providerNames,
   strategyNames,
 } from "@/capabilities/detail";
+import { useProbeMcpServer } from "@/api/queries/mcp";
 import { useCapabilities } from "@/capabilities/useCapabilities";
 import { SectionGate } from "@/capabilities/SectionGate";
 import { toSavePayload, useEditorStore } from "@/stores/editorStore";
@@ -26,6 +28,39 @@ const inputClass =
   "w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none";
 const labelClass = "block text-xs font-medium text-neutral-400";
 const errorClass = "mt-1 text-xs text-red-400";
+
+// MCP binding config: `requires_approval` rides the binding's JSON config
+// (S10 binding-wins). Absent/blank config means the backend's approval
+// default (True for every MCP tool, ADR 0012 §2) — the toggle reads that
+// as on and writes the key explicitly on change.
+function requiresApproval(config: string): boolean {
+  if (config.trim() === "") return true;
+  try {
+    const parsed: unknown = JSON.parse(config);
+    if (typeof parsed === "object" && parsed !== null && "requires_approval" in parsed) {
+      return (parsed as Record<string, unknown>).requires_approval !== false;
+    }
+  } catch {
+    // unparsable config: the backend decides — show the default
+  }
+  return true;
+}
+
+function withApproval(config: string, value: boolean): string {
+  let parsed: Record<string, unknown> = {};
+  if (config.trim() !== "") {
+    try {
+      const existing: unknown = JSON.parse(config);
+      if (typeof existing === "object" && existing !== null) {
+        parsed = existing as Record<string, unknown>;
+      }
+    } catch {
+      // preserve the raw text by failing the toggle into an explicit object
+    }
+  }
+  parsed.requires_approval = value;
+  return JSON.stringify(parsed);
+}
 
 function FieldError({ message }: { message?: string }) {
   if (!message) return null;
@@ -81,6 +116,13 @@ function AgentEditorForm() {
   const providerDescription = modelProviders(capabilities.data).find(
     (info) => info.name === draft?.model.provider,
   )?.description;
+
+  // S4: MCP tool picker — pick a server, probe it, and its tools become
+  // ordinary ToolBinding rows. The probe is on-demand (a connect + tools/list
+  // per server); a failed connect never blocks the editor.
+  const serverList = mcpServers(capabilities.data);
+  const [mcpServerId, setMcpServerId] = useState("");
+  const mcpProbe = useProbeMcpServer(mcpServerId);
 
   if (agentId !== undefined && isPending) {
     return <p className="px-6 py-10 text-sm text-neutral-400">Loading agent…</p>;
@@ -386,6 +428,25 @@ function AgentEditorForm() {
                 />
                 <div className="min-w-0 flex-1">
                   <span className="text-sm text-neutral-100">{tool.name}</span>
+                  {tool.name.startsWith("mcp__") && (
+                    <label className="mt-1 flex items-center gap-2 text-xs text-neutral-400">
+                      <input
+                        type="checkbox"
+                        aria-label={`${tool.name} requires approval`}
+                        checked={requiresApproval(tool.config)}
+                        onChange={(e) =>
+                          update({
+                            tools: draft.tools.map((t, i) =>
+                              i === index
+                                ? { ...t, config: withApproval(t.config, e.target.checked) }
+                                : t,
+                            ),
+                          })
+                        }
+                      />
+                      Requires approval
+                    </label>
+                  )}
                   <textarea
                     aria-label={`${tool.name} config (JSON)`}
                     rows={2}
@@ -430,6 +491,82 @@ function AgentEditorForm() {
                 <option key={t.name} value={t.name}>{t.name}</option>
               ))}
           </select>
+
+          {serverList.length > 0 && (
+            <div className="mt-3">
+              <label htmlFor="add-mcp-server" className={labelClass}>
+                Add MCP tool
+              </label>
+              <select
+                id="add-mcp-server"
+                className={`${inputClass} mt-1`}
+                value={mcpServerId}
+                onChange={(e) => setMcpServerId(e.target.value)}
+              >
+                <option value="">Pick an MCP server…</option>
+                {serverList.map((server) => (
+                  <option key={server.id} value={server.id}>
+                    {server.name} ({server.transport}
+                    {server.enabled ? "" : ", disabled"})
+                  </option>
+                ))}
+              </select>
+              {mcpServerId !== "" && (
+                <div className="mt-2">
+                  {mcpProbe.isPending && (
+                    <p className="text-xs text-neutral-400">Probing server…</p>
+                  )}
+                  {mcpProbe.isError && (
+                    <p className="text-xs text-red-400" role="alert">
+                      {mcpProbe.error.message}
+                    </p>
+                  )}
+                  {mcpProbe.data &&
+                    (mcpProbe.data.tools.length === 0 ? (
+                      <p className="text-xs text-neutral-400">This server exposes no tools.</p>
+                    ) : (
+                      <ul className="flex flex-col gap-1">
+                        {mcpProbe.data.tools.map((tool) => {
+                          const bound = draft.tools.some((t) => t.name === tool.name);
+                          return (
+                            <li key={tool.name} className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                aria-label={`Bind ${tool.name}`}
+                                checked={bound}
+                                onChange={(e) =>
+                                  update({
+                                    tools: e.target.checked
+                                      ? [
+                                          ...draft.tools,
+                                          // MCP tools require approval by default
+                                          // (ADR 0012 §2) — visible-on in the
+                                          // binding row so un-gating is a choice.
+                                          {
+                                            name: tool.name,
+                                            enabled: true,
+                                            config: '{"requires_approval": true}',
+                                          },
+                                        ]
+                                      : draft.tools.filter((t) => t.name !== tool.name),
+                                  })
+                                }
+                              />
+                              <span className="font-mono text-xs text-neutral-200">{tool.name}</span>
+                              {tool.description !== "" && (
+                                <span className="truncate text-xs text-neutral-500">
+                                  {tool.description}
+                                </span>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ))}
+                </div>
+              )}
+            </div>
+          )}
         </fieldset>
 
         <fieldset className="rounded border border-neutral-800 p-4">

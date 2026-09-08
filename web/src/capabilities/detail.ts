@@ -52,6 +52,13 @@ export interface McpGate {
   stage: string | null;
 }
 
+export interface McpServerInfo {
+  id: string;
+  name: string;
+  transport: string;
+  enabled: boolean;
+}
+
 export function mcpGate(capabilities: Capabilities | undefined): McpGate {
   const detail = asRecord(capabilities?.sections.tools?.detail);
   const mcp = detail ? asRecord(detail.mcp) : null;
@@ -59,6 +66,27 @@ export function mcpGate(capabilities: Capabilities | undefined): McpGate {
     enabled: mcp?.enabled === true,
     stage: typeof mcp?.stage === "string" ? mcp.stage : null,
   };
+}
+
+/** S4: the servers the backend reports in the capabilities detail — the
+ * ToolsPage panel and the agent-editor MCP picker both read from here. */
+export function mcpServers(capabilities: Capabilities | undefined): McpServerInfo[] {
+  const detail = asRecord(capabilities?.sections.tools?.detail);
+  const mcp = detail ? asRecord(detail.mcp) : null;
+  if (!mcp || !Array.isArray(mcp.servers)) return [];
+  return mcp.servers.flatMap((entry) => {
+    const record = asRecord(entry);
+    return record && typeof record.id === "string" && typeof record.name === "string"
+      ? [
+          {
+            id: record.id,
+            name: record.name,
+            transport: typeof record.transport === "string" ? record.transport : "",
+            enabled: record.enabled === true,
+          },
+        ]
+      : [];
+  });
 }
 
 export function builtinToolsFull(capabilities: Capabilities | undefined): BuiltinToolFull[] {

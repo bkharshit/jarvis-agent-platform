@@ -311,6 +311,66 @@ export interface paths {
         patch: operations["update_member_v1_members__user_id__patch"];
         trace?: never;
     };
+    "/v1/mcp/servers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Servers */
+        get: operations["list_servers_v1_mcp_servers_get"];
+        put?: never;
+        /** Create Server */
+        post: operations["create_server_v1_mcp_servers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/servers/{server_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Server */
+        get: operations["get_server_v1_mcp_servers__server_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Server */
+        delete: operations["delete_server_v1_mcp_servers__server_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Server */
+        patch: operations["update_server_v1_mcp_servers__server_id__patch"];
+        trace?: never;
+    };
+    "/v1/mcp/servers/{server_id}/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Probe Server
+         * @description Connect fresh through the provider's connection path — no registry
+         *     side effects, nothing persisted. Any member may probe; a resolution
+         *     failure is a 502 in the frozen error envelope (the server is reachable
+         *     enough to exist but not to talk to).
+         */
+        post: operations["probe_server_v1_mcp_servers__server_id__probe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/api-keys": {
         parameters: {
             query?: never;
@@ -786,6 +846,122 @@ export interface components {
             email: string;
             /** Password */
             password: string;
+        };
+        /**
+         * McpHttpConfig
+         * @description A streamable-HTTP server. Headers carry env-var references — the
+         *     resolved values are used at connect time and never stored.
+         */
+        McpHttpConfig: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "http";
+            /** Url */
+            url: string;
+            /** Headers */
+            headers?: {
+                [key: string]: components["schemas"]["EnvCredentialRef"];
+            };
+        };
+        /**
+         * McpProbeResponse
+         * @description POST /mcp/servers/{id}/probe — a fresh connect + tools/list, no
+         *     persistence, no registry side effects (D37 §4).
+         */
+        McpProbeResponse: {
+            server: components["schemas"]["McpServer"];
+            /** Tools */
+            tools: components["schemas"]["ToolDescriptor"][];
+        };
+        /**
+         * McpServer
+         * @description One configured MCP server. `tenant_id=None` = platform-shared
+         *     (visible to every tenant, the agents-repo convention); name is immutable
+         *     once created — it is the join key from agent version snapshots.
+         */
+        McpServer: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Config */
+            config: components["schemas"]["McpStdioConfig"] | components["schemas"]["McpHttpConfig"];
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Tenant Id */
+            tenant_id?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at?: string;
+        };
+        /**
+         * McpServerCreate
+         * @description POST /mcp/servers — config carries env-var NAMES only (ADR 0005);
+         *     the values resolve from the process env at connect time.
+         */
+        McpServerCreate: {
+            /** Name */
+            name: string;
+            /** Config */
+            config: components["schemas"]["McpStdioConfig"] | components["schemas"]["McpHttpConfig"];
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+        };
+        /**
+         * McpServerList
+         * @description GET /mcp/servers — responses reuse the domain model directly.
+         */
+        McpServerList: {
+            /** Items */
+            items: components["schemas"]["McpServer"][];
+        };
+        /**
+         * McpServerPatch
+         * @description PATCH /mcp/servers/{id} — `enabled` and `config` only. A patch that
+         *     carries `name` is a 422: the name is the join key from agent version
+         *     snapshots (D37), immutable once created.
+         */
+        McpServerPatch: {
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Config */
+            config?: (components["schemas"]["McpStdioConfig"] | components["schemas"]["McpHttpConfig"]) | null;
+            /** Name */
+            name?: string | null;
+        };
+        /**
+         * McpStdioConfig
+         * @description A server launched as a local subprocess (the fixture server's shape).
+         */
+        McpStdioConfig: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "stdio";
+            /** Command */
+            command: string;
+            /** Args */
+            args?: string[];
+            /** Env */
+            env?: {
+                [key: string]: components["schemas"]["EnvCredentialRef"];
+            };
         };
         /**
          * MemberCreate
@@ -1452,6 +1628,21 @@ export interface components {
             tool_call_id: string;
             /** Name */
             name: string;
+        };
+        /** ToolDescriptor */
+        ToolDescriptor: {
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            };
+            /** Annotations */
+            annotations?: {
+                [key: string]: unknown;
+            };
         };
         /** ToolResult */
         ToolResult: {
@@ -2174,6 +2365,185 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MemberOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_servers_v1_mcp_servers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerList"];
+                };
+            };
+        };
+    };
+    create_server_v1_mcp_servers_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpServerCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServer"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_server_v1_mcp_servers__server_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServer"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_server_v1_mcp_servers__server_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_server_v1_mcp_servers__server_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpServerPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServer"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    probe_server_v1_mcp_servers__server_id__probe_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpProbeResponse"];
                 };
             };
             /** @description Validation Error */

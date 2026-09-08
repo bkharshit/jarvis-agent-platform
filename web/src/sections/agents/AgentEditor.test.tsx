@@ -191,3 +191,59 @@ describe("<AgentEditor/> editing", () => {
     expect(await screen.findByText("agent nope not found")).toBeInTheDocument();
   });
 });
+describe("<AgentEditor/> MCP tool picker (S4)", () => {
+  it("probes the picked server and binds a checked tool as an approval-gated row", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    await screen.findByLabelText("Model");
+
+    await user.selectOptions(await screen.findByLabelText("Add MCP tool"), "mcp-1");
+    const echo = await screen.findByRole("checkbox", { name: "Bind mcp__fixtures__echo" });
+    await user.click(echo);
+
+    // the binding row is an ordinary ToolBinding — approval default visible-on
+    expect(
+      screen.getByLabelText("mcp__fixtures__echo config (JSON)"),
+    ).toBeInTheDocument();
+    const approval = screen.getByRole("checkbox", { name: "mcp__fixtures__echo requires approval" });
+    expect(approval).toBeChecked();
+
+    // unchecking removes the binding again
+    await user.click(screen.getByRole("checkbox", { name: "Bind mcp__fixtures__echo" }));
+    expect(
+      screen.queryByLabelText("mcp__fixtures__echo config (JSON)"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("toggling approval rewrites the binding config JSON", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    await screen.findByLabelText("Model");
+
+    await user.selectOptions(await screen.findByLabelText("Add MCP tool"), "mcp-1");
+    await user.click(await screen.findByRole("checkbox", { name: "Bind mcp__fixtures__echo" }));
+
+    const approval = screen.getByRole("checkbox", { name: "mcp__fixtures__echo requires approval" });
+    await user.click(approval); // un-gate
+    expect(approval).not.toBeChecked();
+    expect(
+      screen.getByLabelText("mcp__fixtures__echo config (JSON)"),
+    ).toHaveValue('{"requires_approval":false}');
+  });
+
+  it("surfaces a failed probe without blocking the editor", async () => {
+    server.use(
+      http.post("/v1/mcp/servers/:server_id/probe", () =>
+        HttpResponse.json(envelope("mcp_unreachable", "fixtures: connection refused"), {
+          status: 502,
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    await screen.findByLabelText("Model");
+
+    await user.selectOptions(await screen.findByLabelText("Add MCP tool"), "mcp-1");
+    expect(await screen.findByRole("alert")).toHaveTextContent("connection refused");
+  });
+});

@@ -130,6 +130,44 @@ export const credentialFixture = {
   revoked_at: null,
 };
 
+/** An MCP server row (S4, ADR 0012) — env refs carry NAMES only. */
+export const mcpServerFixture = {
+  id: "mcp-1",
+  name: "fixtures",
+  config: { type: "stdio" as const, command: "uvx", args: ["mcp-server-time"] },
+  enabled: true,
+  tenant_id: "default",
+  created_at: "2026-09-08T09:00:00Z",
+  updated_at: "2026-09-08T09:00:00Z",
+};
+
+/** The probe's descriptor shape — full JARVIS names, approval default on. */
+export const mcpProbeFixture = {
+  server: mcpServerFixture,
+  tools: [
+    {
+      name: "mcp__fixtures__echo",
+      description: "Echo the given text back.",
+      parameters: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+      annotations: { requires_approval: true, timeout: null },
+    },
+    {
+      name: "mcp__fixtures__add_numbers",
+      description: "Add two numbers.",
+      parameters: {
+        type: "object",
+        properties: { a: { type: "number" }, b: { type: "number" } },
+        required: ["a", "b"],
+      },
+      annotations: { requires_approval: true, timeout: null },
+    },
+  ],
+};
+
 export const handlers = [
   http.get("/v1/agents", () => HttpResponse.json({ items: agentsFixture })),
   http.post("/v1/agents", () => HttpResponse.json({ definition: agentFixture, versions: [] }, { status: 201 })),
@@ -252,7 +290,17 @@ export const handlers = [
               },
               { name: "current_time", description: "Current UTC time.", parameters: {} },
             ],
-            mcp: { enabled: false, stage: "S4" },
+            mcp: {
+              enabled: true,
+              servers: [
+                {
+                  id: mcpServerFixture.id,
+                  name: mcpServerFixture.name,
+                  transport: mcpServerFixture.config.type,
+                  enabled: mcpServerFixture.enabled,
+                },
+              ],
+            },
           },
         },
         models: {
@@ -306,6 +354,26 @@ export const handlers = [
   http.get("/v1/api-keys", () => HttpResponse.json({ items: [apiKeyFixture] })),
   http.post("/v1/api-keys", () => HttpResponse.json(apiKeyCreatedFixture, { status: 201 })),
   http.delete("/v1/api-keys/:key_id", () => new HttpResponse(null, { status: 204 })),
+  // --- MCP servers (S4) -----------------------------------------------------
+  http.get("/v1/mcp/servers", () => HttpResponse.json({ items: [mcpServerFixture] })),
+  http.post("/v1/mcp/servers", () =>
+    HttpResponse.json(mcpServerFixture, { status: 201 }),
+  ),
+  http.get("/v1/mcp/servers/:server_id", ({ params }) => {
+    const { server_id } = params as { server_id: string };
+    if (server_id === mcpServerFixture.id) {
+      return HttpResponse.json(mcpServerFixture);
+    }
+    return HttpResponse.json(
+      { error: { kind: "not_found", message: `MCP server ${server_id} not found` } },
+      { status: 404 },
+    );
+  }),
+  http.patch("/v1/mcp/servers/:server_id", () => HttpResponse.json(mcpServerFixture)),
+  http.delete("/v1/mcp/servers/:server_id", () => new HttpResponse(null, { status: 204 })),
+  http.post("/v1/mcp/servers/:server_id/probe", () =>
+    HttpResponse.json(mcpProbeFixture),
+  ),
   // --- BYOK credentials -----------------------------------------------------
   http.get("/v1/credentials", () => HttpResponse.json({ items: [credentialFixture] })),
   http.post("/v1/credentials", () => HttpResponse.json(credentialFixture, { status: 201 })),
