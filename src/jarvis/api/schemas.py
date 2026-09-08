@@ -6,6 +6,7 @@ re-invents them."""
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 
@@ -20,8 +21,9 @@ from jarvis.domain.agent import (
 )
 from jarvis.domain.events import ExecutionEvent
 from jarvis.domain.execution import RunResult
+from jarvis.domain.mcp import MCP_NAME_SLUG, McpServer, McpServerConfig
 from jarvis.domain.message import Message
-from jarvis.domain.tools import ToolResult
+from jarvis.domain.tools import ToolDescriptor, ToolResult
 from jarvis.ports.queue import ResumeRequest
 
 
@@ -271,6 +273,49 @@ class CredentialOut(_Model):
 
 class CredentialList(_Model):
     items: list[CredentialOut]
+
+
+class McpServerCreate(_Model):
+    """POST /mcp/servers — config carries env-var NAMES only (ADR 0005);
+    the values resolve from the process env at connect time."""
+
+    name: str = Field(min_length=1)
+    config: McpServerConfig
+    enabled: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def _name_is_slug(cls, value: str) -> str:
+        if not re.fullmatch(MCP_NAME_SLUG, value):
+            raise ValueError(
+                f"server name must be a slug matching {MCP_NAME_SLUG} (got {value!r})"
+                " — it becomes part of every tool name mcp__<name>__<tool>"
+            )
+        return value
+
+
+class McpServerPatch(_Model):
+    """PATCH /mcp/servers/{id} — `enabled` and `config` only. A patch that
+    carries `name` is a 422: the name is the join key from agent version
+    snapshots (D37), immutable once created."""
+
+    enabled: bool | None = None
+    config: McpServerConfig | None = None
+    name: str | None = None
+
+
+class McpServerList(_Model):
+    """GET /mcp/servers — responses reuse the domain model directly."""
+
+    items: list[McpServer]
+
+
+class McpProbeResponse(_Model):
+    """POST /mcp/servers/{id}/probe — a fresh connect + tools/list, no
+    persistence, no registry side effects (D37 §4)."""
+
+    server: McpServer
+    tools: list[ToolDescriptor]
 
 
 class SectionCapability(_Model):

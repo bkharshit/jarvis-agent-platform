@@ -14,6 +14,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 
+from jarvis.api.auth import AuthContext, AuthDep
 from jarvis.api.deps import AppContainer, get_container
 from jarvis.api.schemas import CapabilitiesResponse, SectionCapability
 from jarvis.domain.agent import ModelRef
@@ -106,10 +107,27 @@ def _plugins_detail(container: AppContainer) -> dict[str, Any]:
     }
 
 
-async def build_capabilities(container: AppContainer) -> CapabilitiesResponse:
+async def _mcp_detail(container: AppContainer, *, tenant_id: str | None) -> dict[str, Any]:
+    """S4 (ADR 0012): the MCP section is live — servers listed from the repo
+    at request time (counts only, no live connections; the probe route owns
+    those). A tenant sees its own rows plus platform-shared ones, exactly
+    what its runs would resolve against."""
+    servers = await container.mcp_servers.list_servers(tenant_id=tenant_id)
+    return {
+        "enabled": True,
+        "servers": [
+            {"id": s.id, "name": s.name, "transport": s.config.type, "enabled": s.enabled}
+            for s in servers
+        ],
+    }
+
+
+async def build_capabilities(
+    container: AppContainer, *, tenant_id: str | None = None
+) -> CapabilitiesResponse:
     """Builder — the only IO is the provider capability probe (the models
-    factory resolve is async, ADR 0009 §7); unit tests pass a stub
-    container with an async stub factory."""
+    factory resolve is async, ADR 0009 §7) and the MCP server listing (S4,
+    tenant-scoped); unit tests pass a stub container with async stubs."""
     sections: dict[str, SectionCapability] = {}
     for key, flags in _SECTION_FLAGS.items():
         detail: dict[str, Any] | None = None
@@ -118,7 +136,7 @@ async def build_capabilities(container: AppContainer) -> CapabilitiesResponse:
         elif key == "tools":
             detail = {
                 "builtins": [d.model_dump() for d in container.tools.descriptors()],
-                "mcp": {"enabled": False, "stage": "S4"},
+                "mcp": await _mcp_detail(container, tenant_id=tenant_id),
             }
         elif key == "executions":
             # S10: human-in-the-loop is live — pause frames, the resume
@@ -136,9 +154,10 @@ async def build_capabilities(container: AppContainer) -> CapabilitiesResponse:
 
 @router.get("/capabilities")
 async def capabilities(
+    auth: AuthContext = AuthDep,
     container: AppContainer = ContainerDep,
 ) -> CapabilitiesResponse:
-    return await build_capabilities(container)
+    return await build_capabilities(container, tenant_id=auth.principal.tenant_id)
 
 
 __all__ = ["build_capabilities", "router"]

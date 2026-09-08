@@ -34,6 +34,7 @@ def _stub_container(
     describe: list[StrategyPluginInfo] | None = None,
     plugins: PluginLoadResult | None = None,
     allowlist: list[str] | None = None,
+    mcp_servers: list[dict] | None = None,
 ) -> SimpleNamespace:
     caps = capabilities or ModelCapabilities()
 
@@ -41,12 +42,16 @@ def _stub_container(
         async def resolve(self, ref: object) -> SimpleNamespace:
             return SimpleNamespace(capabilities=caps)
 
+    async def _list_servers(*, tenant_id: str | None = None) -> list:
+        return mcp_servers or []
+
     return SimpleNamespace(
         settings=Settings(strategy_plugin_allowlist=allowlist or []),
         tools=SimpleNamespace(descriptors=lambda: builtins),
         strategies=SimpleNamespace(names=lambda: strategies, describe=lambda: describe or []),
         strategy_plugins=plugins or PluginLoadResult(),
         models=_StubFactory(),
+        mcp_servers=SimpleNamespace(list_servers=_list_servers),
     )
 
 
@@ -78,7 +83,28 @@ async def test_tools_detail_mirrors_tool_registry() -> None:
     detail = response.sections["tools"].detail
     assert detail is not None
     assert detail["builtins"] == [descriptor.model_dump()]
-    assert detail["mcp"] == {"enabled": False, "stage": "S4"}
+    assert detail["mcp"] == {"enabled": True, "servers": []}
+
+
+async def test_mcp_detail_lists_servers_from_the_repo() -> None:
+    from types import SimpleNamespace as _NS
+
+    servers = [
+        _NS(id="s1", name="fixtures", config=_NS(type="stdio"), enabled=True),
+        _NS(id="s2", name="weather", config=_NS(type="http"), enabled=False),
+    ]
+    response = await build_capabilities(
+        _stub_container(strategies=[], builtins=[], mcp_servers=servers)
+    )
+    detail = response.sections["tools"].detail
+    assert detail is not None
+    assert detail["mcp"] == {
+        "enabled": True,
+        "servers": [
+            {"id": "s1", "name": "fixtures", "transport": "stdio", "enabled": True},
+            {"id": "s2", "name": "weather", "transport": "http", "enabled": False},
+        ],
+    }
 
 
 async def test_models_detail_mirrors_providers_and_settings() -> None:

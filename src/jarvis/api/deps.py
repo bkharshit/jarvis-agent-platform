@@ -27,6 +27,7 @@ from jarvis.persistence.repositories import (
     SqlAuthRepo,
     SqlConversationRepo,
     SqlExecutionRepo,
+    SqlMcpServerRepo,
     SqlRunQueue,
 )
 from jarvis.runtime.agent_runtime import AgentRuntime
@@ -37,6 +38,7 @@ from jarvis.strategies.registry import DefaultStrategyRegistry
 from jarvis.tools.builtin.calculator import CalculatorTool
 from jarvis.tools.builtin.current_time import CurrentTimeTool
 from jarvis.tools.builtin.http_get import HttpGetTool
+from jarvis.tools.mcp.provider import McpToolProvider
 from jarvis.tools.registry import InMemoryToolRegistry
 from jarvis.tools.runtime import ToolRuntime
 
@@ -54,6 +56,8 @@ class AppContainer:
     streams: PgEventStream
     bus: InProcessEventBus
     tools: InMemoryToolRegistry
+    mcp_servers: SqlMcpServerRepo
+    mcp: McpToolProvider
     models: DefaultModelProviderFactory
     strategies: DefaultStrategyRegistry
     strategy_plugins: PluginLoadResult
@@ -83,6 +87,11 @@ class AppContainer:
         registry = InMemoryToolRegistry()
         for tool in (CalculatorTool(), CurrentTimeTool(), HttpGetTool()):
             registry.register(tool)
+
+        # S4 (ADR 0012): MCP servers resolve per segment through the runtime's
+        # provider seam; the same provider serves the API's probe route.
+        mcp_servers = SqlMcpServerRepo(sessionmaker)
+        mcp = McpToolProvider(mcp_servers, registry, settings)
 
         limits = RunLimits(
             max_iterations=settings.run_max_iterations,
@@ -120,6 +129,7 @@ class AppContainer:
             executions=executions,
             conversations=conversations,
             limits=limits,
+            mcp=mcp,
         )
         worker = Worker(
             queue=queue,
@@ -142,6 +152,8 @@ class AppContainer:
             streams=streams,
             bus=bus,
             tools=registry,
+            mcp_servers=mcp_servers,
+            mcp=mcp,
             models=models,
             strategies=strategies,
             strategy_plugins=strategy_plugins,

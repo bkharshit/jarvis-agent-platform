@@ -24,6 +24,7 @@ from jarvis.api.routes.capabilities import router as capabilities_router
 from jarvis.api.routes.conversations import router as conversations_router
 from jarvis.api.routes.credentials import router as credentials_router
 from jarvis.api.routes.executions import router as executions_router
+from jarvis.api.routes.mcp import router as mcp_router
 from jarvis.api.routes.members import router as members_router
 from jarvis.api.routes.models import router as models_router
 from jarvis.config import Settings
@@ -77,6 +78,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(capabilities_router, prefix="/v1")
     app.include_router(executions_router, prefix="/v1")
     app.include_router(members_router, prefix="/v1")
+    app.include_router(mcp_router, prefix="/v1")
     app.include_router(api_keys_router, prefix="/v1")
     app.include_router(credentials_router, prefix="/v1")
     app.include_router(conversations_router, prefix="/v1")

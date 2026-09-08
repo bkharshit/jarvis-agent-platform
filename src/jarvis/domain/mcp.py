@@ -55,7 +55,7 @@ McpServerConfig = Annotated[McpStdioConfig | McpHttpConfig, Field(discriminator=
 
 # ADR 0012 §1: the name joins thousands of version snapshots into
 # `mcp__<name>__<tool>`, so it is a strict slug.
-_SLUG = r"^[a-z0-9][a-z0-9-]*$"
+MCP_NAME_SLUG = r"^[a-z0-9][a-z0-9-]*$"
 
 
 class McpServer(_Model):
@@ -74,12 +74,18 @@ class McpServer(_Model):
     @field_validator("name")
     @classmethod
     def _name_is_slug(cls, value: str) -> str:
-        if not re.fullmatch(_SLUG, value):
+        if not re.fullmatch(MCP_NAME_SLUG, value):
             raise ValueError(
-                f"server name must be a slug matching {_SLUG} (got {value!r})"
+                f"server name must be a slug matching {MCP_NAME_SLUG} (got {value!r})"
                 " — it becomes part of every tool name mcp__<name>__<tool>"
             )
         return value
 
 
-__all__ = ["McpHttpConfig", "McpServer", "McpServerConfig", "McpStdioConfig"]
+__all__ = [
+    "MCP_NAME_SLUG",
+    "McpHttpConfig",
+    "McpServer",
+    "McpServerConfig",
+    "McpStdioConfig",
+]
