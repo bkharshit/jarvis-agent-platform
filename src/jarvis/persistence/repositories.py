@@ -34,6 +34,7 @@ from jarvis.domain.auth import (
 )
 from jarvis.domain.events import ExecutionEvent
 from jarvis.domain.execution import ExecutionStatus, RunResult
+from jarvis.domain.mcp import McpServer, McpServerConfig
 from jarvis.domain.message import Message, Usage
 from jarvis.domain.tools import ToolResult
 from jarvis.persistence.models import (
@@ -45,6 +46,7 @@ from jarvis.persistence.models import (
     ConversationRow,
     CredentialRow,
     ExecutionEventRow,
+    McpServerRow,
     MessageRow,
     RunCancelRow,
     RunQueueRow,
@@ -56,6 +58,7 @@ from jarvis.persistence.models import (
 from jarvis.ports.queue import ResumeRequest, RunQueueMessage
 
 _EVENT_ADAPTER: TypeAdapter[ExecutionEvent] = TypeAdapter(ExecutionEvent)
+_MCP_CONFIG_ADAPTER: TypeAdapter[McpServerConfig] = TypeAdapter(McpServerConfig)
 
 
 def create_sessionmaker(database_url: str) -> async_sessionmaker[AsyncSession]:
@@ -310,6 +313,118 @@ class SqlAgentRepo:
             label=row.label,
             created_at=row.created_at,
         )
+
+
+class SqlMcpServerRepo:
+    """Configured MCP servers (S4, ADR 0012) — the agents repo's tenancy
+    pattern verbatim: `_shared_visible` reads, writes stamp the binding
+    tenant, None = platform-shared (NULL tenant_id)."""
+
+    def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
+        self._sessionmaker = sessionmaker
+
+    async def create(self, server: McpServer, *, tenant_id: str | None = None) -> McpServer:
+        async with self._sessionmaker() as session:
+            session.add(
+                McpServerRow(
+                    id=server.id,
+                    tenant_id=tenant_id,
+                    name=server.name,
+                    enabled=server.enabled,
+                    config=server.config.model_dump(mode="json"),
+                    created_at=server.created_at,
+                    updated_at=server.updated_at,
+                )
+            )
+            await session.commit()
+        return server.model_copy(update={"tenant_id": tenant_id})
+
+    async def get(self, server_id: str, *, tenant_id: str | None = None) -> McpServer | None:
+        async with self._sessionmaker() as session:
+            row = await self._visible_row(session, server_id, tenant_id)
+        return None if row is None else self._load(row)
+
+    async def get_by_name(self, name: str, *, tenant_id: str | None = None) -> McpServer | None:
+        async with self._sessionmaker() as session:
+            query = select(McpServerRow).where(McpServerRow.name == name)
+            if tenant_id is not None:
+                query = query.where(_shared_visible(McpServerRow.tenant_id, tenant_id))
+            # Tenant-owned rows shadow same-name shared rows: owned first.
+            query = query.order_by(McpServerRow.tenant_id.is_(None)).limit(1)
+            row = (await session.execute(query)).scalar_one_or_none()
+        return None if row is None else self._load(row)
+
+    async def list_servers(self, *, tenant_id: str | None = None) -> list[McpServer]:
+        async with self._sessionmaker() as session:
+            query = select(McpServerRow)
+            if tenant_id is not None:
+                query = query.where(_shared_visible(McpServerRow.tenant_id, tenant_id))
+            rows = (
+                await session.execute(query.order_by(McpServerRow.created_at, McpServerRow.id))
+            ).scalars()
+            servers = [self._load(row) for row in rows]
+        return _shadow_shared(servers)
+
+    async def update(self, server: McpServer, *, tenant_id: str | None = None) -> McpServer:
+        """`enabled` and `config` only — the name is immutable (the join key
+        from version snapshots), so any incoming name is ignored."""
+        async with self._sessionmaker() as session:
+            row = await self._visible_row(session, server.id, tenant_id)
+            if row is None:
+                raise LookupError(f"mcp server {server.id} not found")
+            row.enabled = server.enabled
+            row.config = server.config.model_dump(mode="json")
+            row.updated_at = _now()
+            await session.commit()
+            loaded = self._load(row)
+        return loaded
+
+    async def delete(self, server_id: str, *, tenant_id: str | None = None) -> bool:
+        async with self._sessionmaker() as session:
+            row = await self._visible_row(session, server_id, tenant_id)
+            if row is None:
+                return False
+            await session.delete(row)
+            await session.commit()
+        return True
+
+    # --- helpers -----------------------------------------------------------
+
+    @staticmethod
+    async def _visible_row(
+        session: AsyncSession, server_id: str, tenant_id: str | None
+    ) -> McpServerRow | None:
+        """The server row if visible to the tenant: owned, platform-shared
+        (NULL), or — unscoped — simply existing."""
+        if tenant_id is None:
+            return await session.get(McpServerRow, server_id)
+        query = select(McpServerRow).where(
+            McpServerRow.id == server_id, _shared_visible(McpServerRow.tenant_id, tenant_id)
+        )
+        return (await session.execute(query)).scalar_one_or_none()
+
+    @staticmethod
+    def _load(row: McpServerRow) -> McpServer:
+        return McpServer(
+            id=row.id,
+            name=row.name,
+            config=_MCP_CONFIG_ADAPTER.validate_python(row.config),
+            enabled=row.enabled,
+            tenant_id=row.tenant_id,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+
+def _shadow_shared(servers: list[McpServer]) -> list[McpServer]:
+    """Tenant-owned rows shadow same-name shared rows in listings (D37):
+    a shared row is dropped when a tenant-owned row carries its name —
+    owned rows themselves are always kept."""
+    seen_owned: set[str] = set()
+    for server in servers:
+        if server.tenant_id is not None:
+            seen_owned.add(server.name)
+    return [s for s in servers if s.tenant_id is not None or s.name not in seen_owned]
 
 
 class SqlExecutionRepo:

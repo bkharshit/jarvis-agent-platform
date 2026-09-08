@@ -28,6 +28,7 @@ EXPECTED_TABLES = {
     "sessions",
     "api_keys",
     "credentials",
+    "mcp_servers",
 }
 
 
@@ -252,3 +253,33 @@ def test_credential_ref_snapshot_rewrite() -> None:
     # This test historically left the DB at 0005 because that WAS head —
     # restore the true head so later tests see the full schema.
     command.upgrade(config, "head")
+
+
+def test_mcp_servers_unique_indexes_cycle() -> None:
+    """S4 (0007): the two partial indexes survive a downgrade/upgrade cycle —
+    "unique per tenant AND unique among shared" needs the NULL/owned split
+    (Postgres treats NULLs as distinct, one composite index cannot say both)."""
+    from alembic import command
+    from sqlalchemy import text
+
+    config = _alembic_config()
+
+    command.downgrade(config, "0006")
+    command.upgrade(config, "0007")  # back to head
+
+    async def indexes() -> set[str]:
+        engine = create_async_engine(TEST_DB_URL)
+        try:
+            async with engine.connect() as conn:
+                rows = await conn.execute(
+                    text(
+                        "SELECT indexname FROM pg_indexes"
+                        " WHERE tablename = 'mcp_servers' AND indexname LIKE 'uq_%'"
+                    )
+                )
+                return {row[0] for row in rows}
+        finally:
+            await engine.dispose()
+
+    names = asyncio.run(indexes())
+    assert names == {"uq_mcp_servers_owned_name", "uq_mcp_servers_shared_name"}

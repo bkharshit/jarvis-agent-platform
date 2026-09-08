@@ -21,6 +21,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -269,6 +270,44 @@ class CredentialRow(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class McpServerRow(Base):
+    """One configured MCP server (S4, ADR 0012). Name is the immutable join
+    key from agent version snapshots; NULL tenant = platform-shared."""
+
+    __tablename__ = "mcp_servers"
+    __table_args__ = (
+        # Postgres treats NULLs as distinct, so "unique per tenant, unique
+        # among shared" needs two partial indexes (the 0007 pattern).
+        Index(
+            "uq_mcp_servers_owned_name",
+            "tenant_id",
+            "name",
+            unique=True,
+            postgresql_where=text("tenant_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_mcp_servers_shared_name",
+            "name",
+            unique=True,
+            postgresql_where=text("tenant_id IS NULL"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    tenant_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("tenants.id"), nullable=True, index=True
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
+
+
 class ConversationRow(Base):
     __tablename__ = "conversations"
     __table_args__ = (UniqueConstraint("agent_id", "session_id", name="uq_conversation"),)
@@ -367,6 +406,7 @@ __all__ = [
     "CredentialRow",
     "DEFAULT_TENANT",
     "ExecutionEventRow",
+    "McpServerRow",
     "MessageRow",
     "RunCancelRow",
     "RunQueueRow",

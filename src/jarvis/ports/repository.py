@@ -14,6 +14,7 @@ from typing import Protocol
 from jarvis.domain.agent import AgentDefinition, AgentVersion
 from jarvis.domain.events import ExecutionEvent
 from jarvis.domain.execution import ExecutionStatus, RunResult
+from jarvis.domain.mcp import McpServer
 from jarvis.domain.message import Message, Usage
 from jarvis.domain.tools import ToolResult
 
@@ -114,4 +115,29 @@ class ConversationRepo(Protocol):
     async def history(self, conversation_id: str, limit: int | None = None) -> list[Message]: ...
 
 
-__all__ = ["AgentRepo", "ConversationRepo", "ExecutionRepo"]
+class McpServerRepo(Protocol):
+    """Configured MCP servers (S4, ADR 0012) — tenant-scoped like
+    AgentRepo: `tenant_id=None` reads include platform-shared rows
+    (tenant_id NULL); writes stamp the given tenant, None = shared."""
+
+    async def create(self, server: McpServer, *, tenant_id: str | None = None) -> McpServer:
+        """Create the row; the returned server carries the stamped tenant."""
+        ...
+
+    async def get(self, server_id: str, *, tenant_id: str | None = None) -> McpServer | None: ...
+
+    async def get_by_name(self, name: str, *, tenant_id: str | None = None) -> McpServer | None:
+        """Tenant-owned rows shadow same-name shared rows (D37)."""
+        ...
+
+    async def list_servers(self, *, tenant_id: str | None = None) -> list[McpServer]: ...
+
+    async def update(self, server: McpServer, *, tenant_id: str | None = None) -> McpServer:
+        """Mutable fields are `enabled` and `config`; the name is immutable
+        (it is the join key from version snapshots)."""
+        ...
+
+    async def delete(self, server_id: str, *, tenant_id: str | None = None) -> bool: ...
+
+
+__all__ = ["AgentRepo", "ConversationRepo", "ExecutionRepo", "McpServerRepo"]
