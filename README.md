@@ -220,7 +220,14 @@ plan_execute = "my_pkg.strategies:PlanExecute"
 
 Nothing loads by default: a strategy runs only if its name is on
 `JARVIS_STRATEGY_PLUGIN_ALLOWLIST` (comma-separated; install the package,
-set the list, restart — there is no hot load). At boot the loader records
+set the list, restart — there is no hot load). The CLI wraps the flow:
+
+```bash
+jarvis plugin new my-strategy          # scaffold a ready-to-edit package
+jarvis plugin install ./my-strategy    # install + allow-list + restart hint
+```
+
+At boot the loader records
 import failures and absent names instead of crashing, and `/v1/capabilities`
 reports every strategy with its origin (`builtin`/`plugin`), distribution,
 and version — the **Plugins** page in the web UI renders exactly that, and

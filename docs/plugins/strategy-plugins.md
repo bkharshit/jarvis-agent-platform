@@ -105,6 +105,31 @@ dependencies = ["jarvis"]          # types only — never the reverse
 plan_execute = "my_jarvis_strategies.plan_execute:PlanExecuteStrategy"
 ```
 
+### The CLI shortcuts
+
+`jarvis plugin` wraps both halves of the flow — authoring and installing
+(plain sugar over the commands below; the loader, the allow-list gate, and
+the failure recording are unchanged):
+
+```bash
+jarvis plugin new my-strategy
+#   scaffolds ./my-strategy/ (pyproject.toml with the entry-point line,
+#   src/jarvis_my_strategy/strategy.py with a streaming single-shot
+#   template + the contract summary) — edit strategy.py
+jarvis plugin install ./my-strategy
+#   installs (editable for a local dir; `uv pip install`, falling back to
+#   pip), reads the freshly installed distribution's entry-point names,
+#   merges them into JARVIS_STRATEGY_PLUGIN_ALLOWLIST in ./.env, prints
+#   the restart reminder — one command per plugin
+```
+
+Note the scaffold declares **no `jarvis` dependency** on purpose: jarvis
+is not on PyPI, so a declared dependency would make every install fail to
+resolve it — the platform that loads the plugin provides it. Published
+plugins may declare the dependency once jarvis is on PyPI.
+
+### The raw flow
+
 Install with `pip install` / `uv pip install` (or a path dep in dev), set
 the allow-list, restart:
 

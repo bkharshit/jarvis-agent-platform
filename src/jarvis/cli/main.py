@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 
 from jarvis import __version__
 from jarvis.api.deps import AppContainer
+from jarvis.cli.plugins import plugin_app
 from jarvis.config import Settings
 from jarvis.domain.agent import AgentDefinition
 from jarvis.domain.auth import UserAccount
@@ -54,6 +55,7 @@ app.add_typer(executions_app, name="executions")
 app.add_typer(tenant_app, name="tenant")
 app.add_typer(user_app, name="user")
 app.add_typer(apikey_app, name="api-key")
+app.add_typer(plugin_app, name="plugin")
 
 console = Console()
 err_console = Console(stderr=True)
