@@ -1394,9 +1394,17 @@ class SqlRunQueue:
         return RunQueueMessage.model_validate(payload) if payload is not None else None
 
     async def ack(self, run_id: str) -> None:
+        """Mark the claimed message done — only if still `claimed`. A run
+        that pauses returns to the worker before the client resumes: a late
+        ack here must never clobber a just-enqueued resume back to `done`
+        (the resume would be lost and the blocking resume route would wait
+        forever). `enqueue_resume` flips the row to `pending`; this guard
+        makes the ack a no-op in that race."""
         async with self._sessionmaker() as session:
             await session.execute(
-                update(RunQueueRow).where(RunQueueRow.run_id == run_id).values(status="done")
+                update(RunQueueRow)
+                .where(RunQueueRow.run_id == run_id, RunQueueRow.status == "claimed")
+                .values(status="done")
             )
             await session.commit()
 

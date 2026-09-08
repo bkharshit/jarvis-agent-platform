@@ -237,3 +237,34 @@ async def test_enqueue_resume_merges_and_preserves_enqueue_time_fields(container
     assert resumed.principal == message.principal
     assert resumed.deadline == message.deadline
     assert resumed.input == message.input
+
+
+@pytest.mark.db
+async def test_late_pause_ack_cannot_clobber_a_pending_resume(container, agent):
+    """The pause returns to the worker BEFORE the worker acks the claim — a
+    fast client can resume in between (enqueue_resume → pending). The late
+    ack must be a no-op then, or the resume is lost and the blocking resume
+    route waits forever (found live: the S4 MCP acceptance hang)."""
+    queue = container.queue
+    run_id = f"q-late-ack-{uuid4().hex[:8]}"
+    await queue.enqueue(
+        RunQueueMessage(
+            run_id=run_id,
+            agent_id=agent.id,
+            agent_version_id="v1",
+            input="hi",
+            principal=Principal(tenant_id="t1", user_id="u1", mode="api_key"),
+            deadline=datetime.now(UTC) + timedelta(minutes=5),
+        )
+    )
+    await queue.claim("worker-a", timedelta(seconds=30))
+
+    # the race, in the observed order: the row reaches awaiting_input (the
+    # client resumes) before the worker's post-pause ack lands
+    await queue.enqueue_resume(run_id, ResumeRequest(kind="tool_approval", approved=True))
+    await queue.ack(run_id)
+
+    resumed = await queue.claim("worker-a", timedelta(seconds=30))
+    assert resumed is not None and resumed.run_id == run_id, (
+        "the late ack must not flip a pending resume to done"
+    )
