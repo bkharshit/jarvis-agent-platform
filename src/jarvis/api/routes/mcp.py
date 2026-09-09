@@ -121,7 +121,10 @@ async def probe_server(
     enough to exist but not to talk to)."""
     server = await _visible_server(auth, container, server_id)
     try:
-        tools = await container.mcp.probe(server)
+        # The requesting principal rides along: stored header refs (ADR
+        # 0013) decrypt tenant-scoped for whoever probes — a member probing
+        # the same server gets the same behavior as an admin.
+        tools = await container.mcp.probe(server, principal=auth.principal)
     except McpResolutionError as exc:
         raise ApiError(502, "mcp_unreachable", str(exc)) from None
     return McpProbeResponse(server=server, tools=tools)

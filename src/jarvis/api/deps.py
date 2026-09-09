@@ -88,10 +88,23 @@ class AppContainer:
         for tool in (CalculatorTool(), CurrentTimeTool(), HttpGetTool()):
             registry.register(tool)
 
+        # The stored-credential backend (S2, ADR 0006) composes into the
+        # same resolver seam; env refs keep resolving exactly as before.
+        # Shared with the MCP provider (ADR 0013) — both are stateless.
+        credential_resolver = DefaultCredentialResolver(
+            stored_resolver=DatabaseStoredResolver(sessionmaker, settings)
+        )
+        models = DefaultModelProviderFactory(
+            mock_provider=mock_provider,
+            credential_resolver=credential_resolver,
+        )
         # S4 (ADR 0012): MCP servers resolve per segment through the runtime's
         # provider seam; the same provider serves the API's probe route.
+        # Stored header/env refs decrypt through the shared resolver.
         mcp_servers = SqlMcpServerRepo(sessionmaker)
-        mcp = McpToolProvider(mcp_servers, registry, settings)
+        mcp = McpToolProvider(
+            mcp_servers, registry, settings, credential_resolver=credential_resolver
+        )
 
         limits = RunLimits(
             max_iterations=settings.run_max_iterations,
@@ -102,14 +115,6 @@ class AppContainer:
         # execution_events.cursor (SSE Last-Event-ID, ADR 0003). Sinks are
         # never dropped in Phase 1 — /stream resume relies on them.
         bus = InProcessEventBus(persist=executions.append_event)
-        # The stored-credential backend (S2, ADR 0006) composes into the
-        # same resolver seam; env refs keep resolving exactly as before.
-        models = DefaultModelProviderFactory(
-            mock_provider=mock_provider,
-            credential_resolver=DefaultCredentialResolver(
-                stored_resolver=DatabaseStoredResolver(sessionmaker, settings)
-            ),
-        )
         # S3 (D35): plugins load from installed entry points behind the
         # allow-list, exactly once here — every worker shares this container,
         # so a plugin strategy runs on any worker. Load failures are carried

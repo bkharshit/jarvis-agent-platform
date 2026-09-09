@@ -5,6 +5,7 @@ route against the real fixture stdio server."""
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -216,3 +217,120 @@ async def test_capabilities_tools_detail_lists_mcp_servers(client):
         "transport": "stdio",
         "enabled": True,
     } in mcp["servers"]
+
+
+# --- stored credential headers (ADR 0013) -------------------------------------------
+
+MASTER_KEY_ENV = "JARVIS_CREDENTIALS_MASTER_KEY"
+SECRET = "sk-mcp-header-secret-material-9876543210"
+
+
+@pytest.fixture
+def _master_key(monkeypatch: pytest.MonkeyPatch):
+    """The resolver loads the master key lazily at first decrypt, so setting
+    it in the test process is enough (same pattern as test_api_settings)."""
+    import base64
+    import os
+
+    key = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
+    monkeypatch.setenv(MASTER_KEY_ENV, key)
+
+
+def _http_body(name: str, headers: dict) -> dict:
+    return {
+        "name": name,
+        "config": {
+            "type": "http",
+            "url": "http://127.0.0.1:1/mcp",  # refused instantly if resolution gets that far
+            "headers": headers,
+        },
+    }
+
+
+async def test_stored_header_probe_without_the_credential_names_the_id(client):
+    # anonymous client, no credential rows: resolution fails BEFORE any
+    # network I/O — the 502 names the credential id, not a handshake error
+    created = await client.post(
+        "/v1/mcp/servers",
+        json=_http_body(
+            "authed-http", {"Authorization": {"type": "stored", "credential_id": "cred-missing"}}
+        ),
+    )
+    assert created.status_code == 201, created.text
+    probed = await client.post(f"/v1/mcp/servers/{created.json()['id']}/probe")
+    assert probed.status_code == 502
+    body = probed.json()
+    assert body["error"]["kind"] == "mcp_unreachable"
+    assert "cred-missing" in body["error"]["message"]
+    # resolution short-circuits: the failure is the missing credential,
+    # never a connection attempt
+    assert "connection" not in body["error"]["message"]
+
+
+async def test_stored_header_resolves_then_connects_and_the_secret_stays_hidden(
+    client, container, _master_key
+):
+    """The happy path up to the connect boundary: with a real stored
+    credential, resolution succeeds and the failure moves to the (dead)
+    endpoint — the secret itself never appears in any response."""
+    owner = await _user(container, "mcp-owner@example.com", role="owner")
+    await _login(client, owner.email)
+    cred = (
+            await client.post(
+                "/v1/credentials",
+                json={"name": "webz-key", "provider": "mcp_header", "secret": SECRET},
+            )
+        ).json()
+    created = await client.post(
+        "/v1/mcp/servers",
+        json=_http_body(
+            "authed-http", {"Authorization": {"type": "stored", "credential_id": cred["id"]}}
+        ),
+    )
+    assert created.status_code == 201
+    server = created.json()
+    assert server["config"]["headers"]["Authorization"] == {
+        "type": "stored",
+        "credential_id": cred["id"],
+    }
+    listing_text = json.dumps((await client.get("/v1/mcp/servers")).json())
+    assert SECRET not in listing_text  # the write-only invariant (D29)
+
+    probed = await client.post(f"/v1/mcp/servers/{server['id']}/probe")
+    # resolution passed — the failure moved to the (dead) endpoint: the
+    # 502 is a handshake/connection failure, NOT the credential id
+    assert probed.status_code == 502
+    assert cred["id"] not in probed.json()["error"]["message"]
+
+
+async def test_stored_header_from_a_foreign_tenant_is_502_not_404(client, container):
+    """The resolver collapses absent/revoked/foreign into one failure (no
+    existence leak, D29) — surfaced as the probe's 502 envelope."""
+    created = await client.post(
+        "/v1/mcp/servers",
+        json=_http_body(
+            "foreign-auth", {"Authorization": {"type": "stored", "credential_id": "cred-foreign"}}
+        ),
+    )
+    server_id = created.json()["id"]
+    resp = await client.post(f"/v1/mcp/servers/{server_id}/probe")
+    assert resp.status_code == 502
+    assert "cred-foreign" in resp.json()["error"]["message"]
+
+
+async def test_env_header_refs_still_roundtrip_alongside_stored(client):
+    created = await client.post(
+        "/v1/mcp/servers",
+        json=_http_body(
+            "mixed-refs",
+            {
+                "X-Api-Key": {"type": "env", "env_var": "MCP_X_API_KEY"},
+                "Authorization": {"type": "stored", "credential_id": "cred-1"},
+            },
+        ),
+    )
+    assert created.status_code == 201, created.text
+    got = (await client.get(f"/v1/mcp/servers/{created.json()['id']}")).json()
+    headers = got["config"]["headers"]
+    assert headers["X-Api-Key"] == {"type": "env", "env_var": "MCP_X_API_KEY"}
+    assert headers["Authorization"] == {"type": "stored", "credential_id": "cred-1"}

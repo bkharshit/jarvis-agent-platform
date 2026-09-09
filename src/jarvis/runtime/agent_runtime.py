@@ -1062,7 +1062,9 @@ class AgentRuntime:
         run()/resume()'s try — D28 pattern)."""
         if self._mcp is None:
             return self._default_tooling()
-        return await self._mcp.resolve(agent.enabled_tools(), tenant_id=ctx.tenant_id)
+        return await self._mcp.resolve(
+            agent.enabled_tools(), tenant_id=ctx.tenant_id, principal=ctx.principal
+        )
 
     def _default_tooling(self) -> McpTooling:
         return McpTooling(
