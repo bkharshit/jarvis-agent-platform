@@ -135,6 +135,13 @@ by GET, never logged, never snapshotted. A credential failure ends the run
 as a persisted terminal `model` failure — a cross-tenant id resolves to
 "not found", exactly like any other foreign resource.
 
+The same union backs MCP server auth headers (ADR 0013): an http server's
+`config.headers` maps header names to refs — `{"type": "env",
+"env_var": "WEBZ_MCP_TOKEN"}` or `{"type": "stored", "credential_id":
+<id>}` — resolved at connect time, secrets never stored in the config.
+Header-auth MCP servers are configurable end to end from the Tools page
+(add, edit refs, rotate the stored secret).
+
 ### Streaming and exactly-once resume
 
 The stream starts before the run does, frames carry

@@ -331,6 +331,30 @@ the code.
   already gives the human per-call verdicts. Agents with no `mcp__*`
   bindings resolve nothing — behavior byte-identical to today.
 
+- **D39 (2026-09-09) — MCP headers/env widen to the full CredentialRef
+  union; stored secrets resolve at connect time via the shared resolver
+  (ADR 0013).** `McpHttpConfig.headers` and `McpStdioConfig.env` go from
+  `dict[str, EnvCredentialRef]` to `dict[str, CredentialRef]` — the same
+  `env | stored` union the model `credential_ref` uses. No migration (the
+  JSONB discriminator gains a variant). The stored secret materializes only
+  inside `McpServerConnection._build_client`, per segment, through the
+  `CredentialResolver` `AppContainer` already builds for model credentials,
+  with the run's `principal` threaded per call (`resolve`/`probe`/
+  `_factory_for`). Every failure stays `McpResolutionError`, so the
+  existing honest paths fire unchanged (probe → 502 `mcp_unreachable`;
+  run → terminal `run.failed` `error_kind="tool"`); a provider built
+  without a resolver short-circuits with a clear message on stored refs
+  instead of AttributeError. **Rejected**: the provider pre-materializing
+  a plaintext `dict[str,str]` into the connection ctor — breaks every
+  existing `connection_factory` fake, keeps plaintext alive for the whole
+  segment, and needs a second CredentialError→502 mapping. Storage stays
+  **signed-in-only** (credentials create 403s anonymous, `created_by` NOT
+  NULL); the UI hides the stored option in anonymous mode (never
+  show-disabled) with an env-vars hint. UI scope: add + edit refs + rotate
+  from the Tools page — edits PATCH the **full config** (wholesale
+  replace), rotation is the write-only `{secret}` PATCH with a
+  consequence-stating confirm.
+
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 
 Redis/queues · plugins & marketplace · multi-tenancy/auth · RAG · workflow
