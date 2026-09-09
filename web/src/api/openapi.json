@@ -2565,7 +2565,21 @@
           },
           "headers": {
             "additionalProperties": {
-              "$ref": "#/components/schemas/EnvCredentialRef"
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/EnvCredentialRef"
+                },
+                {
+                  "$ref": "#/components/schemas/StoredCredentialRef"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "env": "#/components/schemas/EnvCredentialRef",
+                  "stored": "#/components/schemas/StoredCredentialRef"
+                }
+              }
             },
             "type": "object",
             "title": "Headers"
@@ -2578,7 +2592,7 @@
           "url"
         ],
         "title": "McpHttpConfig",
-        "description": "A streamable-HTTP server. Headers carry env-var references \u2014 the\nresolved values are used at connect time and never stored."
+        "description": "A streamable-HTTP server. Headers carry credential references \u2014 an\nenv-var name or a stored credential id (the `CredentialRef` union, ADR\n0013); the resolved values are used at connect time and never stored."
       },
       "McpProbeResponse": {
         "properties": {
@@ -2801,7 +2815,21 @@
           },
           "env": {
             "additionalProperties": {
-              "$ref": "#/components/schemas/EnvCredentialRef"
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/EnvCredentialRef"
+                },
+                {
+                  "$ref": "#/components/schemas/StoredCredentialRef"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "env": "#/components/schemas/EnvCredentialRef",
+                  "stored": "#/components/schemas/StoredCredentialRef"
+                }
+              }
             },
             "type": "object",
             "title": "Env"

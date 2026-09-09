@@ -1,11 +1,17 @@
 import { http, HttpResponse } from "msw";
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { TEST_CAPABILITIES, renderWithProviders } from "@/test/render";
 import type { Capabilities } from "@/capabilities/types";
-import { mcpProbeFixture, whoamiFixture } from "@/test/handlers";
+import {
+  credentialFixture,
+  mcpHttpServerFixture,
+  mcpProbeFixture,
+  storedCredentialFixture,
+  whoamiFixture,
+} from "@/test/handlers";
 import { server } from "@/test/msw";
 
 import { ToolsPage } from "./ToolsPage";
@@ -170,5 +176,102 @@ describe("<ToolsPage/> MCP panel (S4)", () => {
       expect.stringContaining("fail tool resolution"),
     );
     confirmSpy.mockRestore();
+  });
+});
+describe("<ToolsPage/> header refs (ADR 0013)", () => {
+  async function openHttpForm(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole("button", { name: "Add server" }));
+    await user.type(await screen.findByLabelText("Name (slug)"), "webz-news");
+    await user.selectOptions(screen.getByLabelText("Transport"), "http");
+    await user.type(screen.getByLabelText("URL"), "https://news-search-mcp.webz.io/mcp");
+    await user.click(screen.getByRole("button", { name: "＋ Add header" }));
+  }
+
+  it("binds a header to a stored credential picked from the tenant's credentials", async () => {
+    const captured: { body: Record<string, unknown> | null } = { body: null };
+    server.use(
+      http.get("/v1/credentials", () =>
+        HttpResponse.json({ items: [credentialFixture, storedCredentialFixture] }),
+      ),
+      http.post("/v1/mcp/servers", async ({ request }) => {
+        captured.body = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json(mcpHttpServerFixture, { status: 201 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<ToolsPage />, { initialEntries: ["/tools"] });
+    await openHttpForm(user);
+
+    // the stored option exists signed-in; the picker lists credentials by name
+    await user.selectOptions(
+      await screen.findByLabelText("Value source for header 1"),
+      "stored",
+    );
+    await user.selectOptions(screen.getByLabelText("Credential for header 1"), "cred-2");
+    await user.type(screen.getByLabelText("Header name 1"), "Authorization");
+    await user.click(screen.getByRole("button", { name: "Create server" }));
+
+    expect(await screen.findByText("Added MCP server webz-news")).toBeInTheDocument();
+    const config = (captured.body?.config ?? {}) as Record<string, unknown>;
+    expect(config.headers).toEqual({
+      Authorization: { type: "stored", credential_id: "cred-2" },
+    });
+  });
+
+  it("creates a credential inline (sent once, provider mcp_header) and selects its id", async () => {
+    const credentialBodies: Record<string, unknown>[] = [];
+    let credentials: object[] = []; // the tenant starts with no credentials
+    server.use(
+      http.post("/v1/credentials", async ({ request }) => {
+        credentialBodies.push((await request.json()) as Record<string, unknown>);
+        credentials = [credentialFixture, storedCredentialFixture]; // the refetch sees it
+        return HttpResponse.json(storedCredentialFixture, { status: 201 });
+      }),
+      http.get("/v1/credentials", () => HttpResponse.json({ items: credentials })),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<ToolsPage />, { initialEntries: ["/tools"] });
+    await openHttpForm(user);
+
+    await user.selectOptions(await screen.findByLabelText("Value source for header 1"), "stored");
+    await user.click(screen.getByRole("button", { name: "＋ New credential" }));
+    await user.type(screen.getByLabelText("New credential name"), "webz-key");
+    await user.type(screen.getByLabelText("New credential secret"), "Bearer sk_webz_999");
+    await user.click(screen.getByRole("button", { name: "Save credential" }));
+
+    // the secret goes to the credentials route exactly once, never to the MCP create
+    expect(credentialBodies).toEqual([
+      { name: "webz-key", provider: "mcp_header", secret: "Bearer sk_webz_999" },
+    ]);
+    // the created id is auto-selected into the ref (it was blank — no rows yet)
+    await waitFor(() =>
+      expect(screen.getByLabelText("Credential for header 1")).toHaveValue("cred-2"),
+    );
+  });
+
+  it("offers env-var refs only in anonymous mode — the stored option is absent, not disabled", async () => {
+    server.use(
+      http.get("/v1/auth/whoami", () =>
+        HttpResponse.json({
+          tenant_id: "default",
+          mode: "anonymous",
+          user_id: null,
+          email: null,
+          display_name: "",
+          role: null,
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<ToolsPage />, { initialEntries: ["/tools"] });
+    await openHttpForm(user);
+
+    const source = await screen.findByLabelText("Value source for header 1");
+    const options = Array.from(source.querySelectorAll("option")).map((o) => o.value);
+    expect(options).toEqual(["env"]);
+    expect(
+      screen.getByText(/Storing API keys as encrypted credentials requires signing in/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "＋ New credential" })).not.toBeInTheDocument();
   });
 });

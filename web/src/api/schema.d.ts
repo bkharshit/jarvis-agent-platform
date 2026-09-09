@@ -849,8 +849,9 @@ export interface components {
         };
         /**
          * McpHttpConfig
-         * @description A streamable-HTTP server. Headers carry env-var references — the
-         *     resolved values are used at connect time and never stored.
+         * @description A streamable-HTTP server. Headers carry credential references — an
+         *     env-var name or a stored credential id (the `CredentialRef` union, ADR
+         *     0013); the resolved values are used at connect time and never stored.
          */
         McpHttpConfig: {
             /**
@@ -862,7 +863,7 @@ export interface components {
             url: string;
             /** Headers */
             headers?: {
-                [key: string]: components["schemas"]["EnvCredentialRef"];
+                [key: string]: components["schemas"]["EnvCredentialRef"] | components["schemas"]["StoredCredentialRef"];
             };
         };
         /**
@@ -960,7 +961,7 @@ export interface components {
             args?: string[];
             /** Env */
             env?: {
-                [key: string]: components["schemas"]["EnvCredentialRef"];
+                [key: string]: components["schemas"]["EnvCredentialRef"] | components["schemas"]["StoredCredentialRef"];
             };
         };
         /**

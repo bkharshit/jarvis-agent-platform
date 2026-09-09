@@ -14,6 +14,12 @@ export type McpServerCreate = components["schemas"]["McpServerCreate"];
 export type McpServerPatch = components["schemas"]["McpServerPatch"];
 export type McpProbeResponse = components["schemas"]["McpProbeResponse"];
 
+// ADR 0013: header/env refs widen to the stored variant — the same
+// credential-reference union the model credential_ref uses.
+export type CredentialRef =
+  | components["schemas"]["EnvCredentialRef"]
+  | components["schemas"]["StoredCredentialRef"];
+
 export const mcpServersQueryKey = ["mcp-servers"] as const;
 
 export function useMcpServers() {

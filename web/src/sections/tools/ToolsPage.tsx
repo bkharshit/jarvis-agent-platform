@@ -3,11 +3,16 @@ import type { FormEvent } from "react";
 
 import { useCreateMcpServer, useDeleteMcpServer, useMcpServers, useProbeMcpServer, useUpdateMcpServer } from "@/api/queries/mcp";
 import type { McpServer } from "@/api/queries/mcp";
-import { builtinToolsFull, mcpGate } from "@/capabilities/detail";
+import { useCreateCredential, useCredentials } from "@/api/queries/settings";
+import type { CredentialOut } from "@/api/queries/settings";
+import { builtinToolsFull, mcpGate, settingsFacts } from "@/capabilities/detail";
 import { SectionGate } from "@/capabilities/SectionGate";
 import { useCapabilities } from "@/capabilities/useCapabilities";
 import { useWhoami } from "@/api/queries/auth";
 import { toast } from "@/stores/toast";
+
+import { HeaderRefsEditor, headerRefsComplete } from "./HeaderRefsEditor";
+import type { HeaderRefs } from "./HeaderRefsEditor";
 
 // Tools registry — entirely payload-driven from the capabilities detail
 // block. Nothing about the builtin set is hardcoded here. The MCP panel
@@ -125,18 +130,22 @@ function McpServerRow({ server, canManage }: { server: McpServer; canManage: boo
 const inputClass =
   "w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm text-neutral-100";
 
-function AddServerForm() {
+function AddServerForm({ allowStored }: { allowStored: boolean }) {
   const create = useCreateMcpServer();
+  const { data: credentials } = useCredentials();
+  const createCredential = useCreateCredential();
   const [show, setShow] = useState(false);
   const [name, setName] = useState("");
   const [transport, setTransport] = useState<"stdio" | "http">("stdio");
   const [command, setCommand] = useState("");
   const [args, setArgs] = useState("");
   const [url, setUrl] = useState("");
+  const [headers, setHeaders] = useState<HeaderRefs>({});
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (name.trim() === "") return; // the API rejects a blank name — never send it
+    if (!headerRefsComplete(headers)) return; // blank header drafts never send
     const config =
       transport === "stdio"
         ? {
@@ -147,7 +156,12 @@ function AddServerForm() {
               .map((a) => a.trim())
               .filter((a) => a !== ""),
           }
-        : { type: "http" as const, url: url.trim() };
+        : {
+            type: "http" as const,
+            url: url.trim(),
+            // refs only — the secret went to /v1/credentials, never here
+            ...(Object.keys(headers).length > 0 ? { headers } : {}),
+          };
     create.mutate(
       { name: name.trim(), config, enabled: true },
       {
@@ -157,6 +171,7 @@ function AddServerForm() {
           setCommand("");
           setArgs("");
           setUrl("");
+          setHeaders({});
           toast("success", `Added MCP server ${name.trim()}`);
         },
         onError: (err) => toast("error", err.message),
@@ -233,6 +248,41 @@ function AddServerForm() {
           />
         </label>
       )}
+      {transport === "http" && (
+        <div className="col-span-2 text-sm">
+          <span className="text-neutral-400">
+            Headers (values are references — secrets are sent once, encrypted server-side)
+          </span>
+          <div className="mt-2">
+            <HeaderRefsEditor
+              value={headers}
+              onChange={setHeaders}
+              credentials={credentials ?? []}
+              allowStored={allowStored}
+              onInlineCreate={(credName, secret) =>
+                createCredential.mutate(
+                  { name: credName, provider: "mcp_header", secret },
+                  {
+                    onSuccess: (created: CredentialOut) =>
+                      setHeaders((current) => {
+                        const next: HeaderRefs = {};
+                        for (const [header, ref] of Object.entries(current)) {
+                          next[header] =
+                            ref.type === "stored" && ref.credential_id === ""
+                              ? { type: "stored", credential_id: created.id }
+                              : ref;
+                        }
+                        return next;
+                      }),
+                  },
+                )
+              }
+              creatingCredential={createCredential.isPending}
+              createError={createCredential.isError ? createCredential.error.message : null}
+            />
+          </div>
+        </div>
+      )}
       <button
         type="submit"
         disabled={create.isPending}
@@ -261,6 +311,7 @@ function AddServerForm() {
  * beyond the whoami-driven hiding of the mutating controls). */
 function McpPanel() {
   const { data: whoami } = useWhoami();
+  const { data: capabilities } = useCapabilities();
   const { data: servers, isPending, isError, error } = useMcpServers();
   // Anonymous mode is the default tenant's full access (the API's own rule):
   // the whoami route answers 200 with mode:"anonymous", role:null — NOT a
@@ -270,12 +321,19 @@ function McpPanel() {
     (whoami.mode === "anonymous" ||
       whoami.role === "owner" ||
       whoami.role === "admin");
+  // Stored-credential headers (ADR 0013) need a signed-in principal (the
+  // create route 403s anonymous) AND the master key configured — otherwise
+  // the option is absent from the form, never shown-disabled (rule 6).
+  const allowStored =
+    whoami != null &&
+    whoami.mode !== "anonymous" &&
+    settingsFacts(capabilities).credentialsAvailable;
 
   return (
     <section className="mt-10" aria-label="MCP servers">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">MCP servers</h2>
-        {canManage && <AddServerForm />}
+        {canManage && <AddServerForm allowStored={allowStored} />}
       </div>
       <p className="mt-1 text-sm text-neutral-400">
         Model Context Protocol servers — agents bind their tools by name

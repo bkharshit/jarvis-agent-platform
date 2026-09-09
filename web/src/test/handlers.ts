@@ -141,6 +141,32 @@ export const mcpServerFixture = {
   updated_at: "2026-09-08T09:00:00Z",
 };
 
+/** A header-auth http MCP server (ADR 0013) — refs only, never a secret. */
+export const mcpHttpServerFixture = {
+  id: "mcp-http-1",
+  name: "webz-news",
+  config: {
+    type: "http" as const,
+    url: "https://news-search-mcp.webz.io/mcp",
+    headers: {
+      Authorization: { type: "stored" as const, credential_id: "cred-2" },
+      "X-Api-Key": { type: "env" as const, env_var: "WEBZ_MCP_TOKEN" },
+    },
+  },
+  enabled: true,
+  tenant_id: "default",
+  created_at: "2026-09-09T09:00:00Z",
+  updated_at: "2026-09-09T09:00:00Z",
+};
+
+/** A BYOK credential holding an MCP header secret (provider metadata only). */
+export const storedCredentialFixture = {
+  ...credentialFixture,
+  id: "cred-2",
+  name: "webz-key",
+  provider: "mcp_header",
+};
+
 /** The probe's descriptor shape — full JARVIS names, approval default on. */
 export const mcpProbeFixture = {
   server: mcpServerFixture,
@@ -369,14 +395,29 @@ export const handlers = [
       { status: 404 },
     );
   }),
-  http.patch("/v1/mcp/servers/:server_id", () => HttpResponse.json(mcpServerFixture)),
+  // PATCH replaces config wholesale on the backend — echo the body's config
+  // so a test can catch the UI sending a partial config (which would wipe
+  // url/command/args server-side).
+  http.patch("/v1/mcp/servers/:server_id", async ({ request }) => {
+    const body = (await request.json()) as { config?: typeof mcpServerFixture.config };
+    if (body.config === undefined) return HttpResponse.json(mcpServerFixture);
+    return HttpResponse.json({ ...mcpServerFixture, config: body.config });
+  }),
   http.delete("/v1/mcp/servers/:server_id", () => new HttpResponse(null, { status: 204 })),
   http.post("/v1/mcp/servers/:server_id/probe", () =>
     HttpResponse.json(mcpProbeFixture),
   ),
   // --- BYOK credentials -----------------------------------------------------
   http.get("/v1/credentials", () => HttpResponse.json({ items: [credentialFixture] })),
-  http.post("/v1/credentials", () => HttpResponse.json(credentialFixture, { status: 201 })),
+  // The inline MCP credential create echoes the posted body (the created
+  // id is what the header picker then selects).
+  http.post("/v1/credentials", async ({ request }) => {
+    const body = (await request.json()) as { name?: string };
+    return HttpResponse.json(
+      { ...storedCredentialFixture, name: body.name ?? storedCredentialFixture.name },
+      { status: 201 },
+    );
+  }),
   http.patch("/v1/credentials/:credential_id", () => HttpResponse.json(credentialFixture)),
   http.delete("/v1/credentials/:credential_id", () => new HttpResponse(null, { status: 204 })),
 ];
