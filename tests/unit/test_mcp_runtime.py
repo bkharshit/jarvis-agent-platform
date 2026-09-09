@@ -14,7 +14,7 @@ from jarvis.config import Settings
 from jarvis.domain.agent import AgentDefinition, AgentVersion, ModelRef, StrategyConfig, ToolBinding
 from jarvis.domain.events import is_terminal, validate_event_sequence
 from jarvis.domain.execution import ExecutionContext
-from jarvis.domain.mcp import McpServer, McpStdioConfig
+from jarvis.domain.mcp import McpHttpConfig, McpServer, McpStdioConfig
 from jarvis.domain.message import ToolCall
 from jarvis.domain.tools import ToolDescriptor
 from jarvis.events.bus import InProcessEventSink
@@ -107,14 +107,16 @@ def _runtime(
     rows: set[str] | None = None,
     connections: dict[str, FakeConnection] | None = None,
     repo: _RecordingRepo | None = None,
+    mcp: McpToolProvider | None = None,
 ) -> AgentRuntime:
     base = InMemoryToolRegistry()
-    mcp = McpToolProvider(
-        FakeRepo(rows or set()),
-        base,
-        Settings(_env_file=None),
-        connection_factory=lambda server: connections[server.name],  # type: ignore[index]
-    )
+    if mcp is None:
+        mcp = McpToolProvider(
+            FakeRepo(rows or set()),
+            base,
+            Settings(_env_file=None),
+            connection_factory=lambda server: connections[server.name],  # type: ignore[index]
+        )
     return AgentRuntime(
         strategies=DefaultStrategyRegistry(),
         tools=base,
@@ -177,6 +179,42 @@ class TestResolutionFailure:
         assert result.error_kind == "tool"
         assert "ghost" in (result.error or "")
         assert [r.status for r in repo.finished] == ["failed"]
+
+    async def test_stored_header_ref_without_a_resolver_is_terminal_tool_failure(self):
+        """ADR 0013: a stored credential ref on a REAL connection with no
+        resolver wired fails resolution — the honest terminal tool failure
+        (D38), never an exception past the runtime."""
+        provider = MockModelProvider([turn("never")])
+        repo = _RecordingRepo()
+        base = InMemoryToolRegistry()
+
+        class _HttpRepo:
+            async def get_by_name(self, name, *, tenant_id=None):
+                if name != "httpx":
+                    return None
+                return McpServer(
+                    id="srv-http",
+                    name="httpx",
+                    config=McpHttpConfig(
+                        type="http",
+                        url="https://x/mcp",
+                        headers={"Authorization": {"type": "stored", "credential_id": "cred-9"}},
+                    ),
+                )
+
+        mcp = McpToolProvider(_HttpRepo(), base, Settings(_env_file=None))  # no resolver
+        runtime = _runtime(provider, repo=repo, mcp=mcp)
+        result = await runtime.run(
+            _version(_agent(tools=[ToolBinding(name="mcp__httpx__echo")])),
+            "hi",
+            _ctx("run-mcp-fail-3"),
+        )
+        assert result.status == "failed"
+        assert result.error_kind == "tool"
+        assert "cred-9" in (result.error or "")
+        assert provider.invocations == 0
+        terminal = [e for e in runtime.bus.get("run-mcp-fail-3").events if is_terminal(e)]
+        assert [t.type for t in terminal] == ["run.failed"]
 
 
 # --- recoverable call failure ---------------------------------------------------

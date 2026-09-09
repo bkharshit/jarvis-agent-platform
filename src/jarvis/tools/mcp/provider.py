@@ -17,8 +17,10 @@ from typing import Any
 
 from jarvis.config import Settings
 from jarvis.domain.agent import ToolBinding
+from jarvis.domain.auth import Principal
 from jarvis.domain.mcp import McpServer
 from jarvis.domain.tools import ToolContext, ToolDescriptor
+from jarvis.ports.credential import CredentialResolver
 from jarvis.ports.repository import McpServerRepo
 from jarvis.ports.tools import ToolRegistry
 from jarvis.tools.base import BaseTool
@@ -72,7 +74,9 @@ ConnectionFactory = Callable[[McpServer], McpServerConnection]
 
 class McpToolProvider:
     """The runtime's MCP seam. `connection_factory` is the unit-test seam —
-    the default builds real SDK connections."""
+    the default builds real SDK connections. `credential_resolver` feeds
+    stored credential refs at connect time (ADR 0013); the principal rides
+    per resolve/probe call, so the default factory is built per call."""
 
     def __init__(
         self,
@@ -81,15 +85,31 @@ class McpToolProvider:
         settings: Settings,
         *,
         connection_factory: ConnectionFactory | None = None,
+        credential_resolver: CredentialResolver | None = None,
     ) -> None:
         self._repo = repo
         self._base_registry = base_registry
         self._settings = settings
-        self._connection_factory: ConnectionFactory = connection_factory or (
-            lambda server: McpServerConnection(server, settings.mcp_connect_timeout)
+        self._connection_factory = connection_factory
+        self._credential_resolver = credential_resolver
+
+    def _factory_for(self, principal: Principal | None) -> ConnectionFactory:
+        if self._connection_factory is not None:
+            return self._connection_factory
+        return lambda server: McpServerConnection(
+            server,
+            self._settings.mcp_connect_timeout,
+            credential_resolver=self._credential_resolver,
+            principal=principal,
         )
 
-    async def resolve(self, bindings: list[ToolBinding], *, tenant_id: str | None) -> McpTooling:
+    async def resolve(
+        self,
+        bindings: list[ToolBinding],
+        *,
+        tenant_id: str | None,
+        principal: Principal | None = None,
+    ) -> McpTooling:
         """Build the segment's registry view. No `mcp__*` bindings → the
         builtin registry with nothing open (byte-identical behavior to
         today). Any resolution failure raises McpResolutionError naming the
@@ -117,7 +137,7 @@ class McpToolProvider:
                     )
                 if not server.enabled:
                     raise McpResolutionError(server_name, "the server is disabled")
-                connection = await self._connect(server)
+                connection = await self._connect(server, principal)
                 connections.append(connection)
                 server_prefix = f"mcp__{server_name}__"
                 for descriptor in await connection.descriptors():
@@ -140,11 +160,13 @@ class McpToolProvider:
                 await connection.close()
             raise
 
-    async def probe(self, server: McpServer) -> list[ToolDescriptor]:
+    async def probe(
+        self, server: McpServer, *, principal: Principal | None = None
+    ) -> list[ToolDescriptor]:
         """Connect fresh and list tools, persisting nothing (the API probe
         route). Resolution failures propagate — the route maps them to
         502 mcp_unreachable."""
-        connection = self._connection_factory(server)
+        connection = self._factory_for(principal)(server)
         try:
             await connection.connect()
             return await connection.descriptors()
@@ -164,8 +186,8 @@ class McpToolProvider:
             aclose=_no_op_close,
         )
 
-    async def _connect(self, server: McpServer) -> McpServerConnection:
-        connection = self._connection_factory(server)
+    async def _connect(self, server: McpServer, principal: Principal | None) -> McpServerConnection:
+        connection = self._factory_for(principal)(server)
         await connection.connect()
         return connection
 

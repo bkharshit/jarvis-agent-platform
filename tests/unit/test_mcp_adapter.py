@@ -176,7 +176,121 @@ def test_split_binding_name() -> None:
     assert _split_binding_name("mcp__x__") is None
 
 
+# --- stored credential refs (ADR 0013) -----------------------------------------
+
+
+class StubResolver:
+    """Duck-typed CredentialResolver: scripted results + call log."""
+
+    def __init__(self, outcome: object) -> None:
+        self._outcome = outcome
+        self.calls: list[tuple[object, str]] = []
+
+    async def resolve(self, principal: object, ref: object) -> object:
+        self.calls.append((principal, ref.credential_id))
+        if isinstance(self._outcome, Exception):
+            raise self._outcome
+        return self._outcome
+
+
+def _http_server(headers: dict[str, object]) -> McpServer:
+    from jarvis.domain.mcp import McpHttpConfig
+
+    return McpServer(
+        id="srv-http",
+        name="httpx",
+        config=McpHttpConfig(type="http", url="https://x/mcp", headers=headers),
+    )
+
+
+async def test_stored_header_materializes_through_the_resolver() -> None:
+    from jarvis.ports.credential import ResolvedMaterial
+
+    resolver = StubResolver(ResolvedMaterial(type="material", value="Bearer sk_live_1"))
+    server = _http_server({"Authorization": {"type": "stored", "credential_id": "cred-1"}})
+    connection = McpServerConnection(
+        server, connect_timeout=15.0, credential_resolver=resolver, principal="principal-1"
+    )
+    headers = await connection._resolve_headers(connection._server.config)
+    assert headers["Authorization"] == "Bearer sk_live_1"
+    # the principal rides through so the tenant-scoped decrypt can happen
+    assert resolver.calls == [("principal-1", "cred-1")]
+
+
+async def test_stored_header_without_a_resolver_is_a_clear_error() -> None:
+    server = _http_server({"Authorization": {"type": "stored", "credential_id": "cred-9"}})
+    connection = McpServerConnection(server, connect_timeout=15.0)
+    with pytest.raises(McpResolutionError, match="no credential resolver"):
+        await connection.connect()
+
+
+async def test_credential_failure_names_the_id_and_the_header() -> None:
+    from jarvis.ports.credential import CredentialError
+
+    resolver = StubResolver(CredentialError("credential 'cred-9' not found"))
+    server = _http_server({"Authorization": {"type": "stored", "credential_id": "cred-9"}})
+    connection = McpServerConnection(
+        server, connect_timeout=15.0, credential_resolver=resolver
+    )
+    with pytest.raises(McpResolutionError, match="cred-9.*Authorization|Authorization.*cred-9"):
+        await connection.connect()
+
+
+async def test_stored_env_ref_follows_the_same_path() -> None:
+    from jarvis.ports.credential import ResolvedMaterial
+
+    resolver = StubResolver(ResolvedMaterial(type="material", value="tok"))
+    server = McpServer(
+        id="srv-3",
+        name="weather",
+        config=McpStdioConfig(
+            type="stdio",
+            command="python",
+            env={"WEATHER_TOKEN": {"type": "stored", "credential_id": "cred-2"}},
+        ),
+    )
+    connection = McpServerConnection(
+        server, connect_timeout=15.0, credential_resolver=resolver
+    )
+    env = await connection._resolve_env(connection._server.config)
+    assert env["WEATHER_TOKEN"] == "tok"
+
+
+async def test_env_ref_resolution_on_the_stored_path_is_a_contract_error() -> None:
+    from jarvis.ports.credential import ResolvedEnv
+
+    resolver = StubResolver(ResolvedEnv(type="env", env_var="SOMETHING"))
+    server = _http_server({"Authorization": {"type": "stored", "credential_id": "cred-1"}})
+    connection = McpServerConnection(
+        server, connect_timeout=15.0, credential_resolver=resolver
+    )
+    with pytest.raises(McpResolutionError, match="env reference"):
+        await connection.connect()
+
+
 # --- provider grouping ----------------------------------------------------------
+
+
+async def test_default_factory_threads_resolver_and_principal() -> None:
+    from jarvis.domain.auth import Principal
+
+    base = InMemoryToolRegistry()
+    base.register(CalculatorTool())
+    resolver = StubResolver(None)
+    provider = McpToolProvider(
+        FakeRepo({}), base, Settings(_env_file=None), credential_resolver=resolver
+    )
+    principal = Principal(tenant_id="t1", mode="anonymous")
+    connection = provider._factory_for(principal)(SERVER)
+    # the real connection carries both — resolution happens at its connect
+    assert connection._credential_resolver is resolver
+    assert connection._principal == principal
+    # a custom factory is passed through untouched (the unit-test seam)
+    fake = FakeConnection(SERVER, ["echo"])
+    custom = McpToolProvider(
+        FakeRepo({}), base, Settings(_env_file=None), connection_factory=lambda server: fake
+    )
+    assert custom._factory_for(principal)(SERVER) is fake
 
 
 class FakeRepo:
