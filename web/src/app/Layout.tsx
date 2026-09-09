@@ -1,5 +1,8 @@
+import type { ReactNode } from "react";
 import { NavLink, Outlet } from "react-router";
 
+import { useWhoami } from "@/api/queries/auth";
+import { LoginScreen } from "@/auth/LoginScreen";
 import { Toaster } from "@/components/Toaster";
 import { SECTION_KEYS, SECTION_REGISTRY } from "@/capabilities/sectionRegistry";
 import { useCapabilities } from "@/capabilities/useCapabilities";
@@ -45,21 +48,38 @@ function Nav() {
   );
 }
 
+// The shell's 401 funnel: auth_mode=required and nobody is acting → the
+// sign-in surface replaces the whole shell. Hangs on whoami alone — the
+// capabilities payload itself 401s unsigned-in, so it can never gate this.
+// (S2 shipped the funnel on Settings only; every other section showed raw
+// 401 errors instead.)
+function AuthGate({ children }: { children: ReactNode }) {
+  const { data: whoami, isPending, isError } = useWhoami();
+  // null is a *state* (401), not a query error — but a query error (backend
+  // down) must not masquerade as "needs sign-in".
+  if (!isPending && !isError && whoami === null) {
+    return <LoginScreen />;
+  }
+  return <>{children}</>;
+}
+
 export function Layout() {
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100">
-      <div className="flex">
-        <aside className="w-52 shrink-0 border-r border-neutral-800">
-          <div className="px-4 py-4">
-            <span className="text-lg font-semibold tracking-tight">JARVIS</span>
-          </div>
-          <Nav />
-        </aside>
-        <main className="min-w-0 flex-1">
-          <Outlet />
-        </main>
+    <AuthGate>
+      <div className="min-h-screen bg-neutral-950 text-neutral-100">
+        <div className="flex">
+          <aside className="w-52 shrink-0 border-r border-neutral-800">
+            <div className="px-4 py-4">
+              <span className="text-lg font-semibold tracking-tight">JARVIS</span>
+            </div>
+            <Nav />
+          </aside>
+          <main className="min-w-0 flex-1">
+            <Outlet />
+          </main>
+        </div>
+        <Toaster />
       </div>
-      <Toaster />
-    </div>
+    </AuthGate>
   );
 }

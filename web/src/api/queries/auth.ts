@@ -34,8 +34,16 @@ export function useLogin() {
   return useMutation({
     mutationFn: (body: components["schemas"]["LoginRequest"]) =>
       unwrap(client.POST("/v1/auth/login", { body })),
-    // The cookie is set server-side; the whoami fact flips to it.
-    onSuccess: (whoami) => queryClient.setQueryData(whoamiQueryKey, whoami),
+    // The cookie is set server-side; the whoami fact flips to it — and every
+    // query that 401'd unsigned-in (capabilities included) refetches. whoami
+    // itself is excluded: setQueryData just wrote it; an immediate refetch
+    // would race the fresh session state.
+    onSuccess: (whoami) => {
+      queryClient.setQueryData(whoamiQueryKey, whoami);
+      void queryClient.invalidateQueries({
+        predicate: (query) => query.queryKey[0] !== "whoami",
+      });
+    },
   });
 }
 
