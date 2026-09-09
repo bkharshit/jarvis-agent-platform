@@ -5,8 +5,10 @@ by name (`mcp__<server>__<tool>`), so this module carries only the server's
 own identity + connectivity config. Config validation at the domain edge
 gives both the API its 422 and the repo a typed boundary (ADR 0002 pattern).
 
-Secrets stay references (ADR 0005): the config union carries env-var *names*
-(`EnvCredentialRef`), never values.
+Secrets stay references (ADR 0005): the config union carries credential
+*references* — an env-var name (`EnvCredentialRef`) or a stored BYOK
+credential id (`StoredCredentialRef`, the `CredentialRef` union; ADR 0013) —
+never values.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from jarvis.domain.agent import EnvCredentialRef
+from jarvis.domain.agent import CredentialRef
 
 
 class _Model(BaseModel):
@@ -31,16 +33,17 @@ class McpStdioConfig(_Model):
     type: Literal["stdio"]
     command: str = Field(min_length=1)
     args: list[str] = Field(default_factory=list)
-    env: dict[str, EnvCredentialRef] = Field(default_factory=dict)
+    env: dict[str, CredentialRef] = Field(default_factory=dict)
 
 
 class McpHttpConfig(_Model):
-    """A streamable-HTTP server. Headers carry env-var references — the
-    resolved values are used at connect time and never stored."""
+    """A streamable-HTTP server. Headers carry credential references — an
+    env-var name or a stored credential id (the `CredentialRef` union, ADR
+    0013); the resolved values are used at connect time and never stored."""
 
     type: Literal["http"]
     url: str
-    headers: dict[str, EnvCredentialRef] = Field(default_factory=dict)
+    headers: dict[str, CredentialRef] = Field(default_factory=dict)
 
     @field_validator("url")
     @classmethod

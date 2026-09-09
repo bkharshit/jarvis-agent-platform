@@ -62,6 +62,29 @@ async def test_create_and_get_roundtrip(repo: SqlMcpServerRepo) -> None:
     assert config.env["WEATHER_TOKEN"].env_var == "MCP_WEATHER_TOKEN"
 
 
+async def test_stored_credential_refs_roundtrip(repo: SqlMcpServerRepo) -> None:
+    """ADR 0013 §1: the config JSONB carries stored credential ids (never
+    secrets) and validates back through the same discriminated union."""
+    server = McpServer(
+        id=str(uuid4()),
+        name="http-headers",
+        config=McpHttpConfig(
+            type="http",
+            url="https://example.com/mcp",
+            headers={
+                "Authorization": {"type": "stored", "credential_id": "cred-1"},
+                "X-Api-Key": {"type": "env", "env_var": "MCP_X_API_KEY"},
+            },
+        ),
+    )
+    created = await repo.create(server)
+    loaded = await repo.get(created.id, tenant_id=TENANT)
+    assert loaded == created
+    headers = loaded.config.headers
+    assert headers["Authorization"].credential_id == "cred-1"  # type: ignore[union-attr]
+    assert headers["X-Api-Key"].env_var == "MCP_X_API_KEY"  # type: ignore[union-attr]
+
+
 async def test_get_by_name_shadows_shared_with_owned(repo: SqlMcpServerRepo, make_tenant) -> None:
     shared = await repo.create(_server())  # NULL tenant
     owned = await repo.create(_server(), tenant_id=TENANT)

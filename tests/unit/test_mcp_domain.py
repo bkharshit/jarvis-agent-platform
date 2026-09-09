@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from jarvis.domain.agent import EnvCredentialRef
+from jarvis.domain.agent import EnvCredentialRef, StoredCredentialRef
 from jarvis.domain.mcp import McpHttpConfig, McpServer, McpStdioConfig
 
 
@@ -36,6 +36,38 @@ def test_stdio_env_refs_carry_names_not_values() -> None:
     )
     assert isinstance(config.env["WEATHER_TOKEN"], EnvCredentialRef)
     assert config.env["WEATHER_TOKEN"].env_var == "MCP_WEATHER_TOKEN"
+
+
+def test_stdio_env_refs_accept_stored_credential_ids() -> None:
+    config = McpStdioConfig.model_validate(
+        _stdio(env={"WEATHER_TOKEN": {"type": "stored", "credential_id": "cred-1"}})
+    )
+    assert isinstance(config.env["WEATHER_TOKEN"], StoredCredentialRef)
+    assert config.env["WEATHER_TOKEN"].credential_id == "cred-1"
+
+
+def test_http_headers_carry_stored_credential_refs(  # ADR 0013 §1
+) -> None:
+    config = McpHttpConfig.model_validate(
+        _http(headers={"Authorization": {"type": "stored", "credential_id": "cred-1"}})
+    )
+    assert isinstance(config.headers["Authorization"], StoredCredentialRef)
+    assert config.headers["Authorization"].credential_id == "cred-1"
+
+
+def test_credential_ref_union_is_strict() -> None:
+    # extra="forbid" on both variants: a ref mixing shapes is invalid, not
+    # silently accepted.
+    with pytest.raises(ValidationError):
+        McpHttpConfig.model_validate(
+            _http(
+                headers={
+                    "Authorization": {"type": "stored", "credential_id": "x", "env_var": "y"}
+                }
+            )
+        )
+    with pytest.raises(ValidationError):
+        McpHttpConfig.model_validate(_http(headers={"Authorization": {"type": "env"}}))
 
 
 def test_config_union_discriminates_on_type() -> None:
