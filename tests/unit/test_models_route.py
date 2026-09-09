@@ -28,7 +28,10 @@ def _stub_container(settings: Settings | None = None) -> SimpleNamespace:
     # the AuthContext build reads the repo attributes (never used on this
     # route), so they exist as None placeholders.
     return SimpleNamespace(
-        settings=settings or Settings(),
+        # hermetic: the developer's gitignored ./.env now carries
+        # JARVIS_AUTH_MODE=required, which would 401 every case here (the
+        # S3 lesson — Settings(_env_file=None) everywhere)
+        settings=settings or Settings(_env_file=None),
         models=DefaultModelProviderFactory(),
         agents=None,
         executions=None,
@@ -69,7 +72,9 @@ class TestModelsRoute:
     @respx.mock
     async def test_absent_base_url_falls_back_to_settings(self, app: FastAPI):
         app.dependency_overrides[get_container] = lambda: _stub_container(
-            Settings(model_base_url=BASE)
+            # auth_mode pinned: init kwargs still lose to an exported
+            # JARVIS_AUTH_MODE in the developer's shell otherwise
+            Settings(model_base_url=BASE, auth_mode="anonymous")
         )
         route = respx.get(f"{BASE}/models").respond(status_code=200, json={"data": []})
         response = await _get(app, "?provider=openai_compatible")
