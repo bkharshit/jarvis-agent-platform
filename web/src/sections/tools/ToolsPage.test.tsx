@@ -9,6 +9,7 @@ import {
   credentialFixture,
   mcpHttpServerFixture,
   mcpProbeFixture,
+  mcpServerFixture,
   storedCredentialFixture,
   whoamiFixture,
 } from "@/test/handlers";
@@ -273,5 +274,114 @@ describe("<ToolsPage/> header refs (ADR 0013)", () => {
       screen.getByText(/Storing API keys as encrypted credentials requires signing in/),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "＋ New credential" })).not.toBeInTheDocument();
+  });
+});
+
+describe("<ToolsPage/> edit refs + rotate (ADR 0013)", () => {
+  /** The listing carries the http row (the default handler lists stdio only). */
+  function listHttpServer() {
+    server.use(
+      http.get("/v1/mcp/servers", () =>
+        HttpResponse.json({ items: [mcpHttpServerFixture] }),
+      ),
+      http.get("/v1/credentials", () =>
+        HttpResponse.json({ items: [credentialFixture, storedCredentialFixture] }),
+      ),
+    );
+  }
+
+  it("edits an http server's headers and PATCHes the FULL config — url survives", async () => {
+    listHttpServer();
+    const patches: Record<string, unknown>[] = [];
+    server.use(
+      http.patch("/v1/mcp/servers/:server_id", async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        patches.push(body);
+        return HttpResponse.json({
+          ...mcpHttpServerFixture,
+          config: body.config as typeof mcpHttpServerFixture.config,
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<ToolsPage />, { initialEntries: ["/tools"] });
+
+    await user.click(await screen.findByRole("button", { name: "Edit headers" }));
+    // Untouched editor never PATCHes — the submit stays disabled.
+    expect(screen.getByRole("button", { name: "Save refs" })).toBeDisabled();
+
+    // The X-Api-Key env ref is the second entry (Authorization is first).
+    const envVar = screen.getByLabelText("Env variable for header 2");
+    await user.clear(envVar);
+    await user.type(envVar, "WEBZ_MCP_TOKEN_V2");
+    await user.click(screen.getByRole("button", { name: "Save refs" }));
+
+    expect(await screen.findByText("Updated refs for webz-news")).toBeInTheDocument();
+    expect(patches).toHaveLength(1);
+    const config = patches[0]!.config as Record<string, unknown>;
+    // wholesale replace (routes/mcp.py) — the full config must ride along
+    expect(config.url).toBe(mcpHttpServerFixture.config.url);
+    expect(config.headers).toEqual({
+      Authorization: { type: "stored", credential_id: "cred-2" },
+      "X-Api-Key": { type: "env", env_var: "WEBZ_MCP_TOKEN_V2" },
+    });
+  });
+
+  it("edits a stdio server's env refs and PATCHes the FULL config — command survives", async () => {
+    const patches: Record<string, unknown>[] = [];
+    server.use(
+      http.patch("/v1/mcp/servers/:server_id", async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        patches.push(body);
+        return HttpResponse.json({
+          ...mcpServerFixture,
+          config: body.config as typeof mcpServerFixture.config,
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<ToolsPage />, { initialEntries: ["/tools"] });
+
+    await user.click(await screen.findByRole("button", { name: "Edit env" }));
+    await user.click(screen.getByRole("button", { name: "＋ Add header" }));
+    await user.type(screen.getByLabelText("Header name 1"), "WEATHER_API_KEY");
+    await user.type(screen.getByLabelText("Env variable for header 1"), "WEATHER_API_KEY");
+    await user.click(screen.getByRole("button", { name: "Save refs" }));
+
+    expect(await screen.findByText("Updated refs for fixtures")).toBeInTheDocument();
+    const config = patches[0]!.config as Record<string, unknown>;
+    expect(config.command).toBe("uvx"); // the wholesale-replace gotcha, stdio side
+    expect(config.args).toEqual(["mcp-server-time"]);
+    expect(config.env).toEqual({
+      WEATHER_API_KEY: { type: "env", env_var: "WEATHER_API_KEY" },
+    });
+  });
+
+  it("rotates a stored credential's secret from the row — sent once, never echoed", async () => {
+    listHttpServer();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const patches: Record<string, unknown>[] = [];
+    server.use(
+      http.patch("/v1/credentials/:credential_id", async ({ request }) => {
+        patches.push((await request.json()) as Record<string, unknown>);
+        return HttpResponse.json(credentialFixture);
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<ToolsPage />, { initialEntries: ["/tools"] });
+
+    // The stored ref renders with the credential's NAME (from the list, not the id)
+    expect(await screen.findByText(/→ webz-key/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Rotate secret" }));
+    await user.type(
+      screen.getByLabelText("New secret for webz-key"),
+      "Bearer sk_rotated_42",
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText("Rotated the secret for webz-key")).toBeInTheDocument();
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("webz-key"));
+    expect(patches).toEqual([{ secret: "Bearer sk_rotated_42" }]);
+    confirmSpy.mockRestore();
   });
 });

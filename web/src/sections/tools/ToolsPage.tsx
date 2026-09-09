@@ -13,6 +13,7 @@ import { toast } from "@/stores/toast";
 
 import { HeaderRefsEditor, headerRefsComplete } from "./HeaderRefsEditor";
 import type { HeaderRefs } from "./HeaderRefsEditor";
+import { RotateCredentialButton } from "./RotateCredentialButton";
 
 // Tools registry — entirely payload-driven from the capabilities detail
 // block. Nothing about the builtin set is hardcoded here. The MCP panel
@@ -57,12 +58,137 @@ function McpTools({ serverId }: { serverId: string }) {
   );
 }
 
-function McpServerRow({ server, canManage }: { server: McpServer; canManage: boolean }) {
+/** Refs on a server row: http rows carry `headers`, stdio rows carry `env` —
+ *  both the same CredentialRef map shape (ADR 0013). */
+function refsOf(config: McpServer["config"]): HeaderRefs {
+  if (config.type === "http") return (config.headers ?? {}) as HeaderRefs;
+  return (config.env ?? {}) as HeaderRefs;
+}
+
+function EditRefsForm({
+  server,
+  credentials,
+  allowStored,
+  onClose,
+}: {
+  server: McpServer;
+  credentials: CredentialOut[];
+  allowStored: boolean;
+  onClose: () => void;
+}) {
+  const update = useUpdateMcpServer();
+  const createCredential = useCreateCredential();
+  const [refs, setRefs] = useState<HeaderRefs>(refsOf(server.config));
+  // Enabled only once the shape actually differs from the row — an untouched
+  // editor never PATCHes.
+  const dirty = JSON.stringify(refs) !== JSON.stringify(refsOf(server.config));
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!dirty || !headerRefsComplete(refs)) return; // drafts never send
+    // The patch carries the FULL config — PATCH replaces config wholesale,
+    // so refs-only would wipe url/command/args server-side.
+    const config =
+      server.config.type === "http"
+        ? { ...server.config, headers: refs }
+        : { ...server.config, env: refs };
+    update.mutate(
+      { serverId: server.id, body: { config } },
+      {
+        onSuccess: () => {
+          toast("success", `Updated refs for ${server.name}`);
+          onClose();
+        },
+        onError: (err) => toast("error", err.message),
+      },
+    );
+  };
+
+  return (
+    <form
+      onSubmit={submit}
+      className="mt-3 rounded border border-neutral-800 bg-neutral-950 p-3"
+    >
+      <p className="mb-2 text-xs text-neutral-500">
+        {server.config.type === "http"
+          ? "Header refs — secrets are resolved at connect time, never stored here."
+          : "Subprocess env refs — values resolve at connect time, never stored here."}
+      </p>
+      <HeaderRefsEditor
+        value={refs}
+        onChange={setRefs}
+        credentials={credentials}
+        allowStored={allowStored}
+        onInlineCreate={(credName, secret) =>
+          createCredential.mutate(
+            { name: credName, provider: "mcp_header", secret },
+            {
+              onSuccess: (created: CredentialOut) =>
+                setRefs((current) => {
+                  const next: HeaderRefs = {};
+                  for (const [header, ref] of Object.entries(current)) {
+                    next[header] =
+                      ref.type === "stored" && ref.credential_id === ""
+                        ? { type: "stored", credential_id: created.id }
+                        : ref;
+                  }
+                  return next;
+                }),
+            },
+          )
+        }
+        creatingCredential={createCredential.isPending}
+        createError={createCredential.isError ? createCredential.error.message : null}
+      />
+      <div className="mt-3 flex items-center gap-3">
+        <button
+          type="submit"
+          disabled={!dirty || update.isPending}
+          className="cursor-pointer rounded bg-neutral-100 px-3 py-1.5 text-xs font-medium text-neutral-900 hover:bg-white disabled:cursor-not-allowed disabled:text-neutral-500"
+        >
+          {update.isPending ? "Saving…" : "Save refs"}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="cursor-pointer rounded border border-neutral-700 px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-900"
+        >
+          Cancel
+        </button>
+      </div>
+      {update.isError && (
+        <p className="mt-2 text-xs text-red-400" role="alert">
+          {update.error.message}
+        </p>
+      )}
+    </form>
+  );
+}
+
+function McpServerRow({
+  server,
+  canManage,
+  credentials,
+  allowStored,
+}: {
+  server: McpServer;
+  canManage: boolean;
+  credentials: CredentialOut[];
+  allowStored: boolean;
+}) {
   const update = useUpdateMcpServer();
   const remove = useDeleteMcpServer();
   const [showTools, setShowTools] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   const onError = (err: Error) => toast("error", err.message);
+  const refs = refsOf(server.config);
+  const storedRefs: { header: string; credentialId: string }[] = [];
+  for (const [header, ref] of Object.entries(refs)) {
+    if (ref.type === "stored") storedRefs.push({ header, credentialId: ref.credential_id });
+  }
+  const credentialName = (id: string) =>
+    credentials.find((c) => c.id === id)?.name ?? id;
 
   return (
     <li className="rounded border border-neutral-800 bg-neutral-900 p-4">
@@ -88,6 +214,17 @@ function McpServerRow({ server, canManage }: { server: McpServer; canManage: boo
           </button>
           {canManage && (
             <>
+              <button
+                type="button"
+                onClick={() => setEditing((v) => !v)}
+                className="cursor-pointer text-neutral-400 hover:text-neutral-200"
+              >
+                {editing
+                  ? "Hide editor"
+                  : server.config.type === "http"
+                    ? "Edit headers"
+                    : "Edit env"}
+              </button>
               <button
                 type="button"
                 onClick={() =>
@@ -122,6 +259,29 @@ function McpServerRow({ server, canManage }: { server: McpServer; canManage: boo
           )}
         </div>
       </div>
+      {canManage && storedRefs.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-neutral-500">
+          <span>Stored credential refs:</span>
+          {storedRefs.map((r) => (
+            <span key={r.header} className="flex items-center gap-2">
+              <span className="font-mono text-neutral-400">{r.header}</span>
+              <span>→ {credentialName(r.credentialId)}</span>
+              <RotateCredentialButton
+                credentialId={r.credentialId}
+                credentialName={credentialName(r.credentialId)}
+              />
+            </span>
+          ))}
+        </div>
+      )}
+      {editing && canManage && (
+        <EditRefsForm
+          server={server}
+          credentials={credentials}
+          allowStored={allowStored}
+          onClose={() => setEditing(false)}
+        />
+      )}
       {showTools && <McpTools serverId={server.id} />}
     </li>
   );
@@ -313,6 +473,7 @@ function McpPanel() {
   const { data: whoami } = useWhoami();
   const { data: capabilities } = useCapabilities();
   const { data: servers, isPending, isError, error } = useMcpServers();
+  const { data: credentials } = useCredentials();
   // Anonymous mode is the default tenant's full access (the API's own rule):
   // the whoami route answers 200 with mode:"anonymous", role:null — NOT a
   // null whoami. Only a signed-in member loses the mutating controls.
@@ -350,7 +511,13 @@ function McpPanel() {
       ) : (
         <ul className="mt-4 flex flex-col gap-2">
           {servers.map((server) => (
-            <McpServerRow key={server.id} server={server} canManage={canManage} />
+            <McpServerRow
+              key={server.id}
+              server={server}
+              canManage={canManage}
+              credentials={credentials ?? []}
+              allowStored={allowStored}
+            />
           ))}
         </ul>
       )}

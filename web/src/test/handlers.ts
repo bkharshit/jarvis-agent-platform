@@ -399,7 +399,7 @@ export const handlers = [
   // so a test can catch the UI sending a partial config (which would wipe
   // url/command/args server-side).
   http.patch("/v1/mcp/servers/:server_id", async ({ request }) => {
-    const body = (await request.json()) as { config?: typeof mcpServerFixture.config };
+    const body = (await request.json()) as { config?: Record<string, unknown> };
     if (body.config === undefined) return HttpResponse.json(mcpServerFixture);
     return HttpResponse.json({ ...mcpServerFixture, config: body.config });
   }),
