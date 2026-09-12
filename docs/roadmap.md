@@ -229,6 +229,19 @@ config).
 
 ## S4 — MCP tools
 
+> **Shipped 2026-09-08** (commits `f6c50d4..88a3a7c`; design pinned in
+> `docs/adr/0012-mcp-tool-providers.md`, D37/D38; live walkthrough in
+> `docs/walkthrough-s4.md`, live-verified 2026-09-12 including the §7
+> stored-header pass against real header-auth servers). Follow-on: MCP
+> server credential headers (ADR 0013/D39, commits `f701131..dd1d426`) —
+> `config.headers`/`env` widen to the full `credential_ref` union. UI:
+> Tools → MCP server management + agent-editor MCP picker. Delta from
+> the sketch below: servers are tenant-scoped registry rows (migration
+> 0007) — the sketch's "binding.config carries transport" was rejected
+> and recorded in the ADR; agents bind by name, the platform resolves
+> connectivity (the `credential_ref` precedent). SDK: mcp v2 line,
+> adapter isolated in one module.
+
 **Goal:** connect MCP servers as tool providers.
 
 **Rides on:** `ports/tools.py` — Phase 1 explicitly planned MCP as "just

@@ -251,6 +251,47 @@ terminal events, forward `text.delta` for a live transcript) is pinned in
 `tests/fixtures/strategies/jarvis-strategy-fixtures` (`plan_execute`,
 `tree_of_thoughts`) and a live walkthrough in `docs/walkthrough-s3.md`.
 
+### MCP tools (S4, ADR 0012)
+
+Any MCP server — stdio subprocess or streamable-http — is a tool
+provider. Servers are tenant-scoped registry rows managed over the API;
+nothing about connectivity ever lives in the agent definition. An agent
+binds a tool by NAME, `mcp__<server>__<tool>`, exactly like a builtin,
+and the platform resolves the server at run time:
+
+```bash
+# register (config carries NAMES only — secrets are env refs or stored
+# credential ids, see BYOK above; ADR 0013)
+curl -X POST localhost:8000/v1/mcp/servers -H 'content-type: application/json' \
+  -d '{"name":"fixtures",
+       "config":{"type":"stdio","command":"python","args":["server.py"]}}'
+
+curl -X POST localhost:8000/v1/mcp/servers/<id>/probe   # connect fresh, list tools
+```
+
+The semantics that matter:
+
+- **Discovery is not exposure.** The probe lists what a server offers;
+  only tools an agent actually binds ever register at run time — the
+  binding selection IS the allow-list.
+- **Approval is the default.** Every discovered descriptor carries
+  `requires_approval: true`; un-gating a tool is an explicit per-binding
+  choice (`config.requires_approval: false`, the S10 binding-wins rule).
+- **Resolution is eager, per segment, inside the runtime** (D38, the D28
+  pattern): a missing, disabled, or unreachable server ends the run as a
+  persisted terminal `run.failed` with `error_kind: "tool"` naming the
+  server — before a single token is spent, never a 500. Per-call
+  failures stay recoverable error `ToolResult`s.
+- **Connections close with the segment; a resume re-resolves.** Deleting
+  a server row leaves version snapshots intact (D1) — the next run of a
+  bound agent just fails resolution, honestly.
+
+In the web UI the **Tools** page manages servers (add with credential
+picker, probe, enable/disable, remove), and the agent editor's "Add MCP
+tool" picker lists a server's tools with a Requires-approval toggle. A
+live walkthrough (real stdio fixture server, pause→approve→resume, delete
+semantics, stored-header §7) is in `docs/walkthrough-s4.md`.
+
 ### Queue-backed runs and distributed mode (S1, ADR 0008)
 
 Every API run is enqueued in Postgres and executed by a worker; the API

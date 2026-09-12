@@ -130,12 +130,34 @@ uv run jarvis serve        # API on :8000
   per-agent value from the definition snapshot (loop bottom). Per-agent can
   only be *tighter* — a UI editor allowing 32 cannot raise the platform
   ceiling, and the failure message does not yet say which cap fired.
+- **A paused run returns to the worker BEFORE the claim is acked — acks
+  must be conditional** (S4, found live; pre-existing S10 race):
+  `SqlRunQueue.ack` succeeds only while the queue row is still
+  `status == "claimed"`, or a fast client's `enqueue_resume` (row →
+  pending) is clobbered back to done by the late ack and the resume is
+  never claimed — the blocking resume route then hangs forever
+  (regression-tested in test_resume_flow.py). Debug lesson:
+  `Task.print_stack` shows only the OUTERMOST coroutine frame — walk
+  `coro.cr_await` recursively to find the blocked await.
+- **Capabilities are derived facts read from the DB** (S4, found live):
+  the MCP panel flips on a listing of `mcp_servers` rows, so until the
+  registry migration is applied every `GET /v1/capabilities` 500s — and
+  the integration suite self-migrates, so it can never see this class
+  of bug.
+- **anyio TaskGroup wraps the real MCP handshake error in an
+  ExceptionGroup** (S4, found live): unwrap to the root cause
+  (`_root_cause` in tools/mcp/connection.py) or the probe's 502 names
+  the group, not the failure. Tavily's API wants the header value RAW —
+  `Authorization: <key>`, no `Bearer` prefix (verified by a curl matrix).
 
 ## Working agreement
 
-- Stages build autonomously, commit by commit. But **before starting a new
-  stage**: give a deep, layer-by-layer walkthrough of what was implemented
-  and why (tied to plan sections and ADRs), and confirm before proceeding.
+- Stages build autonomously, commit by commit. **Working agreement
+  (revised 2026-09-08)**: no per-stage deep design walkthroughs. Per
+  stage the ritual is ONE manual-testing session together, live in the
+  UI/API with the stage's `docs/walkthrough-<stage>.md` as the script,
+  then the docs-closure commit. Product-wide walkthroughs only on
+  explicit request.
 - Each new stage gets its own implementation-plan-style doc (commit
   sequence, gates, tests) at build time, the way Phase 1 did.
 - Prefer the existing seam over a new abstraction: every roadmap stage
