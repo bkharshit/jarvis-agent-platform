@@ -262,9 +262,7 @@ async def test_credential_failure_names_the_id_and_the_header() -> None:
 
     resolver = StubResolver(CredentialError("credential 'cred-9' not found"))
     server = _http_server({"Authorization": {"type": "stored", "credential_id": "cred-9"}})
-    connection = McpServerConnection(
-        server, connect_timeout=15.0, credential_resolver=resolver
-    )
+    connection = McpServerConnection(server, connect_timeout=15.0, credential_resolver=resolver)
     with pytest.raises(McpResolutionError, match="cred-9.*Authorization|Authorization.*cred-9"):
         await connection.connect()
 
@@ -282,9 +280,7 @@ async def test_stored_env_ref_follows_the_same_path() -> None:
             env={"WEATHER_TOKEN": {"type": "stored", "credential_id": "cred-2"}},
         ),
     )
-    connection = McpServerConnection(
-        server, connect_timeout=15.0, credential_resolver=resolver
-    )
+    connection = McpServerConnection(server, connect_timeout=15.0, credential_resolver=resolver)
     env = await connection._resolve_env(connection._server.config)
     assert env["WEATHER_TOKEN"] == "tok"
 
@@ -294,9 +290,7 @@ async def test_env_ref_resolution_on_the_stored_path_is_a_contract_error() -> No
 
     resolver = StubResolver(ResolvedEnv(type="env", env_var="SOMETHING"))
     server = _http_server({"Authorization": {"type": "stored", "credential_id": "cred-1"}})
-    connection = McpServerConnection(
-        server, connect_timeout=15.0, credential_resolver=resolver
-    )
+    connection = McpServerConnection(server, connect_timeout=15.0, credential_resolver=resolver)
     with pytest.raises(McpResolutionError, match="env reference"):
         await connection.connect()
 
