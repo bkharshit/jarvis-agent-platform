@@ -209,6 +209,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/executions/{run_id}/llm-trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Llm Trace
+         * @description The web-readable half of the JARVIS_LLM_TRACE debug trace (ADR 0014):
+         *     the process-local buffer holding the actual model request/response per
+         *     call. Empty entries is a 200, never an error — flag off, backend
+         *     restarted since the run, or the run executed in a separate worker
+         *     process (distributed mode keeps the log as its only trace).
+         */
+        get: operations["get_llm_trace_v1_executions__run_id__llm_trace_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/executions/{run_id}/cancel": {
         parameters: {
             query?: never;
@@ -835,6 +859,38 @@ export interface components {
             type: "iteration.started";
             /** Iteration */
             iteration: number;
+        };
+        /**
+         * LlmTraceEntry
+         * @description One model call's actual request/response (ADR 0014, debug only) —
+         *     served from the process-local buffer, never persisted.
+         */
+        LlmTraceEntry: {
+            /** Iteration */
+            iteration: number;
+            /** Method */
+            method: string;
+            /** Provider */
+            provider: string;
+            /** Model */
+            model: string;
+            /** At */
+            at: string;
+            /** Request */
+            request: {
+                [key: string]: unknown;
+            };
+            /** Response */
+            response?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** LlmTraceResponse */
+        LlmTraceResponse: {
+            /** Run Id */
+            run_id: string;
+            /** Entries */
+            entries: components["schemas"]["LlmTraceEntry"][];
         };
         /**
          * LoginRequest
@@ -2150,6 +2206,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExecutionDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_llm_trace_v1_executions__run_id__llm_trace_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmTraceResponse"];
                 };
             };
             /** @description Validation Error */

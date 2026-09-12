@@ -168,6 +168,13 @@ export function humanInTheLoop(capabilities: Capabilities | undefined): boolean 
   return detail?.human_in_the_loop === true;
 }
 
+/** ADR 0014: the debug LLM trace rides the JARVIS_LLM_TRACE settings flag —
+ * when off, the trace route returns empty and the UI section stays hidden. */
+export function llmTraceEnabled(capabilities: Capabilities | undefined): boolean {
+  const detail = asRecord(capabilities?.sections.executions?.detail);
+  return detail?.llm_trace === true;
+}
+
 // --- plugins (S3, D35) ------------------------------------------------------
 
 export interface StrategyInfo {

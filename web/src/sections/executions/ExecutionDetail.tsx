@@ -6,12 +6,15 @@ import { client, unwrap } from "@/api/client";
 import {
   executionQueryKey,
   useExecution,
+  useLlmTrace,
   useReplayEvents,
 } from "@/api/queries/executions";
 import { contentToText } from "@/components/messageContent";
 import { EventTimeline } from "@/components/EventTimeline";
 import { PauseCard } from "@/components/PauseCard";
 import { SectionGate } from "@/capabilities/SectionGate";
+import { llmTraceEnabled } from "@/capabilities/detail";
+import { useCapabilities } from "@/capabilities/useCapabilities";
 import {
   flushPending,
   initialRunConsoleState,
@@ -282,6 +285,8 @@ function ExecutionDetailInner() {
         )}
       </section>
 
+      <LlmTraceSection runId={runId} status={run.status} />
+
       <Link to="/executions" className="mt-8 inline-block text-sm text-neutral-400 underline">
         ← All executions
       </Link>
@@ -294,5 +299,61 @@ export function ExecutionDetailPage() {
     <SectionGate sectionKey="executions">
       <ExecutionDetailInner />
     </SectionGate>
+  );
+}
+
+/** ADR 0014: the debug LLM trace — the actual model request/response per
+ * call, from the backend's in-memory buffer. Hidden entirely when
+ * JARVIS_LLM_TRACE is off. Polls while the run is live so entries appear
+ * as iterations happen; empty state explains why (restart / worker). */
+const TERMINAL_RUN_STATUSES = ["succeeded", "failed", "cancelled", "timed_out"];
+
+function LlmTraceSection({ runId, status }: { runId: string; status: string }) {
+  const { data: capabilities } = useCapabilities();
+  const enabled = llmTraceEnabled(capabilities);
+  const live = enabled && !TERMINAL_RUN_STATUSES.includes(status);
+  const { data, isPending } = useLlmTrace(runId, { enabled, live });
+  if (!enabled) return null;
+
+  return (
+    <section className="mt-8" data-testid="llm-trace">
+      <h2 className="text-sm font-medium text-neutral-300">LLM trace</h2>
+      {isPending ? (
+        <p className="mt-2 text-sm text-neutral-500">Loading trace…</p>
+      ) : (data?.entries.length ?? 0) === 0 ? (
+        <p className="mt-2 text-sm text-neutral-500">
+          No trace recorded — JARVIS_LLM_TRACE was off, the backend restarted
+          since this run, or a separate worker process executed it.
+        </p>
+      ) : (
+        <ul className="mt-2 flex flex-col gap-2">
+          {data!.entries.map((entry, i) => (
+            <li key={i}>
+              <details className="rounded bg-neutral-900 p-3">
+                <summary className="cursor-pointer text-xs text-neutral-400">
+                  iteration {entry.iteration} · {entry.provider}/{entry.model} ·{" "}
+                  {entry.method}
+                  {entry.response === null && " · no response (failed call)"}
+                </summary>
+                <div className="mt-2 flex flex-col gap-2">
+                  <div>
+                    <p className="text-xs text-neutral-500">Request</p>
+                    <pre className="mt-1 max-h-96 overflow-auto rounded bg-neutral-950 p-2 font-mono text-xs text-neutral-300">
+                      {JSON.stringify(entry.request, null, 2)}
+                    </pre>
+                  </div>
+                  <div>
+                    <p className="text-xs text-neutral-500">Response</p>
+                    <pre className="mt-1 max-h-96 overflow-auto rounded bg-neutral-950 p-2 font-mono text-xs text-neutral-300">
+                      {JSON.stringify(entry.response, null, 2)}
+                    </pre>
+                  </div>
+                </div>
+              </details>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

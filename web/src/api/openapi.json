@@ -626,6 +626,49 @@
         }
       }
     },
+    "/v1/executions/{run_id}/llm-trace": {
+      "get": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Get Llm Trace",
+        "description": "The web-readable half of the JARVIS_LLM_TRACE debug trace (ADR 0014):\nthe process-local buffer holding the actual model request/response per\ncall. Empty entries is a 200, never an error \u2014 flag off, backend\nrestarted since the run, or the run executed in a separate worker\nprocess (distributed mode keeps the log as its only trace).",
+        "operationId": "get_llm_trace_v1_executions__run_id__llm_trace_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmTraceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/executions/{run_id}/cancel": {
       "post": {
         "tags": [
@@ -2530,6 +2573,81 @@
           "iteration"
         ],
         "title": "IterationStarted"
+      },
+      "LlmTraceEntry": {
+        "properties": {
+          "iteration": {
+            "type": "integer",
+            "title": "Iteration"
+          },
+          "method": {
+            "type": "string",
+            "title": "Method"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "at": {
+            "type": "string",
+            "title": "At"
+          },
+          "request": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Request"
+          },
+          "response": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "iteration",
+          "method",
+          "provider",
+          "model",
+          "at",
+          "request"
+        ],
+        "title": "LlmTraceEntry",
+        "description": "One model call's actual request/response (ADR 0014, debug only) \u2014\nserved from the process-local buffer, never persisted."
+      },
+      "LlmTraceResponse": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/LlmTraceEntry"
+            },
+            "type": "array",
+            "title": "Entries"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "run_id",
+          "entries"
+        ],
+        "title": "LlmTraceResponse"
       },
       "LoginRequest": {
         "properties": {

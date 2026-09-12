@@ -64,3 +64,21 @@ export function useReplayEvents(runId: string | undefined) {
       ),
   });
 }
+
+/** ADR 0014 debug trace: the actual model request/response per call, from
+ * the backend's process-local buffer. Polls while the run is live so trace
+ * entries appear as iterations happen; empty when the flag is off, the
+ * backend restarted, or a separate worker executed the run. `enabled`
+ * follows the capabilities flag so the section can render null without a
+ * conditional hook. */
+export function useLlmTrace(runId: string, options: { enabled: boolean; live: boolean }) {
+  return useQuery({
+    queryKey: [...executionQueryKey(runId), "llm-trace"],
+    enabled: options.enabled,
+    queryFn: () =>
+      unwrap(
+        client.GET("/v1/executions/{run_id}/llm-trace", { params: { path: { run_id: runId! } } }),
+      ),
+    refetchInterval: options.live ? 2000 : false,
+  });
+}
