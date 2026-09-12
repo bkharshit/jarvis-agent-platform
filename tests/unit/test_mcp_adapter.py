@@ -143,6 +143,39 @@ async def test_list_failure_is_resolution_error() -> None:
         await connection.descriptors()
 
 
+class _RejectingEnterClient:
+    """Duck-typed SDK Client whose __aenter__ raises what anyio TaskGroups
+    actually raise: the real error wrapped in an ExceptionGroup."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    async def __aenter__(self) -> object:
+        raise ExceptionGroup("unhandled errors in a TaskGroup", [self._exc])
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+
+async def test_handshake_failure_names_the_root_cause_not_the_task_group() -> None:
+    # Found live (tavily probe): a 401 reject surfaces as MCPError wrapped
+    # in anyio's ExceptionGroup — the message must name THAT, not "1
+    # sub-exception".
+    from mcp.shared.exceptions import MCPError
+
+    client = _RejectingEnterClient(
+        MCPError(code=-32000, message="Server returned an error response")
+    )
+
+    async def fake_build() -> object:
+        return client
+
+    connection = McpServerConnection(SERVER, connect_timeout=15.0)
+    connection._build_client = fake_build  # type: ignore[method-assign]
+    with pytest.raises(McpResolutionError, match="MCPError: Server returned an error response"):
+        await connection.connect()
+
+
 def test_sanitize_replaces_invalid_chars() -> None:
     seen: set[str] = set()
     assert _sanitize("a b/c", seen) == "a_b_c"

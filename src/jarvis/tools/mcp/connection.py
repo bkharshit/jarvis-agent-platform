@@ -63,6 +63,18 @@ def _sanitize(raw: str, seen: set[str]) -> str:
     return candidate
 
 
+def _root_cause(exc: BaseException) -> BaseException:
+    """The SDK/anyio wraps handshake failures in TaskGroup ExceptionGroups —
+    the useful error is the innermost one (an MCPError, an httpx status),
+    not the group's sub-exception count."""
+    seen = exc
+    while isinstance(seen, BaseExceptionGroup):
+        subs = seen.exceptions
+        non_groups = [s for s in subs if not isinstance(s, BaseExceptionGroup)]
+        seen = non_groups[0] if non_groups else subs[0]
+    return seen
+
+
 class McpServerConnection:
     """The connection seam. Unit tests substitute their own objects for
     this class; the provider only needs the async-CM + descriptors/call
@@ -111,7 +123,7 @@ class McpServerConnection:
             detail = (
                 f"handshake timed out after {self._connect_timeout}s"
                 if isinstance(exc, TimeoutError)
-                else f"handshake failed: {type(exc).__name__}: {exc}"
+                else f"handshake failed: {type(_root_cause(exc)).__name__}: {_root_cause(exc)}"
             )
             raise McpResolutionError(self._server.name, detail) from exc
         self._client = client
