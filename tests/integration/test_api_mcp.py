@@ -276,11 +276,11 @@ async def test_stored_header_resolves_then_connects_and_the_secret_stays_hidden(
     owner = await _user(container, "mcp-owner@example.com", role="owner")
     await _login(client, owner.email)
     cred = (
-            await client.post(
-                "/v1/credentials",
-                json={"name": "webz-key", "provider": "mcp_header", "secret": SECRET},
-            )
-        ).json()
+        await client.post(
+            "/v1/credentials",
+            json={"name": "webz-key", "provider": "mcp_header", "secret": SECRET},
+        )
+    ).json()
     created = await client.post(
         "/v1/mcp/servers",
         json=_http_body(

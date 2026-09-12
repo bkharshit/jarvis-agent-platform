@@ -61,9 +61,7 @@ def test_credential_ref_union_is_strict() -> None:
     with pytest.raises(ValidationError):
         McpHttpConfig.model_validate(
             _http(
-                headers={
-                    "Authorization": {"type": "stored", "credential_id": "x", "env_var": "y"}
-                }
+                headers={"Authorization": {"type": "stored", "credential_id": "x", "env_var": "y"}}
             )
         )
     with pytest.raises(ValidationError):

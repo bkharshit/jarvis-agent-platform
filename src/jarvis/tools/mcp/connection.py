@@ -184,8 +184,7 @@ class McpServerConnection:
         except CredentialError as exc:
             raise McpResolutionError(
                 self._server.name,
-                f"credential {ref.credential_id!r} (for {label}) failed to"
-                f" resolve: {exc.message}",
+                f"credential {ref.credential_id!r} (for {label}) failed to resolve: {exc.message}",
             ) from None
         if isinstance(resolved, ResolvedEnv):
             # A resolver contract bug — never pass an env-var NAME through
