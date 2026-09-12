@@ -53,6 +53,7 @@ from jarvis.ports.strategy import (
 from jarvis.ports.tools import ToolRegistry
 from jarvis.prompt.engine import PromptContext, PromptEngine
 from jarvis.runtime.limits import RunLimits
+from jarvis.runtime.llm_trace import TracedModelClient
 from jarvis.tools.mcp.errors import McpResolutionError
 from jarvis.tools.mcp.provider import McpTooling, McpToolProvider
 from jarvis.tools.runtime import ToolRuntime
@@ -98,6 +99,7 @@ class AgentRuntime:
         conversations: ConversationRepo | None = None,
         limits: RunLimits | None = None,
         mcp: McpToolProvider | None = None,
+        trace_llm: bool = False,
     ) -> None:
         self._strategies = strategies
         self._tools = tools
@@ -109,6 +111,7 @@ class AgentRuntime:
         self._conversations = conversations
         self._limits = limits
         self._mcp = mcp
+        self._trace_llm = trace_llm
         self._live_tokens: dict[str, ExecutionContext] = {}
 
     @property
@@ -165,6 +168,8 @@ class AgentRuntime:
             # (D5), never an exception past the runtime (which the worker
             # would treat as a claim failure and retry forever).
             client = await self._models.resolve(agent.model, principal=ctx.principal)
+            if self._trace_llm:
+                client = TracedModelClient(client, ctx)
             # S4 (D38): MCP toolset resolution is the same seam, third
             # application — its failure is a persisted terminal `tool`
             # state naming the server, before any token is spent.
@@ -703,6 +708,8 @@ class AgentRuntime:
                     run_input = row.input
                     ctx.usage = row.total_usage.model_copy()
             client = await self._models.resolve(agent.model, principal=ctx.principal)
+            if self._trace_llm:
+                client = TracedModelClient(client, ctx)
             tooling = await self._resolve_tooling(agent, ctx)  # S4 (D38): re-resolve per segment
             result = await self._resume_segment(
                 run_input, ctx, sink, client, agent, started_at, resume, tooling

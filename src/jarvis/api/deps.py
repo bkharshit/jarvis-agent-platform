@@ -135,6 +135,7 @@ class AppContainer:
             conversations=conversations,
             limits=limits,
             mcp=mcp,
+            trace_llm=settings.llm_trace,
         )
         worker = Worker(
             queue=queue,

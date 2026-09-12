@@ -69,6 +69,12 @@ class Settings(BaseSettings):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
+    # --- debug ------------------------------------------------------------
+    # Print-and-forget LLM trace: log every model request/response (the
+    # actual messages incl. the system prompt + tool schemas) to the backend
+    # log. Nothing is stored — no DB, no API, no events.
+    llm_trace: bool = False
+
     # --- HTTP server -----------------------------------------------------
     host: str = "127.0.0.1"
     port: int = 8000
