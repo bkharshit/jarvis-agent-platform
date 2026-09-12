@@ -355,6 +355,19 @@ the code.
   replace), rotation is the write-only `{secret}` PATCH with a
   consequence-stating confirm.
 
+- **D40 (2026-09-12) — LLM trace gains a web-readable in-memory buffer
+  (ADR 0014).** `JARVIS_LLM_TRACE` keeps logging, and the same
+  request/response payloads land in `LlmTraceBuffer` — a bounded
+  OrderedDict keyed by run_id (most recent ~20 runs), read by
+  `GET /v1/executions/{run_id}/llm-trace` behind the standard scoped
+  executions guard (foreign run → 404). Disclosure is
+  `sections.executions.detail.llm_trace` (the `human_in_the_loop`
+  pattern), not a new capabilities section — `observability` stays
+  reserved for S7. Nothing persisted: no table, no event type, restart
+  loses it. Distributed mode degrades to log-only (worker processes hold
+  the buffer); documented, not engineered around — a DB-backed trace was
+  explicitly rejected as reversing the debug-only spirit.
+
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 
 Redis/queues · plugins & marketplace · multi-tenancy/auth · RAG · workflow

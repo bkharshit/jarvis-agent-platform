@@ -327,7 +327,7 @@ alongside it.
 | `JARVIS_WORKER_CONCURRENCY` | `4` | Runs a single worker executes concurrently |
 | `JARVIS_AUTH_MODE` | `anonymous` | `anonymous` (fixed default tenant) or `required` (401 without credentials — S2/ADR 0009) |
 | `JARVIS_CREDENTIALS_MASTER_KEY` | `JARVIS_CREDENTIALS_MASTER_KEY` | *Name* of the env var holding the base64 32-byte BYOK master key (ADR 0006; unset → 503 `credentials_unavailable`) |
-| `JARVIS_LLM_TRACE` | `false` | Debug only: log every model request (messages incl. the system prompt + tool schemas) and response to the backend log, tagged with run id + iteration. Print-and-forget — nothing is stored |
+| `JARVIS_LLM_TRACE` | `false` | Debug only: log every model request (messages incl. the system prompt + tool schemas) and response to the backend log, tagged with run id + iteration, and buffer them for the web — the execution detail page shows a per-iteration trace when on. In-memory only (embedded worker), lost on restart — nothing is stored |
 | `JARVIS_HOST` / `JARVIS_PORT` | `127.0.0.1` / `8000` | HTTP bind |
 
 ## Development
