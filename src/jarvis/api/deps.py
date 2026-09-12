@@ -32,6 +32,7 @@ from jarvis.persistence.repositories import (
 )
 from jarvis.runtime.agent_runtime import AgentRuntime
 from jarvis.runtime.limits import RunLimits
+from jarvis.runtime.llm_trace import LlmTraceBuffer
 from jarvis.runtime.worker import Worker, worker_persist
 from jarvis.strategies.plugins import PluginLoadResult, load_strategy_plugins
 from jarvis.strategies.registry import DefaultStrategyRegistry
@@ -136,6 +137,7 @@ class AppContainer:
             limits=limits,
             mcp=mcp,
             trace_llm=settings.llm_trace,
+            trace_buffer=LlmTraceBuffer(),
         )
         worker = Worker(
             queue=queue,

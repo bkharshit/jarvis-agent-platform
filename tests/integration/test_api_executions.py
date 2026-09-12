@@ -246,3 +246,88 @@ async def test_conversation_messages_endpoint(client, container, mock):
 
     missing = await client.get(f"/v1/conversations/{definition.id}/nope/messages")
     assert missing.status_code == 404
+
+
+# --- LLM trace route (ADR 0014) -------------------------------------------------
+
+
+@pytest.mark.db
+async def test_llm_trace_route_serves_the_buffered_entries(client, container, agent, mock):
+    from jarvis.models.mock import turn
+
+    # Flip the debug flag on the live container (settings default off).
+    container.settings.llm_trace = True
+    container.runtime._trace_llm = True
+    mock.add_turn(turn("traced answer"))
+    run_id = (await client.post(f"/v1/agents/{agent.id}/run", json={"input": "hi"})).json()[
+        "run_id"
+    ]
+
+    resp = await client.get(f"/v1/executions/{run_id}/llm-trace")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["run_id"] == run_id
+    assert len(body["entries"]) == 1
+    entry = body["entries"][0]
+    assert entry["method"] == "stream"
+    assert entry["request"]["messages"][-1] == {
+        "role": "user",
+        "content": "hi",
+        "tool_calls": None,
+        "tool_call_id": None,
+        "name": None,
+        "created_at": entry["request"]["messages"][-1]["created_at"],
+    }  # the ACTUAL input — the system prompt (fixture agent has none) would sit at [0]
+    assert entry["response"] is not None
+
+
+@pytest.mark.db
+async def test_llm_trace_route_empty_is_a_200_not_an_error(client, agent, mock):
+    from jarvis.models.mock import turn
+
+    mock.add_turn(turn("quiet"))
+    run_id = (await client.post(f"/v1/agents/{agent.id}/run", json={"input": "hi"})).json()[
+        "run_id"
+    ]
+
+    resp = await client.get(f"/v1/executions/{run_id}/llm-trace")
+    assert resp.status_code == 200
+    assert resp.json() == {"run_id": run_id, "entries": []}
+
+
+@pytest.mark.db
+async def test_llm_trace_route_unknown_run_404(client):
+    resp = await client.get("/v1/executions/missing/llm-trace")
+    assert resp.status_code == 404
+
+
+@pytest.mark.db
+async def test_llm_trace_route_is_tenant_scoped(client, container, agent, mock):
+    from jarvis.models.mock import turn
+    from jarvis.security import generate_api_key, hash_api_key, hash_password, key_prefix
+
+    mock.add_turn(turn("mine"))
+    run_id = (await client.post(f"/v1/agents/{agent.id}/run", json={"input": "hi"})).json()[
+        "run_id"
+    ]
+
+    await container.auth.create_tenant("acme-b", "Tenant acme-b")
+    user = await container.auth.create_user(
+        tenant_id="acme-b",
+        email="owner@acme-b.test",
+        password_hash=hash_password("pw"),
+        role="owner",
+    )
+    plaintext = generate_api_key()
+    await container.auth.create_api_key(
+        tenant_id="acme-b",
+        user_id=user.id,
+        name="e2e",
+        key_hash=hash_api_key(plaintext),
+        key_prefix=key_prefix(plaintext),
+    )
+
+    foreign = await client.get(
+        f"/v1/executions/{run_id}/llm-trace", headers={"Authorization": f"Bearer {plaintext}"}
+    )
+    assert foreign.status_code == 404  # D29: no existence leak

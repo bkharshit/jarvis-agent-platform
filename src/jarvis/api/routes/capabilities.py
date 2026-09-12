@@ -141,7 +141,8 @@ async def build_capabilities(
         elif key == "executions":
             # S10: human-in-the-loop is live — pause frames, the resume
             # route, and the awaiting_input inbox are real (UI enablement).
-            detail = {"human_in_the_loop": True}
+            # ADR 0014: the debug LLM trace view rides the settings flag.
+            detail = {"human_in_the_loop": True, "llm_trace": container.settings.llm_trace}
         elif key == "models":
             detail = await _model_providers_detail(container)
         elif key == "plugins":

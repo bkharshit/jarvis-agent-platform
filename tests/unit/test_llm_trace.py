@@ -27,7 +27,7 @@ from jarvis.models.types import (
 )
 from jarvis.ports.model import ModelClient
 from jarvis.runtime.agent_runtime import AgentRuntime
-from jarvis.runtime.llm_trace import TracedModelClient
+from jarvis.runtime.llm_trace import LlmTraceBuffer, TracedModelClient
 from jarvis.strategies.registry import DefaultStrategyRegistry
 from jarvis.tools.registry import InMemoryToolRegistry
 from jarvis.tools.runtime import ToolRuntime
@@ -201,6 +201,7 @@ def _runtime(provider: MockModelProvider, *, trace_llm: bool) -> AgentRuntime:
         conversations=repo,
         executions=repo,
         trace_llm=trace_llm,
+        trace_buffer=LlmTraceBuffer(),
     )
 
 
@@ -232,3 +233,75 @@ async def test_runtime_without_the_flag_stays_silent(caplog: pytest.LogCaptureFi
 
     assert result.status == "succeeded"
     assert not [r for r in caplog.records if r.name == TRACE_LOGGER]
+
+
+# --- the buffer (ADR 0014) ----------------------------------------------------
+
+
+async def test_buffer_records_request_then_fills_response():
+    buffer = LlmTraceBuffer()
+    traced = TracedModelClient(FakeClient(), _ctx(), buffer=buffer)
+
+    await traced.generate(_request())
+
+    entries = buffer.get("run-trace")
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["method"] == "generate"
+    assert entry["provider"] == "ollama" and entry["model"] == "gemma4:31b"
+    assert entry["request"]["messages"][0]["content"] == "You are a test agent."
+    assert entry["response"] is not None
+    assert entry["response"]["message"]["content"] == "the answer"
+    assert entry["at"]  # timestamped
+
+
+async def test_buffer_keeps_the_failed_request_with_a_null_response():
+    buffer = LlmTraceBuffer()
+    traced = TracedModelClient(
+        FakeClient(error=ModelError("boom", provider="p", model="m")), _ctx(), buffer=buffer
+    )
+
+    with pytest.raises(ModelError):
+        await traced.generate(_request())
+
+    entries = buffer.get("run-trace")
+    assert len(entries) == 1
+    assert entries[0]["response"] is None  # the failing request is still visible
+
+
+def test_buffer_evicts_the_oldest_run_beyond_the_cap():
+    buffer = LlmTraceBuffer()
+    for i in range(LlmTraceBuffer.max_runs + 1):
+        buffer.record(f"run-{i}", {"iteration": 0})
+
+    assert "run-0" not in buffer._runs  # oldest evicted
+    assert buffer.get("run-0") == []
+    assert len(buffer.get("run-1")) == 1
+    assert len(buffer._runs) == LlmTraceBuffer.max_runs
+
+
+def test_buffer_unknown_run_is_empty():
+    assert LlmTraceBuffer().get("nope") == []
+
+
+async def test_runtime_records_entries_into_the_buffer():
+    runtime = _runtime(MockModelProvider([turn("hi there")]), trace_llm=True)
+
+    result = await runtime.run(_version(_agent()), "hello", _ctx())
+
+    assert result.status == "succeeded"
+    entries = runtime.llm_trace_buffer.get(result.run_id)
+    assert len(entries) == 1
+    assert entries[0]["request"]["messages"][0]["content"] == "You are a test agent."
+    assert entries[0]["response"] is not None
+    # No other run's data leaks in.
+    assert runtime.llm_trace_buffer.get("some-other-run") == []
+
+
+async def test_runtime_without_the_flag_leaves_the_buffer_empty():
+    runtime = _runtime(MockModelProvider([turn("hi there")]), trace_llm=False)
+
+    result = await runtime.run(_version(_agent()), "hello", _ctx())
+
+    assert result.status == "succeeded"
+    assert runtime.llm_trace_buffer.get(result.run_id) == []

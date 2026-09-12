@@ -27,6 +27,8 @@ from jarvis.api.schemas import (
     EventList,
     ExecutionDetail,
     ExecutionList,
+    LlmTraceEntry,
+    LlmTraceResponse,
     ResumeBody,
 )
 from jarvis.api.sse import SSE_HEADERS, frame
@@ -72,6 +74,20 @@ async def get_execution(run_id: str, auth: AuthContext = AuthDep) -> ExecutionDe
     messages = await auth.executions.list_messages(run_id)
     tool_executions = await auth.executions.list_tool_executions(run_id)
     return ExecutionDetail(run=run, messages=messages, tool_executions=tool_executions)
+
+
+@router.get("/{run_id}/llm-trace", response_model=LlmTraceResponse)
+async def get_llm_trace(
+    run_id: str, auth: AuthContext = AuthDep, container: AppContainer = ContainerDep
+) -> LlmTraceResponse:
+    """The web-readable half of the JARVIS_LLM_TRACE debug trace (ADR 0014):
+    the process-local buffer holding the actual model request/response per
+    call. Empty entries is a 200, never an error — flag off, backend
+    restarted since the run, or the run executed in a separate worker
+    process (distributed mode keeps the log as its only trace)."""
+    await _require_run(auth.executions, run_id)
+    raw = container.runtime.llm_trace_buffer.get(run_id)
+    return LlmTraceResponse(run_id=run_id, entries=[LlmTraceEntry(**entry) for entry in raw])
 
 
 @router.post("/{run_id}/cancel")

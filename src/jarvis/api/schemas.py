@@ -107,6 +107,24 @@ class ExecutionList(_Model):
     items: list[RunResult]
 
 
+class LlmTraceEntry(_Model):
+    """One model call's actual request/response (ADR 0014, debug only) —
+    served from the process-local buffer, never persisted."""
+
+    iteration: int
+    method: str  # "generate" | "stream"
+    provider: str
+    model: str
+    at: str
+    request: dict[str, Any]
+    response: dict[str, Any] | None = None
+
+
+class LlmTraceResponse(_Model):
+    run_id: str
+    entries: list[LlmTraceEntry]
+
+
 class MessageList(_Model):
     agent_id: str
     session_id: str

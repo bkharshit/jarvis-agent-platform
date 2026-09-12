@@ -35,6 +35,7 @@ def _stub_container(
     plugins: PluginLoadResult | None = None,
     allowlist: list[str] | None = None,
     mcp_servers: list[dict] | None = None,
+    llm_trace: bool = False,
 ) -> SimpleNamespace:
     caps = capabilities or ModelCapabilities()
 
@@ -46,7 +47,9 @@ def _stub_container(
         return mcp_servers or []
 
     return SimpleNamespace(
-        settings=Settings(strategy_plugin_allowlist=allowlist or []),
+        settings=Settings(
+            _env_file=None, strategy_plugin_allowlist=allowlist or [], llm_trace=llm_trace
+        ),
         tools=SimpleNamespace(descriptors=lambda: builtins),
         strategies=SimpleNamespace(names=lambda: strategies, describe=lambda: describe or []),
         strategy_plugins=plugins or PluginLoadResult(),
@@ -107,6 +110,18 @@ async def test_mcp_detail_lists_servers_from_the_repo() -> None:
     }
 
 
+async def test_executions_detail_exposes_the_llm_trace_flag() -> None:
+    response = await build_capabilities(_stub_container(strategies=[], builtins=[], llm_trace=True))
+    detail = response.sections["executions"].detail
+    assert detail == {"human_in_the_loop": True, "llm_trace": True}
+
+    off = await build_capabilities(_stub_container(strategies=[], builtins=[]))
+    assert off.sections["executions"].detail == {
+        "human_in_the_loop": True,
+        "llm_trace": False,
+    }
+
+
 async def test_models_detail_mirrors_providers_and_settings() -> None:
     capabilities = ModelCapabilities(
         streaming=True, function_calling=False, structured_output="json_mode"
@@ -119,7 +134,7 @@ async def test_models_detail_mirrors_providers_and_settings() -> None:
     providers = {p["name"]: p for p in detail["providers"]}
     assert set(providers) == {"mock", "openai_compatible"}
     assert providers["mock"]["capabilities"] == capabilities.model_dump()
-    settings = Settings()
+    settings = Settings(_env_file=None)  # hermetic — match the stub container's settings
     assert detail["defaults"] == {
         "provider": settings.model_provider,
         "model": settings.model_name,
