@@ -6,9 +6,10 @@ establishes.
 
 > Status: Phase 1 (agent runtime) complete; roadmap stages F1 (product
 > shell), S1 (distributed runs, ADR 0008), S2 (auth, multi-tenancy,
-> BYOK credentials, ADR 0009/0006) and S10 (human-in-the-loop,
-> ADR 0010) shipped. See `docs/roadmap.md` for the stage list and
-> `docs/adr/` for the design decisions.
+> BYOK credentials, ADR 0009/0006), S10 (human-in-the-loop,
+> ADR 0010) and S6 (workflow engine, ADR 0015) shipped. See
+> `docs/roadmap.md` for the stage list and `docs/adr/` for the design
+> decisions.
 > The frontend ships alongside the backend: the full product shell
 > landed first (roadmap F1) and each section enables as its backend
 > capability lands — see `docs/architecture/frontend-architecture.md`.
@@ -92,6 +93,9 @@ uv run jarvis doctor --ping-model
 | GET/POST/PATCH/DELETE | `/members` | Tenant member management — admin/owner only (ADR 0009 §8) |
 | GET/POST/DELETE | `/api-keys` | API keys for the acting user — plaintext returned exactly once at create |
 | GET/POST/PATCH/DELETE | `/credentials` | BYOK credentials — write-only: the secret never comes back (ADR 0006) |
+| GET/POST/PATCH/DELETE | `/workflows` | Workflow definitions (DAGs of agent/tool/condition nodes) — versioned like agents, 409 on duplicate name |
+| POST | `/workflows/{id}/publish` | Pin a new version snapshot |
+| POST | `/workflows/{id}/run` / `/stream` | Blocking run / SSE stream — same envelope as agents plus `node.started`/`node.completed` with a `node_id` (D43) |
 
 Every error has one envelope shape: `{"error": {"kind", "message", "details"}}`.
 
@@ -291,6 +295,54 @@ picker, probe, enable/disable, remove), and the agent editor's "Add MCP
 tool" picker lists a server's tools with a Requires-approval toggle. A
 live walkthrough (real stdio fixture server, pause→approve→resume, delete
 semantics, stored-header §7) is in `docs/walkthrough-s4.md`.
+
+### Workflows (S6, ADR 0015)
+
+A workflow is a DAG of **agent**, **tool**, and **condition** nodes that
+runs through the exact machinery an agent run uses — same queue, same
+event envelope, same persistence. A workflow run IS an execution row
+(`metadata.kind: "workflow"`); the only envelope addition is an optional
+`node_id` on `node.started`/`node.completed` events (D43). Versioning
+mirrors agents: snapshots are append-only, and an agent node's
+`agent_version_id` is **pinned at publish** — a stale pin is a lint
+warning in the detail's `lints`, never a failure (D42; no pin target at
+all is a 422 at save).
+
+```bash
+curl -X POST localhost:8000/v1/workflows -H 'content-type: application/json' \
+  -d '{"name":"chain",
+       "nodes":[{"id":"a","type":"agent","config":{"agent_id":"<agent-id>","input_template":"{{input}}"}},
+                {"id":"b","type":"agent","config":{"agent_id":"<agent-id>","input_template":"{{node.a}}"}}],
+       "edges":[{"from_node":"a","to_node":"b"}],
+       "start_node_id":"a"}'
+
+curl -X POST localhost:8000/v1/workflows/<id>/run \
+  -H 'content-type: application/json' -d '{"input": "go"}'
+```
+
+The semantics that matter:
+
+- **Templates are plain `{{var}}` substitution** — `{{input}}` is the run
+  input, `{{node.<id>}}` is an upstream node's output (the output IS the
+  value). No Jinja; the graph is validated (acyclic, resolvable node ids)
+  at create/update — 422, never a runtime surprise.
+- **Sequential walk with a cap** (D44): `max_node_executions` (default
+  24, 1–128) stops runaway walks as a persisted `run.failed`, not an
+  exception. Parallel fan-out and loops are deferred with a design note
+  in ADR 0015 §7.
+- **No `node.failed`** (D43): an inner failure surfaces as the run's
+  terminal `run.failed` prefixed `node '<id>':` — terminals are
+  run-level, never node-scoped.
+- **HITL composes**: an approval-gated tool inside a node pauses the run
+  mid-node (`run.awaiting_input` while the node is open) and the resume
+  continues the same walk — S10 unchanged.
+
+In the web UI the **Workflows** section is the React Flow canvas: node
+palette, a config panel per node (agent picker, tool bindings, condition
+routes), editable node ids (renames rewrite every `{{node.<id>}}`
+reference, edge, and condition target), inline agent creation, a
+server-hash concurrent-edit guard, and the run console rendering node
+groups. A live walkthrough is in `docs/walkthrough-s6.md`.
 
 ### Queue-backed runs and distributed mode (S1, ADR 0008)
 

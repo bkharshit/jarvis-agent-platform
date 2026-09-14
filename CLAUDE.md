@@ -149,6 +149,27 @@ uv run jarvis serve        # API on :8000
   (`_root_cause` in tools/mcp/connection.py) or the probe's 502 names
   the group, not the failure. Tavily's API wants the header value RAW —
   `Authorization: <key>`, no `Bearer` prefix (verified by a curl matrix).
+- **The credentials master key lives ONLY in the process env — `.env`'s
+  value must be the base64 key itself, never a var-name indirection**
+  (S6, found live; cost three stored credentials): `.env` carried
+  `JARVIS_CREDENTIALS_MASTER_KEY=JARVIS_MASTER_KEY_VALUE` (a variable
+  *name*), while the real key existed only as an export in a long-lived
+  shell. `set -a; source .env` before a serve clobbered the live value
+  with the placeholder and nothing could decrypt again — rotation
+  (delete + re-store) was the only path. Diagnosis: every stored
+  envelope carries a `key_id` fingerprint (sha256 of the decoded key,
+  first 16 hex) — verify ANY candidate key against it before
+  installing; an unmatched key fails with InvalidTag, and a missing/
+  malformed one with "must decode to exactly 32 bytes". Loss fails
+  loudly by design (ADR 0006/D30): there is no silent fallback, and
+  KMS/re-wrap is the deferred future path.
+- **Workflow template references must admit exactly what the node-id
+  pattern admits** (S6, found live): the template regex admitted
+  `[\w.]` while node ids allow hyphens, so `{{node.agent-1}}` never
+  matched and passed through to the model literally — only bare-word
+  ids in every test and fixture masked it. Fixed + regression-tested
+  (test_hyphenated_node_id_substitutes); the invariant to keep: widen
+  or narrow the two patterns together.
 
 ## Working agreement
 

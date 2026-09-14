@@ -285,7 +285,10 @@ renumbering S6–S14; nothing else in this doc refers to S5.
 
 ## S6 — Workflow engine
 
-> **Planned 2026-09-14, not yet built.** Design pinned in
+> **Shipped 2026-09-14** (commits `fff15d7..1e8415d`; the manual session
+> surfaced the hyphenated-node-id template bug — fixed `d535d7c`, plus
+> canvas rename/quick-create UX `1e8415d` — live notes in
+> `docs/walkthrough-s6.md`). As planned below: design pinned in
 > `docs/adr/0015-workflow-engine.md` (D41–D44 in decisions.md), commit
 > sequence in `docs/implementation-plan-s6.md`. Key deltas from the
 > sketch below, all verified against code before writing: workflow
