@@ -17,6 +17,13 @@ from jarvis.domain.agent import (
     ConversationMemoryState,
     ScratchpadEntry,
 )
+from jarvis.domain.evaluation import (
+    EvalCase,
+    EvalDataset,
+    EvalResult,
+    EvalRun,
+    Score,
+)
 from jarvis.domain.events import ExecutionEvent
 from jarvis.domain.execution import ExecutionStatus, RunResult
 from jarvis.domain.mcp import McpServer
@@ -246,9 +253,89 @@ class McpServerRepo(Protocol):
     async def delete(self, server_id: str, *, tenant_id: str | None = None) -> bool: ...
 
 
+class EvalRepo(Protocol):
+    """Evaluation datasets, runs, and results (S11, ADR 0017 §3, D48) —
+    tenant-scoped via explicit `tenant_id` kwargs (the McpServerRepo
+    pattern; D29: foreign rows read as absent, never leaked)."""
+
+    async def create_dataset(
+        self, dataset: EvalDataset, *, tenant_id: str | None = None
+    ) -> EvalDataset:
+        """Create the row; the returned dataset carries the stamped tenant."""
+        ...
+
+    async def list_datasets(self, *, tenant_id: str | None = None) -> list[EvalDataset]: ...
+
+    async def get_dataset(
+        self, dataset_id: str, *, tenant_id: str | None = None
+    ) -> EvalDataset | None: ...
+
+    async def update_dataset(
+        self, dataset: EvalDataset, *, tenant_id: str | None = None
+    ) -> EvalDataset | None:
+        """Replace the mutable fields (name, description, cases, scorers,
+        judge_model) of the existing row; None when absent."""
+        ...
+
+    async def delete_dataset(self, dataset_id: str, *, tenant_id: str | None = None) -> bool: ...
+
+    async def create_run(
+        self,
+        dataset: EvalDataset,
+        agent_id: str,
+        agent_version_id: str,
+        children: list[tuple[EvalCase, str]],
+        *,
+        tenant_id: str | None = None,
+    ) -> EvalRun:
+        """Persist the eval_run row (with the dataset snapshot, D1) plus one
+        eval_result per (case, child run_id) — ONE transaction. The caller
+        has already enqueued every child run (each run_id was generated
+        inside `queue_message` before enqueue, so results can reference the
+        runs eagerly, D48)."""
+        ...
+
+    async def list_runs(
+        self,
+        *,
+        agent_id: str | None = None,
+        dataset_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> list[EvalRun]: ...
+
+    async def get_run(self, run_id: str, *, tenant_id: str | None = None) -> EvalRun | None: ...
+
+    async def get_results(
+        self, eval_run_id: str, *, tenant_id: str | None = None
+    ) -> list[EvalResult]:
+        """The child results (case_id, run_id, scores when scored)."""
+        ...
+
+    async def save_scores(
+        self,
+        eval_run_id: str,
+        case_id: str,
+        scores: list[Score],
+        error: str | None,
+        *,
+        tenant_id: str | None = None,
+    ) -> None:
+        """Persist-once scoring (D49): sets scores + scored_at on the one
+        result row; later calls must not overwrite a scored result."""
+        ...
+
+    async def list_version_scores(
+        self, agent_id: str, *, tenant_id: str | None = None
+    ) -> list[tuple[EvalRun, list[EvalResult]]]:
+        """Every eval run of an agent with its results — the version-
+        comparison source (grouped by agent_version_id at the API layer)."""
+        ...
+
+
 __all__ = [
     "AgentRepo",
     "ConversationRepo",
+    "EvalRepo",
     "ExecutionRepo",
     "McpServerRepo",
     "ScratchpadRepo",

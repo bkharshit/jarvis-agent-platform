@@ -127,7 +127,7 @@ McpServerRepo pattern, post-S2) — D29: foreign rows read as absent.
         async def list_runs(agent_id | None, dataset_id | None,
                             *, tenant_id) -> list[EvalRun]
         async def get_run(run_id, *, tenant_id) -> EvalRun | None
-        async def get_results(eval_run_id, *, tenant_id) -> list[EvaluationResultRow]
+        async def get_results(eval_run_id, *, tenant_id) -> list[EvalResult]
         async def save_scores(eval_run_id, case_id, scores, error | None,
                               *, tenant_id) -> None
         async def list_version_scores(agent_id, *, tenant_id) -> ...
