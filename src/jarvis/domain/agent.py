@@ -52,6 +52,20 @@ class MemoryConfig(_Model):
     enabled: bool = False
     max_messages: int = Field(default=20, ge=1, le=200)
     session_key: str | None = None
+    # D45: "window" is exactly today's flat last-N slice (byte-identical,
+    # the default for every pre-S12 snapshot); "summarize" compacts the
+    # evicted prefix into a rolling conversation summary (ADR 0016 §2).
+    strategy: Literal["window", "summarize"] = "window"
+
+
+class ConversationMemoryState(_Model):
+    """The rolling-summary state persisted on a conversation row (S12,
+    ADR 0016 §2). `summarized_count` is a COUNT of leading conversation
+    messages — per-conversation sequences are gapless from 1, so the count
+    is the sequence boundary of the summarized prefix."""
+
+    summary: str | None = None
+    summarized_count: int = Field(default=0, ge=0)
 
 
 class StrategyConfig(_Model):

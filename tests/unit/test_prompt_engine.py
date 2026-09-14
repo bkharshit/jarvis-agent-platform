@@ -137,3 +137,52 @@ class TestContentParts:
         history = [Message(role="user", content=[TextPart(text="part1"), TextPart(text="part2")])]
         messages = PromptEngine().build(PromptContext(agent=agent, input="now", history=history))
         assert isinstance(messages[1].content, list)
+
+
+class TestMemorySummary:
+    """S12 (D45): the rolling summary injects between system and window."""
+
+    def _history(self, count):
+        return [Message(role="user", content=f"m{i}") for i in range(count)]
+
+    def test_summary_injected_before_window(self):
+        agent = _agent(memory=MemoryConfig(enabled=True, max_messages=2))
+        messages = PromptEngine().build(
+            PromptContext(
+                agent=agent,
+                input="now",
+                history=self._history(10),
+                memory_summary="the user discussed quotas",
+            )
+        )
+        assert [m.content for m in messages] == [
+            "You are helpful.",
+            "Summary of the earlier conversation:\nthe user discussed quotas",
+            "m8",
+            "m9",
+            "now",
+        ]
+        assert [m.role for m in messages] == ["system", "system", "user", "user", "user"]
+
+    def test_no_summary_field_means_no_message(self):
+        agent = _agent(memory=MemoryConfig(enabled=True, max_messages=2))
+        messages = PromptEngine().build(
+            PromptContext(agent=agent, input="now", history=self._history(10))
+        )
+        assert len(messages) == 4  # window default byte-identical
+
+    def test_empty_summary_string_omitted(self):
+        agent = _agent(memory=MemoryConfig(enabled=True, max_messages=1))
+        messages = PromptEngine().build(
+            PromptContext(agent=agent, input="now", history=self._history(3), memory_summary="")
+        )
+        assert [m.content for m in messages] == ["You are helpful.", "m2", "now"]
+
+    def test_summary_without_system_prompt_leads(self):
+        agent = _agent(system_prompt="", memory=MemoryConfig(enabled=True, max_messages=1))
+        messages = PromptEngine().build(
+            PromptContext(
+                agent=agent, input="now", history=self._history(3), memory_summary="prior talk"
+            )
+        )
+        assert messages[0].content == "Summary of the earlier conversation:\nprior talk"

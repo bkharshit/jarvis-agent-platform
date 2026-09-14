@@ -6,7 +6,9 @@ from pydantic import ValidationError
 from jarvis.domain.agent import (
     AgentDefinition,
     AgentVersion,
+    ConversationMemoryState,
     EnvCredentialRef,
+    MemoryConfig,
     ModelRef,
     StoredCredentialRef,
     StrategyConfig,
@@ -114,6 +116,40 @@ class TestAgentDefinition:
         version = AgentVersion(id="v1", agent_id="a1", version=1, snapshot=agent)
         assert version.snapshot.name == "demo"
         assert version.snapshot.model_dump() == agent.model_dump()
+
+
+class TestMemoryConfig:
+    """S12 (D45): the strategy field is additive — old snapshots parse."""
+
+    def test_pre_s12_snapshot_parses_with_window_default(self):
+        # A pre-S12 MemoryConfig JSON dict (no strategy key) — exactly what
+        # every persisted agent version snapshot carries.
+        old = {"enabled": True, "max_messages": 10, "session_key": None}
+        memory = MemoryConfig.model_validate(old)
+        assert memory.strategy == "window"
+
+    def test_strategy_literal_closed(self):
+        with pytest.raises(ValidationError):
+            MemoryConfig(enabled=True, strategy="vector")  # S8, not yet
+        with pytest.raises(ValidationError):
+            MemoryConfig(enabled=True, strategy="summarize ")  # no trailing space
+
+    def test_summarize_strategy_round_trips(self):
+        memory = MemoryConfig(enabled=True, max_messages=5, strategy="summarize")
+        assert MemoryConfig.model_validate(memory.model_dump()).strategy == "summarize"
+
+
+class TestConversationMemoryState:
+    """S12 (D45): the rolling-summary state persisted on conversations."""
+
+    def test_defaults(self):
+        state = ConversationMemoryState()
+        assert state.summary is None
+        assert state.summarized_count == 0
+
+    def test_rejects_negative_count(self):
+        with pytest.raises(ValidationError):
+            ConversationMemoryState(summary="s", summarized_count=-1)
 
 
 class TestCancellationToken:

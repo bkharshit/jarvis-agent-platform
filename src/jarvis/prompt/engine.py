@@ -28,6 +28,9 @@ class PromptContext:
     history: list[Message] = field(default_factory=list)
     tools: list[ToolDescriptor] = field(default_factory=list)
     schema_in_prompt: bool = False  # provider can't do native structured output
+    # S12 (D45): the rolling conversation summary (summarize strategy) —
+    # injected between the system section and the windowed history.
+    memory_summary: str | None = None
 
     @property
     def substitutions(self) -> dict[str, Any]:
@@ -44,6 +47,18 @@ class PromptEngine:
         system = self.render_system(context)
         if system:
             messages.append(Message(role="system", content=system))
+
+        if context.memory_summary:
+            # S12 (D45): the compaction's output rides ahead of the window —
+            # recent detail keeps its verbatim messages, the evicted prefix
+            # survives as the summary. A system role, not a synthetic one:
+            # no message-role enum is touched (ADR 0016 §2).
+            messages.append(
+                Message(
+                    role="system",
+                    content="Summary of the earlier conversation:\n" + context.memory_summary,
+                )
+            )
 
         messages.extend(self.history_window(context))
 

@@ -46,6 +46,7 @@ class ToolContext:
         *,
         session_id: str | None = None,
         user_id: str | None = None,
+        tenant_id: str | None = None,
         variables: dict[str, Any] | None = None,
         config: dict[str, Any] | None = None,
         cancel: CancellationToken | None = None,
@@ -54,6 +55,10 @@ class ToolContext:
         self.agent_id = agent_id
         self.session_id = session_id
         self.user_id = user_id
+        # S12 (D46): the scratchpad is per-session AND per-tenant — the
+        # runtime threads ctx.tenant_id so tenant-aware tools can scope
+        # without guessing. Optional and unused by every pre-S12 tool.
+        self.tenant_id = tenant_id
         self.variables = variables or {}
         self.config = config or {}
         self.cancel = cancel or CancellationToken()
