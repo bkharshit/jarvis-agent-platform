@@ -483,6 +483,84 @@ class MemoryScratchRow(Base):
     )
 
 
+class EvalDatasetRow(Base):
+    """One evaluation dataset (S11, ADR 0017 §2, D48). Cases and scorer
+    configs live as JSONB — cases are only ever read as a whole dataset,
+    so there is no cases table; the stable per-case uuid is the join key
+    eval_results reference."""
+
+    __tablename__ = "eval_datasets"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("tenants.id"),
+        nullable=False,
+        default=DEFAULT_TENANT,
+        server_default=DEFAULT_TENANT,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    cases: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    scorers: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    judge_model: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
+
+
+class EvalRunRow(Base):
+    """One eval run: the dataset SNAPSHOT (D1 — the exact input the scorers
+    saw; later dataset edits never rewrite it) times a pinned agent
+    version. No status column — derived at read from the child rows
+    (D49)."""
+
+    __tablename__ = "eval_runs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("tenants.id"),
+        nullable=False,
+        default=DEFAULT_TENANT,
+        server_default=DEFAULT_TENANT,
+        index=True,
+    )
+    dataset_id: Mapped[str] = mapped_column(
+        String, ForeignKey("eval_datasets.id"), nullable=False, index=True
+    )
+    dataset: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    agent_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    agent_version_id: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+
+
+class EvalResultRow(Base):
+    """One child-run score line (S11, D48/D49): the case, the ordinary run
+    it produced (FK into agent_executions — eval children ARE runs), and
+    the scores, NULL until lazy scoring persisted them once. No tenant
+    column — scoping joins through the eval_runs parent (D29)."""
+
+    __tablename__ = "eval_results"
+    __table_args__ = (UniqueConstraint("eval_run_id", "case_id"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    eval_run_id: Mapped[str] = mapped_column(
+        String, ForeignKey("eval_runs.id"), nullable=False, index=True
+    )
+    case_id: Mapped[str] = mapped_column(String, nullable=False)
+    run_id: Mapped[str] = mapped_column(String, ForeignKey("agent_executions.id"), nullable=False)
+    scores: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 __all__ = [
     "AgentExecutionRow",
     "AgentRow",
@@ -492,6 +570,9 @@ __all__ = [
     "ConversationRow",
     "CredentialRow",
     "DEFAULT_TENANT",
+    "EvalDatasetRow",
+    "EvalResultRow",
+    "EvalRunRow",
     "ExecutionEventRow",
     "McpServerRow",
     "MemoryScratchRow",

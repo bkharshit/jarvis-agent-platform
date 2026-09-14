@@ -26,6 +26,7 @@ from jarvis.persistence.repositories import (
     SqlAgentRepo,
     SqlAuthRepo,
     SqlConversationRepo,
+    SqlEvalRepo,
     SqlExecutionRepo,
     SqlMcpServerRepo,
     SqlRunQueue,
@@ -57,6 +58,7 @@ class AppContainer:
     executions: SqlExecutionRepo
     conversations: SqlConversationRepo
     scratchpad: SqlScratchpadRepo
+    evaluations: SqlEvalRepo
     queue: SqlRunQueue
     auth: SqlAuthRepo
     notifier: PgNotifier
@@ -85,6 +87,7 @@ class AppContainer:
         executions = SqlExecutionRepo(sessionmaker)
         conversations = SqlConversationRepo(sessionmaker)
         scratchpad = SqlScratchpadRepo(sessionmaker)
+        evaluations = SqlEvalRepo(sessionmaker)
         queue = SqlRunQueue(sessionmaker)
         auth = SqlAuthRepo(sessionmaker)
         notifier = PgNotifier(settings.database_url)
@@ -188,6 +191,7 @@ class AppContainer:
             executions=executions,
             conversations=conversations,
             scratchpad=scratchpad,
+            evaluations=evaluations,
             queue=queue,
             auth=auth,
             notifier=notifier,

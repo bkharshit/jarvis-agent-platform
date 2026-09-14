@@ -79,15 +79,19 @@ class TestEvalDataset:
 
 
 class TestEvalRunAndResults:
-    def test_run_has_no_status_field(self) -> None:
-        # D49: status is derived at read from the child rows, never stored.
+    def test_run_carries_the_snapshot_and_no_status(self) -> None:
+        # D1: the dataset snapshot rides the run (the exact input the
+        # scorers saw). D49: status is derived at read from the child
+        # rows, never stored.
         run = EvalRun(
             id="er-1",
             dataset_id="ds-1",
             agent_id="a-1",
             agent_version_id="ver-1",
+            dataset=_dataset(),
             created_at=datetime(2026, 9, 15, tzinfo=UTC),
         )
+        assert run.dataset.name == "smoke"
         assert not run.model_fields.keys() & {"status", "scores", "error"}
 
     def test_result_scores_nullable_until_scored(self) -> None:

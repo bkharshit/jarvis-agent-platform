@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from jarvis.domain.agent import ModelRef, StrategyConfig
+from jarvis.domain.evaluation import EvalCase, EvalDataset, Score
+from jarvis.domain.execution import RunResult
 from jarvis.domain.message import ToolCall, Usage
 from jarvis.models.mock import turn
 from jarvis.ports.queue import RunQueueMessage
@@ -443,3 +445,159 @@ async def test_scratchpad_tenant_scoping_and_delete(container):
     assert await store.get("agent-scr", "s1", "secret") is None
     assert await store.get("agent-scr", "s1", "plain") is not None
     assert await store.delete("agent-scr", "s1", "secret") is False
+
+
+# --- S11: evaluation datasets / runs / results (ADR 0017, D48) ----------
+
+
+def _eval_dataset(name: str = "smoke", **overrides: object) -> EvalDataset:
+    base: dict[str, object] = {
+        "id": f"ds-{name}",
+        "name": name,
+        "cases": [
+            {"id": "c-1", "input": "what is 2+2?", "expected": "4"},
+            {"id": "c-2", "input": "capital of France?", "expected": "Paris"},
+        ],
+        "scorers": [{"name": "exact"}],
+    }
+    base.update(overrides)
+    return EvalDataset.model_validate(base)
+
+
+def _child_run(run_id: str, agent_id: str) -> RunResult:
+    """A queued child-run row for the eval_results FK (D48: run_ids exist
+    before the eval-run transaction)."""
+    return RunResult(
+        run_id=run_id,
+        agent_id=agent_id,
+        status="queued",
+        input="q",
+        agent_version_id="ver-1",
+        tenant_id="default",
+        session_id=None,
+        trace_id="t-eval",
+        metadata={},
+    )
+
+
+@pytest.mark.db
+async def test_eval_dataset_roundtrip_and_update(container):
+    repo = container.evaluations
+    created = await repo.create_dataset(_eval_dataset())
+    assert created.id == "ds-smoke" and len(created.cases) == 2
+
+    fetched = await repo.get_dataset("ds-smoke")
+    assert fetched is not None
+    assert fetched == created
+
+    listed = await repo.list_datasets()
+    assert [d.id for d in listed if d.id == "ds-smoke"] == ["ds-smoke"]
+
+    # update replaces the mutable fields wholesale
+    updated = await repo.update_dataset(
+        _eval_dataset(
+            "smoke",
+            description="v2",
+            scorers=[{"name": "exact"}, {"name": "llm_judge"}],
+            judge_model={"provider": "mock", "model": "mock-1"},
+        )
+    )
+    assert updated is not None
+    assert updated.description == "v2"
+    assert [s.name for s in updated.scorers] == ["exact", "llm_judge"]
+    assert updated.judge_model == ModelRef(provider="mock", model="mock-1")
+    assert updated.updated_at >= updated.created_at
+
+
+@pytest.mark.db
+async def test_eval_dataset_tenant_scoping(container):
+    """S11 (D29): foreign-tenant reads are absence; scoped mutations touch
+    nothing; default-tenant rows read through the explicit tenant."""
+    repo = container.evaluations
+    await container.auth.create_tenant("t-other", "Other")  # FK target for the foreign write
+    await repo.create_dataset(_eval_dataset("tenanted"))
+
+    assert await repo.get_dataset("ds-tenanted", tenant_id="t-other") is None
+    assert await repo.get_dataset("ds-tenanted", tenant_id="default") is not None
+    assert await repo.update_dataset(_eval_dataset("tenanted"), tenant_id="t-other") is None
+    assert await repo.delete_dataset("ds-tenanted", tenant_id="t-other") is False
+    assert await repo.get_dataset("ds-tenanted") is not None
+
+    # tenant-scoped listings exclude other tenants' rows
+    other = await repo.create_dataset(_eval_dataset("foreign"), tenant_id="t-other")
+    assert [d.id for d in await repo.list_datasets(tenant_id="default")] == ["ds-tenanted"]
+    assert [d.id for d in await repo.list_datasets(tenant_id="t-other")] == ["ds-foreign"]
+    assert other.tenant_id if hasattr(other, "tenant_id") else True  # domain type is tenant-blind
+
+
+@pytest.mark.db
+async def test_eval_run_snapshot_results_and_persist_once(container):
+    """S11 (D48/D49): create_run snapshots the dataset, references the
+    children eagerly in ONE transaction, and save_scores persists ONCE —
+    the scores-IS-NULL guard makes a later call a no-op."""
+    repo = container.evaluations
+    dataset = await repo.create_dataset(_eval_dataset("runs"))
+    children = [("run-eval-1", "c-1"), ("run-eval-2", "c-2")]
+    for run_id, _ in children:
+        await container.executions.create_run(_child_run(run_id, "agent-eval"))
+
+    run = await repo.create_run(
+        dataset,
+        "agent-eval",
+        "ver-1",
+        [(EvalCase(id=cid, input="q"), rid) for rid, cid in children],
+    )
+    assert run.dataset == dataset  # the snapshot rides the domain type
+
+    fetched = await repo.get_run(run.id)
+    assert fetched is not None
+    assert fetched.dataset == dataset  # snapshot persisted, not a reference
+
+    results = await repo.get_results(run.id)
+    assert [r.case_id for r in results] == ["c-1", "c-2"]
+    assert all(r.scores is None and r.scored_at is None for r in results)
+
+    # lazy scoring persists once; a later call must NOT overwrite (D49)
+    scores = [Score(scorer="exact", passed=True, score=1.0, detail="match")]
+    await repo.save_scores(run.id, "c-1", scores, None)
+    first = (await repo.get_results(run.id))[0]
+    assert first.scores is not None and first.scored_at is not None
+
+    await repo.save_scores(run.id, "c-1", [Score(scorer="exact", passed=False)], "rewritten?")
+    again = (await repo.get_results(run.id))[0]
+    assert again.scores == first.scores and again.scored_at == first.scored_at
+
+    # a dataset with runs refuses deletion (caller maps to 409)
+    assert await repo.delete_dataset("ds-runs") is False
+    assert await repo.get_dataset("ds-runs") is not None
+
+
+@pytest.mark.db
+async def test_eval_version_scores_groups_results(container):
+    """S11: list_version_scores returns every eval run of an agent with
+    its results — the comparison query groups by agent_version_id."""
+    repo = container.evaluations
+    dataset = await repo.create_dataset(_eval_dataset("compare"))
+    await container.auth.create_tenant("t-other", "Other")  # FK target for the foreign run
+    for run_id in ("run-v1", "run-v2"):
+        await container.executions.create_run(_child_run(run_id, "agent-cmp"))
+
+    await repo.create_run(
+        dataset, "agent-cmp", "ver-1", [(EvalCase(id="c-1", input="q"), "run-v1")]
+    )
+    await repo.create_run(
+        dataset,
+        "agent-cmp",
+        "ver-2",
+        [(EvalCase(id="c-1", input="q"), "run-v2")],
+        tenant_id="t-other",
+    )
+
+    pairs = await repo.list_version_scores("agent-cmp")
+    assert [(run.agent_version_id, len(results)) for run, results in pairs] == [
+        ("ver-1", 1),
+        ("ver-2", 1),
+    ]
+    # tenant scoping hides the foreign run
+    scoped = await repo.list_version_scores("agent-cmp", tenant_id="default")
+    assert [run.agent_version_id for run, _ in scoped] == ["ver-1"]

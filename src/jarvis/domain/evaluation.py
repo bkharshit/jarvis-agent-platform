@@ -60,14 +60,17 @@ class EvalDataset(_Model):
 
 
 class EvalRun(_Model):
-    """One evaluation: dataset snapshot × pinned agent version. The row
-    carries NO status — it is derived at read from the child run rows
-    (D49); a list of child run_ids lives on the results."""
+    """One evaluation: dataset snapshot × pinned agent version. `dataset`
+    is the snapshot (D1) — the exact input the scorers saw; later dataset
+    edits never rewrite it. The row carries NO status — it is derived at
+    read from the child run rows (D49); child run_ids live on the
+    results."""
 
     id: str
     dataset_id: str
     agent_id: str
     agent_version_id: str
+    dataset: EvalDataset
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 

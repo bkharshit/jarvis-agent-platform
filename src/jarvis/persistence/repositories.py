@@ -37,6 +37,13 @@ from jarvis.domain.auth import (
     TenantRole,
     UserAccount,
 )
+from jarvis.domain.evaluation import (
+    EvalCase,
+    EvalDataset,
+    EvalResult,
+    EvalRun,
+    Score,
+)
 from jarvis.domain.events import ExecutionEvent
 from jarvis.domain.execution import ExecutionStatus, RunResult
 from jarvis.domain.mcp import McpServer, McpServerConfig
@@ -51,6 +58,9 @@ from jarvis.persistence.models import (
     ApiKeyRow,
     ConversationRow,
     CredentialRow,
+    EvalDatasetRow,
+    EvalResultRow,
+    EvalRunRow,
     ExecutionEventRow,
     McpServerRow,
     MemoryScratchRow,
@@ -1302,6 +1312,311 @@ class SqlScratchpadRepo:
             value=row.value,
             updated_at=row.updated_at,
         )
+
+
+class SqlEvalRepo:
+    """Evaluation datasets, runs, and results (S11, ADR 0017 §3, D48).
+
+    Tenant discipline (D29) via explicit `tenant_id` kwargs, scoped at
+    the repo boundary: foreign datasets/runs read as absent and their
+    rows are never touched. Writes stamp the default tenant when none is
+    supplied (the pre-S2 behavior every repo shares). `eval_results` has
+    no tenant column — every read/update joins through the eval_runs
+    parent."""
+
+    def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
+        self._sessionmaker = sessionmaker
+
+    # --- datasets ---------------------------------------------------------
+
+    async def create_dataset(
+        self, dataset: EvalDataset, *, tenant_id: str | None = None
+    ) -> EvalDataset:
+        effective = tenant_id or DEFAULT_TENANT
+        async with self._sessionmaker() as session:
+            row = EvalDatasetRow(
+                id=dataset.id,
+                tenant_id=effective,
+                name=dataset.name,
+                description=dataset.description,
+                cases=[case.model_dump(mode="json") for case in dataset.cases],
+                scorers=[s.model_dump(mode="json") for s in dataset.scorers],
+                judge_model=(
+                    dataset.judge_model.model_dump(mode="json") if dataset.judge_model else None
+                ),
+            )
+            session.add(row)
+            await session.commit()
+            return self._dataset(row)
+
+    async def list_datasets(self, *, tenant_id: str | None = None) -> list[EvalDataset]:
+        query = select(EvalDatasetRow).order_by(EvalDatasetRow.created_at, EvalDatasetRow.id)
+        if tenant_id is not None:
+            query = query.where(EvalDatasetRow.tenant_id == tenant_id)
+        async with self._sessionmaker() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [self._dataset(row) for row in rows]
+
+    async def get_dataset(
+        self, dataset_id: str, *, tenant_id: str | None = None
+    ) -> EvalDataset | None:
+        row = await self._dataset_row(dataset_id, tenant_id=tenant_id)
+        return self._dataset(row) if row is not None else None
+
+    async def update_dataset(
+        self, dataset: EvalDataset, *, tenant_id: str | None = None
+    ) -> EvalDataset | None:
+        """Replace the mutable fields wholesale (the PATCH discipline —
+        callers send the full dataset); None when absent."""
+        async with self._sessionmaker() as session:
+            row = await self._dataset_row(dataset.id, tenant_id=tenant_id, session=session)
+            if row is None:
+                return None
+            row.name = dataset.name
+            row.description = dataset.description
+            row.cases = [case.model_dump(mode="json") for case in dataset.cases]
+            row.scorers = [s.model_dump(mode="json") for s in dataset.scorers]
+            row.judge_model = (
+                dataset.judge_model.model_dump(mode="json") if dataset.judge_model else None
+            )
+            row.updated_at = datetime.now(UTC)
+            await session.commit()
+            await session.refresh(row)
+            return self._dataset(row)
+
+    async def delete_dataset(self, dataset_id: str, *, tenant_id: str | None = None) -> bool:
+        """False when eval runs reference the dataset (caller maps to 409)
+        or the dataset is absent/foreign."""
+        async with self._sessionmaker() as session:
+            row = await self._dataset_row(dataset_id, tenant_id=tenant_id, session=session)
+            if row is None:
+                return False
+            runs = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(EvalRunRow)
+                    .where(EvalRunRow.dataset_id == dataset_id)
+                )
+            ).scalar_one()
+            if runs:
+                return False
+            await session.delete(row)
+            await session.commit()
+        return True
+
+    # --- runs + results ---------------------------------------------------
+
+    async def create_run(
+        self,
+        dataset: EvalDataset,
+        agent_id: str,
+        agent_version_id: str,
+        children: list[tuple[EvalCase, str]],
+        *,
+        tenant_id: str | None = None,
+    ) -> EvalRun:
+        """The eval_run row (with the dataset snapshot, D1) plus one
+        eval_result per (case, child run_id) — ONE transaction. Every
+        child run row already exists: run_ids were generated inside
+        `queue_message` and enqueued via create_queued_run before this
+        call (D48), so the FKs hold."""
+        effective = tenant_id or DEFAULT_TENANT
+        run_id = str(uuid4())
+        now = datetime.now(UTC)
+        async with self._sessionmaker() as session:
+            session.add(
+                EvalRunRow(
+                    id=run_id,
+                    tenant_id=effective,
+                    dataset_id=dataset.id,
+                    dataset=dataset.model_dump(mode="json"),
+                    agent_id=agent_id,
+                    agent_version_id=agent_version_id,
+                    created_at=now,
+                )
+            )
+            # Plain FK constraints don't order the unit of work — flush the
+            # parent first so the results' FKs resolve (still one tx).
+            await session.flush()
+            for case, child_run_id in children:
+                session.add(
+                    EvalResultRow(
+                        id=str(uuid4()),
+                        eval_run_id=run_id,
+                        case_id=case.id,
+                        run_id=child_run_id,
+                    )
+                )
+            await session.commit()
+        return EvalRun(
+            id=run_id,
+            dataset_id=dataset.id,
+            agent_id=agent_id,
+            agent_version_id=agent_version_id,
+            dataset=dataset,
+            created_at=now,
+        )
+
+    async def list_runs(
+        self,
+        *,
+        agent_id: str | None = None,
+        dataset_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> list[EvalRun]:
+        query = select(EvalRunRow).order_by(EvalRunRow.created_at, EvalRunRow.id)
+        if agent_id is not None:
+            query = query.where(EvalRunRow.agent_id == agent_id)
+        if dataset_id is not None:
+            query = query.where(EvalRunRow.dataset_id == dataset_id)
+        if tenant_id is not None:
+            query = query.where(EvalRunRow.tenant_id == tenant_id)
+        async with self._sessionmaker() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [self._run(row) for row in rows]
+
+    async def get_run(self, run_id: str, *, tenant_id: str | None = None) -> EvalRun | None:
+        query = select(EvalRunRow).where(EvalRunRow.id == run_id)
+        if tenant_id is not None:
+            query = query.where(EvalRunRow.tenant_id == tenant_id)
+        async with self._sessionmaker() as session:
+            row = (await session.execute(query)).scalar_one_or_none()
+        return self._run(row) if row is not None else None
+
+    async def get_results(
+        self, eval_run_id: str, *, tenant_id: str | None = None
+    ) -> list[EvalResult]:
+        query = (
+            select(EvalResultRow)
+            .join(EvalRunRow, EvalRunRow.id == EvalResultRow.eval_run_id)
+            .where(EvalResultRow.eval_run_id == eval_run_id)
+            .order_by(EvalResultRow.id)
+        )
+        if tenant_id is not None:
+            query = query.where(EvalRunRow.tenant_id == tenant_id)
+        async with self._sessionmaker() as session:
+            rows = (await session.execute(query)).scalars().all()
+        return [self._result(row) for row in rows]
+
+    async def save_scores(
+        self,
+        eval_run_id: str,
+        case_id: str,
+        scores: list[Score],
+        error: str | None,
+        *,
+        tenant_id: str | None = None,
+    ) -> None:
+        """Persist-once (D49): the `scores IS NULL` guard means a later
+        call can never overwrite a scored result — re-evaluation is a new
+        eval run. Tenant scoping rides the parent-row join."""
+        query = (
+            update(EvalResultRow)
+            .where(
+                EvalResultRow.eval_run_id == eval_run_id,
+                EvalResultRow.case_id == case_id,
+                EvalResultRow.scores.is_(None),
+                EvalRunRow.id == EvalResultRow.eval_run_id,
+            )
+            .values(
+                scores=[score.model_dump(mode="json") for score in scores],
+                error=error,
+                scored_at=datetime.now(UTC),
+            )
+        )
+        if tenant_id is not None:
+            query = query.where(EvalRunRow.tenant_id == tenant_id)
+        async with self._sessionmaker() as session:
+            await session.execute(query)
+            await session.commit()
+
+    async def list_version_scores(
+        self, agent_id: str, *, tenant_id: str | None = None
+    ) -> list[tuple[EvalRun, list[EvalResult]]]:
+        """Every eval run of an agent with its results — the version-
+        comparison source (grouped by agent_version_id at the API layer)."""
+        run_query = select(EvalRunRow).where(EvalRunRow.agent_id == agent_id)
+        if tenant_id is not None:
+            run_query = run_query.where(EvalRunRow.tenant_id == tenant_id)
+        run_query = run_query.order_by(EvalRunRow.created_at)
+        async with self._sessionmaker() as session:
+            run_rows = (await session.execute(run_query)).scalars().all()
+            if not run_rows:
+                return []
+            result_rows = (
+                (
+                    await session.execute(
+                        select(EvalResultRow)
+                        .where(EvalResultRow.eval_run_id.in_([row.id for row in run_rows]))
+                        .order_by(EvalResultRow.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        by_run: dict[str, list[EvalResult]] = {row.id: [] for row in run_rows}
+        for result_row in result_rows:
+            by_run[result_row.eval_run_id].append(self._result(result_row))
+        return [(self._run(row), by_run[row.id]) for row in run_rows]
+
+    # --- row <-> domain ---------------------------------------------------
+
+    @staticmethod
+    def _dataset(row: EvalDatasetRow) -> EvalDataset:
+        return EvalDataset.model_validate(
+            {
+                "id": row.id,
+                "name": row.name,
+                "description": row.description,
+                "cases": row.cases,
+                "scorers": row.scorers,
+                "judge_model": row.judge_model,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+            }
+        )
+
+    @staticmethod
+    def _run(row: EvalRunRow) -> EvalRun:
+        return EvalRun.model_validate(
+            {
+                "id": row.id,
+                "dataset_id": row.dataset_id,
+                "agent_id": row.agent_id,
+                "agent_version_id": row.agent_version_id,
+                "dataset": row.dataset,
+                "created_at": row.created_at,
+            }
+        )
+
+    @staticmethod
+    def _result(row: EvalResultRow) -> EvalResult:
+        return EvalResult.model_validate(
+            {
+                "id": row.id,
+                "eval_run_id": row.eval_run_id,
+                "case_id": row.case_id,
+                "run_id": row.run_id,
+                "scores": row.scores,
+                "error": row.error,
+                "scored_at": row.scored_at,
+            }
+        )
+
+    async def _dataset_row(
+        self,
+        dataset_id: str,
+        *,
+        tenant_id: str | None = None,
+        session: AsyncSession | None = None,
+    ) -> EvalDatasetRow | None:
+        query = select(EvalDatasetRow).where(EvalDatasetRow.id == dataset_id)
+        if tenant_id is not None:
+            query = query.where(EvalDatasetRow.tenant_id == tenant_id)
+        if session is None:
+            async with self._sessionmaker() as session:
+                return (await session.execute(query)).scalar_one_or_none()
+        return (await session.execute(query)).scalar_one_or_none()
 
 
 class SqlAuthRepo:

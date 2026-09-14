@@ -277,7 +277,10 @@ class EvalRepo(Protocol):
         judge_model) of the existing row; None when absent."""
         ...
 
-    async def delete_dataset(self, dataset_id: str, *, tenant_id: str | None = None) -> bool: ...
+    async def delete_dataset(self, dataset_id: str, *, tenant_id: str | None = None) -> bool:
+        """False when eval runs reference the dataset (caller maps to 409)
+        — the same delete-with-history refusal as AgentRepo.delete."""
+        ...
 
     async def create_run(
         self,

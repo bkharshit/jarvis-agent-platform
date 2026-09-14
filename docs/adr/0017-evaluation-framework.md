@@ -65,7 +65,9 @@ Verified seams this design rides on (paths checked 2026-09-15):
                    scorers: list[ScorerConfig],
                    judge_model: ModelRef | None = None
     EvalRun:       id, dataset_id, agent_id, agent_version_id,
-                   created_at            (status derived at read, §4)
+                   dataset (the snapshot — the exact input the
+                   scoring saw), created_at
+                                          (status derived at read, §4)
     Score:         scorer (name), passed: bool | None, score: float | None,
                    detail: str | None
     EvalResult:    id, eval_run_id, case_id, run_id, scores: list[Score]
