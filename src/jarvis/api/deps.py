@@ -42,6 +42,7 @@ from jarvis.strategies.registry import DefaultStrategyRegistry
 from jarvis.tools.builtin.calculator import CalculatorTool
 from jarvis.tools.builtin.current_time import CurrentTimeTool
 from jarvis.tools.builtin.http_get import HttpGetTool
+from jarvis.tools.builtin.memory import MemoryDeleteTool, MemoryGetTool, MemoryPutTool
 from jarvis.tools.mcp.provider import McpToolProvider
 from jarvis.tools.registry import InMemoryToolRegistry
 from jarvis.tools.runtime import ToolRuntime
@@ -94,7 +95,16 @@ class AppContainer:
         streams.run_status_fn(executions.get)
 
         registry = InMemoryToolRegistry()
-        for tool in (CalculatorTool(), CurrentTimeTool(), HttpGetTool()):
+        # S12 (D46): the memory_* builtins share the scratchpad repo —
+        # reads/writes are ordinary tool calls, visible in tool_executions.
+        for tool in (
+            CalculatorTool(),
+            CurrentTimeTool(),
+            HttpGetTool(),
+            MemoryGetTool(scratchpad),
+            MemoryPutTool(scratchpad),
+            MemoryDeleteTool(scratchpad),
+        ):
             registry.register(tool)
 
         # The stored-credential backend (S2, ADR 0006) composes into the
