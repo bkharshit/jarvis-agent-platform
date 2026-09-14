@@ -24,7 +24,12 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import InstrumentedAttribute
 
-from jarvis.domain.agent import AgentDefinition, AgentVersion, ConversationMemoryState
+from jarvis.domain.agent import (
+    AgentDefinition,
+    AgentVersion,
+    ConversationMemoryState,
+    ScratchpadEntry,
+)
 from jarvis.domain.auth import (
     ApiKeyRecord,
     SessionRecord,
@@ -48,6 +53,7 @@ from jarvis.persistence.models import (
     CredentialRow,
     ExecutionEventRow,
     McpServerRow,
+    MemoryScratchRow,
     MessageRow,
     RunCancelRow,
     RunQueueRow,
@@ -1192,6 +1198,110 @@ class SqlConversationRepo:
         async with self._sessionmaker() as session:
             await session.execute(query)
             await session.commit()
+
+
+class SqlScratchpadRepo:
+    """Working-memory KV store (S12, ADR 0016 §3, D46) over `memory_scratch`.
+
+    Tenant discipline (D29): a `tenant_id` filters reads and scopes writes —
+    a foreign tenant's keys read as absent and its rows are never touched.
+    Writes stamp the default tenant when none is supplied (the pre-S2
+    behavior every repo shares)."""
+
+    def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
+        self._sessionmaker = sessionmaker
+
+    async def get(
+        self, agent_id: str, session_id: str, key: str, *, tenant_id: str | None = None
+    ) -> ScratchpadEntry | None:
+        query = select(MemoryScratchRow).where(
+            MemoryScratchRow.agent_id == agent_id,
+            MemoryScratchRow.session_id == session_id,
+            MemoryScratchRow.key == key,
+        )
+        if tenant_id is not None:
+            query = query.where(MemoryScratchRow.tenant_id == tenant_id)
+        async with self._sessionmaker() as session:
+            row = (await session.execute(query)).scalar_one_or_none()
+        return self._entry(row) if row is not None else None
+
+    async def put(
+        self,
+        agent_id: str,
+        session_id: str,
+        key: str,
+        value: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> ScratchpadEntry:
+        """Upsert — the natural key IS the table's primary key, so the
+        conflict target is exact and the newest write wins."""
+        effective = tenant_id or DEFAULT_TENANT
+        async with self._sessionmaker() as session:
+            row = (
+                await session.execute(
+                    pg_insert(MemoryScratchRow)
+                    .values(
+                        agent_id=agent_id,
+                        session_id=session_id,
+                        key=key,
+                        tenant_id=effective,
+                        value=value,
+                        updated_at=datetime.now(UTC),
+                    )
+                    .on_conflict_do_update(
+                        index_elements=[
+                            MemoryScratchRow.agent_id,
+                            MemoryScratchRow.session_id,
+                            MemoryScratchRow.key,
+                        ],
+                        set_={"value": value, "updated_at": datetime.now(UTC)},
+                    )
+                    .returning(
+                        MemoryScratchRow.agent_id,
+                        MemoryScratchRow.session_id,
+                        MemoryScratchRow.key,
+                        MemoryScratchRow.value,
+                        MemoryScratchRow.updated_at,
+                    )
+                )
+            ).one()
+            await session.commit()
+        return ScratchpadEntry(
+            agent_id=row.agent_id,
+            session_id=row.session_id,
+            key=row.key,
+            value=row.value,
+            updated_at=row.updated_at,
+        )
+
+    async def delete(
+        self, agent_id: str, session_id: str, key: str, *, tenant_id: str | None = None
+    ) -> bool:
+        query = select(MemoryScratchRow).where(
+            MemoryScratchRow.agent_id == agent_id,
+            MemoryScratchRow.session_id == session_id,
+            MemoryScratchRow.key == key,
+        )
+        if tenant_id is not None:
+            query = query.where(MemoryScratchRow.tenant_id == tenant_id)
+        async with self._sessionmaker() as session:
+            row = (await session.execute(query)).scalar_one_or_none()
+            if row is None:
+                return False
+            await session.delete(row)
+            await session.commit()
+        return True
+
+    @staticmethod
+    def _entry(row: MemoryScratchRow) -> ScratchpadEntry:
+        return ScratchpadEntry(
+            agent_id=row.agent_id,
+            session_id=row.session_id,
+            key=row.key,
+            value=row.value,
+            updated_at=row.updated_at,
+        )
 
 
 class SqlAuthRepo:

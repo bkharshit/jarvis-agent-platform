@@ -68,6 +68,18 @@ class ConversationMemoryState(_Model):
     summarized_count: int = Field(default=0, ge=0)
 
 
+class ScratchpadEntry(_Model):
+    """One working-memory key-value row (S12, ADR 0016 §3, D46) — keyed
+    (agent_id, session_id, key); `value` is an opaque string the model
+    round-trips through the memory_* builtin tools."""
+
+    agent_id: str
+    session_id: str
+    key: str
+    value: str
+    updated_at: datetime
+
+
 class StrategyConfig(_Model):
     # D36: `type` is a plain string — the closed Literal lived here only
     # while the registry was closed twice. Typo protection now lives at the

@@ -11,7 +11,12 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Protocol
 
-from jarvis.domain.agent import AgentDefinition, AgentVersion, ConversationMemoryState
+from jarvis.domain.agent import (
+    AgentDefinition,
+    AgentVersion,
+    ConversationMemoryState,
+    ScratchpadEntry,
+)
 from jarvis.domain.events import ExecutionEvent
 from jarvis.domain.execution import ExecutionStatus, RunResult
 from jarvis.domain.mcp import McpServer
@@ -188,6 +193,34 @@ class ConversationRepo(Protocol):
         ...
 
 
+class ScratchpadRepo(Protocol):
+    """Working-memory KV store (S12, ADR 0016 §3, D46) — keyed
+    (agent_id, session_id, key); tenant-scoped like every repo (D29:
+    foreign rows read as absent, never leaked)."""
+
+    async def get(
+        self, agent_id: str, session_id: str, key: str, *, tenant_id: str | None = None
+    ) -> ScratchpadEntry | None: ...
+
+    async def put(
+        self,
+        agent_id: str,
+        session_id: str,
+        key: str,
+        value: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> ScratchpadEntry:
+        """Upsert — the newest write wins; returns the stored entry."""
+        ...
+
+    async def delete(
+        self, agent_id: str, session_id: str, key: str, *, tenant_id: str | None = None
+    ) -> bool:
+        """True when a row was removed, False when the key was not set."""
+        ...
+
+
 class McpServerRepo(Protocol):
     """Configured MCP servers (S4, ADR 0012) — tenant-scoped like
     AgentRepo: `tenant_id=None` reads include platform-shared rows
@@ -218,5 +251,6 @@ __all__ = [
     "ConversationRepo",
     "ExecutionRepo",
     "McpServerRepo",
+    "ScratchpadRepo",
     "WorkflowRepo",
 ]

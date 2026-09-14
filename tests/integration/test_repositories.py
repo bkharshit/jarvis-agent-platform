@@ -394,3 +394,52 @@ async def test_conversation_summary_state_roundtrip(container, agent):
 
     # unknown conversation reads as absent
     assert await container.conversations.get_summary_state("no-such-conversation") is None
+
+
+@pytest.mark.db
+async def test_scratchpad_upsert_and_roundtrip(container):
+    """S12 (D46): the working-memory store upserts on its natural key
+    (agent_id, session_id, key) and reads back what was written."""
+    store = container.scratchpad
+    entry = await store.put("agent-scr", "s1", "notes", "first draft")
+    assert entry.value == "first draft"
+    assert entry.agent_id == "agent-scr" and entry.key == "notes"
+
+    fetched = await store.get("agent-scr", "s1", "notes")
+    assert fetched is not None and fetched.value == "first draft"
+
+    # upsert: the newest write wins, still one row for the key
+    updated = await store.put("agent-scr", "s1", "notes", "second draft")
+    assert updated.value == "second draft"
+    assert updated.updated_at >= entry.updated_at
+    fetched = await store.get("agent-scr", "s1", "notes")
+    assert fetched is not None and fetched.value == "second draft"
+
+    # keys, sessions, and agents do not bleed into each other
+    assert await store.get("agent-scr", "s1", "other-key") is None
+    assert await store.get("agent-scr", "s2", "notes") is None
+    assert await store.get("agent-other", "s1", "notes") is None
+
+
+@pytest.mark.db
+async def test_scratchpad_tenant_scoping_and_delete(container):
+    """S12 (D46/D29): foreign-tenant reads are absence, deletes are scoped,
+    and deleting an unset key is False, not an error."""
+    store = container.scratchpad
+    await store.put("agent-scr", "s1", "secret", "value")
+    await store.put("agent-scr", "s1", "plain", "value")
+
+    # a foreign tenant reads absence (D29) — never the row
+    assert await store.get("agent-scr", "s1", "secret", tenant_id="t-other") is None
+    # a scoped delete touches nothing; the row survives
+    assert await store.delete("agent-scr", "s1", "secret", tenant_id="t-other") is False
+    assert (await store.get("agent-scr", "s1", "secret")) is not None
+
+    # default-tenant writes read back through the explicit tenant
+    assert (await store.get("agent-scr", "s1", "secret", tenant_id="default")) is not None
+
+    # delete removes exactly the one key
+    assert await store.delete("agent-scr", "s1", "secret") is True
+    assert await store.get("agent-scr", "s1", "secret") is None
+    assert await store.get("agent-scr", "s1", "plain") is not None
+    assert await store.delete("agent-scr", "s1", "secret") is False

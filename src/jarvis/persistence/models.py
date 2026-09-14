@@ -458,6 +458,31 @@ class ExecutionEventRow(Base):
     )
 
 
+class MemoryScratchRow(Base):
+    """Working-memory KV rows (S12, ADR 0016 §3, D46). The natural key IS
+    the primary key — (agent_id, session_id, key) — so the upsert conflicts
+    on it directly; per-conversation messages stay in `messages`, the
+    scratchpad is the structured side-channel the memory_* tools ride."""
+
+    __tablename__ = "memory_scratch"
+
+    agent_id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(String, primary_key=True)
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("tenants.id"),
+        nullable=False,
+        default=DEFAULT_TENANT,
+        server_default=DEFAULT_TENANT,
+        index=True,
+    )
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
+
+
 __all__ = [
     "AgentExecutionRow",
     "AgentRow",
@@ -469,6 +494,7 @@ __all__ = [
     "DEFAULT_TENANT",
     "ExecutionEventRow",
     "McpServerRow",
+    "MemoryScratchRow",
     "MessageRow",
     "RunCancelRow",
     "RunQueueRow",
