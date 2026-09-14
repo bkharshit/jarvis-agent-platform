@@ -33,9 +33,11 @@ from jarvis.domain.events import (
 )
 from jarvis.domain.execution import ExecutionContext, ExecutionStatus, RunResult
 from jarvis.domain.message import Usage
+from jarvis.domain.workflow import WorkflowVersion
 from jarvis.events.bus import InProcessEventSink, PersistFn
 from jarvis.ports.queue import RunQueue, RunQueueMessage
 from jarvis.runtime.agent_runtime import AgentRuntime
+from jarvis.runtime.workflow_runtime import WorkflowRuntime
 
 logger = logging.getLogger("jarvis.worker")
 
@@ -52,6 +54,13 @@ class VersionLoader(Protocol):
     """Structural view of the agent repo: resolve a version snapshot by id."""
 
     async def get_version_by_id(self, version_id: str) -> AgentVersion | None: ...
+
+
+class WorkflowVersionLoader(Protocol):
+    """Structural view of the workflow repo: resolve a workflow version
+    snapshot by id (S6, ADR 0015 §4) — the `message.kind` branch's loader."""
+
+    async def get_version_by_id(self, version_id: str) -> WorkflowVersion | None: ...
 
 
 class WorkerExecutions(Protocol):
@@ -97,6 +106,8 @@ class Worker:
         executions: WorkerExecutions,
         runtime: AgentRuntime,
         persist: PersistFn,
+        workflow_runtime: WorkflowRuntime | None = None,
+        workflow_versions: WorkflowVersionLoader | None = None,
         worker_id: str | None = None,
         concurrency: int = 4,
         renew_interval: float = RENEW_INTERVAL_SECONDS,
@@ -105,6 +116,8 @@ class Worker:
         self._versions = versions
         self._executions = executions
         self._runtime = runtime
+        self._workflow_runtime = workflow_runtime
+        self._workflow_versions = workflow_versions
         self._persist = persist
         self._worker_id = worker_id or f"{socket.gethostname()}-{uuid4().hex[:12]}"
         self._concurrency = concurrency
@@ -175,6 +188,75 @@ class Worker:
                     self._result(message, "cancelled", cursor, finished_at=datetime.now(UTC))
                 )
                 await self._queue.ack(message.run_id)
+                return
+
+            # S6 (D41): the kind decides whose version loads and which
+            # sibling runtime executes — the one new decision the queue
+            # change asks of the worker.
+            if message.kind == "workflow":
+                assert self._workflow_versions is not None and self._workflow_runtime is not None, (
+                    "worker misconfigured: workflow kind needs workflow_runtime/workflow_versions"
+                )
+                wf_version = await self._workflow_versions.get_version_by_id(
+                    message.agent_version_id
+                )
+                if wf_version is None:
+                    cursor = await sink.finalize(
+                        _failed_event(
+                            message.run_id,
+                            f"workflow version {message.agent_version_id!r} not found",
+                            "model",
+                        )
+                    )
+                    await self._executions.finish_run(
+                        self._result(
+                            message,
+                            "failed",
+                            cursor,
+                            error="workflow version not found",
+                            error_kind="model",
+                            finished_at=datetime.now(UTC),
+                        )
+                    )
+                    await self._queue.ack(message.run_id)
+                    return
+                if message.resume is not None:
+                    # S10 composition for workflows lands with the API's
+                    # resume route (commit 7) — an honest terminal until then,
+                    # never a silent skip.
+                    cursor = await sink.finalize(
+                        _failed_event(
+                            message.run_id,
+                            "workflow resume is not supported yet",
+                            "model",
+                        )
+                    )
+                    await self._executions.finish_run(
+                        self._result(
+                            message,
+                            "failed",
+                            cursor,
+                            error="workflow resume is not supported yet",
+                            error_kind="model",
+                            finished_at=datetime.now(UTC),
+                        )
+                    )
+                    await self._queue.ack(message.run_id)
+                    return
+                started_at = datetime.now(UTC)
+                await self._executions.mark_running(message.run_id, started_at)
+                ctx = self._context(message)
+                heartbeat = asyncio.create_task(self._heartbeat(message.run_id, ctx))
+                try:
+                    result = await self._workflow_runtime.run(
+                        wf_version, message.input, ctx, sink=sink
+                    )
+                finally:
+                    heartbeat.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await heartbeat
+                await self._queue.ack(message.run_id)
+                logger.info("workflow run %s finished: %s", message.run_id, result.status)
                 return
 
             version = await self._versions.get_version_by_id(message.agent_version_id)

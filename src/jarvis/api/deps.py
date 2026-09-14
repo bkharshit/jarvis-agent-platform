@@ -35,6 +35,7 @@ from jarvis.runtime.agent_runtime import AgentRuntime
 from jarvis.runtime.limits import RunLimits
 from jarvis.runtime.llm_trace import LlmTraceBuffer
 from jarvis.runtime.worker import Worker, worker_persist
+from jarvis.runtime.workflow_runtime import WorkflowRuntime
 from jarvis.strategies.plugins import PluginLoadResult, load_strategy_plugins
 from jarvis.strategies.registry import DefaultStrategyRegistry
 from jarvis.tools.builtin.calculator import CalculatorTool
@@ -65,6 +66,7 @@ class AppContainer:
     strategies: DefaultStrategyRegistry
     strategy_plugins: PluginLoadResult
     runtime: AgentRuntime
+    workflow_runtime: WorkflowRuntime
     limits: RunLimits
     worker: Worker
     _worker_task: asyncio.Task[None] | None = field(default=None, repr=False)
@@ -142,6 +144,18 @@ class AppContainer:
             trace_llm=settings.llm_trace,
             trace_buffer=LlmTraceBuffer(),
         )
+        # S6 (ADR 0015 §5): the sibling executor shares the agent runtime's
+        # loop (its runner), bus, repos, limits and MCP provider.
+        workflow_runtime = WorkflowRuntime(
+            runner=runtime,
+            versions=agents,
+            tools=registry,
+            tool_runtime=ToolRuntime(registry),
+            bus=bus,
+            executions=executions,
+            limits=limits,
+            mcp=mcp,
+        )
         worker = Worker(
             queue=queue,
             versions=agents,
@@ -149,6 +163,8 @@ class AppContainer:
             runtime=runtime,
             # persist = durable append + pg_notify wake-up (ADR 0008 §4).
             persist=worker_persist(executions, notifier),
+            workflow_runtime=workflow_runtime,
+            workflow_versions=workflows,
             concurrency=settings.worker_concurrency,
         )
         return cls(
@@ -170,6 +186,7 @@ class AppContainer:
             strategies=strategies,
             strategy_plugins=strategy_plugins,
             runtime=runtime,
+            workflow_runtime=workflow_runtime,
             limits=limits,
             worker=worker,
         )

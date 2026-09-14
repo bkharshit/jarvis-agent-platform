@@ -41,10 +41,13 @@ class AgentNodeConfig(_Model):
 
 
 class ToolNodeConfig(_Model):
-    """Executes one bound tool (builtin or `mcp__server__tool`) with
-    templated arguments."""
+    """Executes one bound tool (builtin or `mcp__server__tool`).
+    `arguments` are the tool call's arguments — string values may carry
+    `{{...}}` templates; `binding.config` stays the tool-level config
+    (timeout etc.), exactly the ToolContext.config an agent run passes."""
 
     binding: ToolBinding
+    arguments: dict[str, Any] = Field(default_factory=dict)
 
 
 class ConditionOperator(_Model):

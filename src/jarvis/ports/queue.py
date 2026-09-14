@@ -59,6 +59,10 @@ class RunQueueMessage(BaseModel):
     agent_id: str
     agent_version_id: str
     input: str
+    # S6 (ADR 0015 §4, D41): "workflow" executes a WorkflowVersion whose
+    # snapshot's agent nodes pin agent versions; the runtime branch is the
+    # worker's only new decision.
+    kind: Literal["agent", "workflow"] = "agent"
     tenant_id: str | None = None
     principal: Principal | None = None
     session_id: str | None = None

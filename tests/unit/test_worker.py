@@ -523,3 +523,165 @@ async def test_resume_without_row_is_acked_without_execution():
     runtime: ScriptedRuntime = worker._runtime  # noqa: SLF001 — test observation
     assert runtime.resumes == []
     assert "run-r3" not in executions.events
+
+
+# --- workflow kind branch (S6, ADR 0015 §4, D41) ------------------------------
+
+
+class FakeWorkflowRuntime:
+    """The workflow runtime's narrow worker contract: run() to a terminal."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def run(self, version, input, ctx, sink=None):
+        self.calls.append((ctx.run_id, input))
+        cursor = await sink.append(
+            RunStarted(
+                event_id=str(uuid4()),
+                run_id=ctx.run_id,
+                created_at=datetime.now(UTC),
+                agent_id=ctx.agent_id,
+                agent_version_id=ctx.agent_version_id,
+            )
+        )
+        cursor = await sink.finalize(
+            RunCompleted(
+                event_id=str(uuid4()),
+                run_id=ctx.run_id,
+                created_at=datetime.now(UTC),
+                final_message="walked",
+                total_usage=Usage(),
+                iterations=2,
+            )
+        )
+        return RunResult(
+            run_id=ctx.run_id,
+            agent_id=ctx.agent_id,
+            status="succeeded",
+            final_message="walked",
+            iterations=2,
+            event_cursor=cursor,
+        )
+
+
+class WorkflowVersionStub:
+    async def get_version_by_id(self, version_id: str):
+        from jarvis.domain.workflow import AgentNodeConfig, WorkflowDefinition, WorkflowNode
+
+        definition = WorkflowDefinition(
+            id="wf-1",
+            name="wf",
+            nodes=[
+                WorkflowNode(
+                    id="a",
+                    type="agent",
+                    config=AgentNodeConfig(
+                        agent_id="agent-1", agent_version_id="version-1", input_template="{{input}}"
+                    ),
+                )
+            ],
+            start_node_id="a",
+        )
+        from jarvis.domain.workflow import WorkflowVersion
+
+        return WorkflowVersion(
+            id=version_id, workflow_id=definition.id, version=1, snapshot=definition
+        )
+
+
+async def test_workflow_kind_executes_through_the_workflow_runtime():
+    queue, executions, notifier = FakeQueue(), FakeExecutions(), NotifyRecorder()
+    wf_runtime = FakeWorkflowRuntime()
+    definition = _definition("agent-1")
+    worker = Worker(
+        queue=queue,
+        versions=VersionStub(_version(definition)),
+        executions=executions,
+        runtime=ScriptedRuntime(),
+        persist=worker_persist(executions, notifier),
+        workflow_runtime=wf_runtime,
+        workflow_versions=WorkflowVersionStub(),
+    )
+    await queue.enqueue(
+        RunQueueMessage(
+            run_id="wrun-1",
+            agent_id="wf-1",
+            agent_version_id="wfv-1",
+            input="hi",
+            kind="workflow",
+        )
+    )
+
+    assert await worker.step() is True
+    await _await_live(worker)
+
+    assert queue.acked == ["wrun-1"]
+    assert wf_runtime.calls == [("wrun-1", "hi")]
+    types = [event.type for _c, event in executions.events["wrun-1"]]
+    assert types == ["run.started", "run.completed"]
+    # the runtime owns the finish_run row write; the worker's contract is
+    # the ack after the runtime returned a terminal result
+
+
+async def test_workflow_resume_is_an_honest_terminal_until_the_api_lands():
+    queue, executions, notifier = FakeQueue(), FakeExecutions(), NotifyRecorder()
+    definition = _definition("agent-1")
+    worker = Worker(
+        queue=queue,
+        versions=VersionStub(_version(definition)),
+        executions=executions,
+        runtime=ScriptedRuntime(),
+        persist=worker_persist(executions, notifier),
+        workflow_runtime=FakeWorkflowRuntime(),
+        workflow_versions=WorkflowVersionStub(),
+    )
+    await queue.enqueue(
+        RunQueueMessage(
+            run_id="wrun-2",
+            agent_id="wf-1",
+            agent_version_id="wfv-1",
+            input="hi",
+            kind="workflow",
+            resume=ResumeRequest(kind="content", content="prod"),
+        )
+    )
+
+    assert await worker.step() is True
+    await _await_live(worker)
+
+    assert queue.acked == ["wrun-2"]
+    assert executions.runs["wrun-2"].status == "failed"
+    assert "not supported" in (executions.runs["wrun-2"].error or "")
+    types = [event.type for _c, event in executions.events["wrun-2"]]
+    assert types == ["run.failed"]
+
+
+async def test_workflow_kind_without_a_workflow_runtime_stays_claimed():
+    """A misconfigured worker must never execute a workflow through the
+    agent runtime — the claim fails loudly and the sweeper owns the row."""
+    queue, executions, notifier = FakeQueue(), FakeExecutions(), NotifyRecorder()
+    definition = _definition("agent-1")
+    worker = Worker(
+        queue=queue,
+        versions=VersionStub(_version(definition)),
+        executions=executions,
+        runtime=ScriptedRuntime(),
+        persist=worker_persist(executions, notifier),
+    )
+    await queue.enqueue(
+        RunQueueMessage(
+            run_id="wrun-3",
+            agent_id="wf-1",
+            agent_version_id="wfv-1",
+            input="hi",
+            kind="workflow",
+        )
+    )
+
+    assert await worker.step() is True
+    await _await_live(worker)
+
+    assert queue.acked == []  # the failure left the message claimed
+    assert "wrun-3" not in executions.events  # nothing executed
+    assert executions.finished == []
