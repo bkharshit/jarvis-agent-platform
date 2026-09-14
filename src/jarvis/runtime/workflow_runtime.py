@@ -26,8 +26,10 @@ from uuid import uuid4
 from jarvis.domain.agent import AgentVersion
 from jarvis.domain.events import (
     EventSequenceError,
+    IterationStarted,
     NodeCompleted,
     NodeStarted,
+    RunAwaitingInput,
     RunCancelled,
     RunCompleted,
     RunFailed,
@@ -51,6 +53,7 @@ from jarvis.domain.workflow import (
 )
 from jarvis.events.bus import InProcessEventBus, InProcessEventSink, NodeSink
 from jarvis.models.errors import ModelAbortedError, ModelError
+from jarvis.ports.queue import ResumeRequest
 from jarvis.ports.repository import ExecutionRepo
 from jarvis.runtime.agent_runtime import ErrorKind, LoopOutcome
 from jarvis.runtime.limits import RunLimits
@@ -75,6 +78,17 @@ class SegmentRunner(Protocol):
         started: RunStarted | None = None,
     ) -> LoopOutcome: ...
 
+    async def resume_segment(
+        self,
+        version: AgentVersion,
+        run_id: str,
+        ctx: ExecutionContext,
+        sink: Any,
+        resume: ResumeRequest,
+        *,
+        open_iteration: int | None = None,
+    ) -> LoopOutcome: ...
+
     def cancel(self, run_id: str, reason: str = "cancelled by user") -> bool: ...
 
     def is_live(self, run_id: str) -> bool: ...
@@ -88,12 +102,17 @@ class AgentVersionLoader(Protocol):
 
 
 @dataclass
-class _Resolved:
-    """Everything the walk needs, resolved eagerly before a single token."""
+class _ResumeState:
+    """Where a paused walk stands, replayed from the event log: the paused
+    node, upstream outputs, the node count (the cap spans the chain), and the
+    paused node's own open iteration for the inner segment's re-seed."""
 
-    definition: WorkflowDefinition
-    agent_versions: dict[str, AgentVersion]  # node id -> pinned snapshot
-    tooling: McpTooling  # the tool-node toolset (builtin view or resolved MCP)
+    node_id: str
+    outputs: dict[str, Any]
+    last_output: str
+    count: int
+    open_iteration: int
+    resume: ResumeRequest
 
 
 class WorkflowRuntime:
@@ -161,6 +180,7 @@ class WorkflowRuntime:
                     session_id=ctx.session_id,
                     trace_id=ctx.trace_id,
                     started_at=started_at,
+                    metadata=dict(ctx.metadata),  # {"kind": "workflow"} (D41)
                 )
             )
 
@@ -224,6 +244,114 @@ class WorkflowRuntime:
             await self._executions.finish_run(result)
         return result
 
+    async def resume(
+        self,
+        version: WorkflowVersion,
+        run_id: str,
+        ctx: ExecutionContext,
+        sink: InProcessEventSink,
+        resume: ResumeRequest,
+    ) -> RunResult:
+        """Continue a workflow run paused INSIDE an agent node (S10
+        composition, ADR 0015 §7): re-resolve the graph, replay the event log
+        for the walk's state (upstream outputs, the paused node, its own
+        iteration), resume the paused node's segment, then continue the walk
+        from there. Never raises — the same handlers as `run()`."""
+        wf = version.snapshot
+        started_at = datetime.now(UTC)
+        run_input = ""
+        self._live_tokens[ctx.run_id] = ctx
+        if self._executions is not None:
+            row = await self._executions.get(run_id)
+            if row is not None:
+                # the original workflow input (downstream templates reference
+                # it) and the chain's usage-so-far ride the row
+                started_at = row.started_at or started_at
+                run_input = row.input
+        try:
+            versions, tooling = await self._resolve(wf, ctx)
+            try:
+                state = await self._resume_state(ctx, resume)
+                if state is None:
+                    raise ModelError("internal error: no pause frame in the event log")
+                outcome = await self._walk(
+                    wf, versions, tooling, run_input, ctx, sink, resume_state=state
+                )
+                result = await self._terminal(ctx, sink, outcome, started_at, run_input)
+            finally:
+                await tooling.aclose()
+        except ExecutionCancelled as exc:
+            result = await self._terminal_cancelled(ctx, sink, exc, started_at, run_input)
+        except ModelAbortedError as exc:
+            result = await self._terminal_cancelled(
+                ctx,
+                sink,
+                ExecutionCancelled(ctx.cancel.reason or str(exc)),
+                started_at,
+                run_input,
+            )
+        except ModelError as exc:
+            result = await self._terminal_failed(
+                ctx, sink, str(exc), "model", started_at, run_input
+            )
+        except McpResolutionError as exc:
+            result = await self._terminal_failed(ctx, sink, str(exc), "tool", started_at, run_input)
+        except EventSequenceError as exc:
+            result = await self._terminal_failed(
+                ctx, sink, f"internal error: {exc}", "model", started_at, run_input
+            )
+        except Exception as exc:  # noqa: BLE001 — the run never crashes callers
+            result = await self._terminal_failed(
+                ctx,
+                sink,
+                f"internal error: {type(exc).__name__}: {exc}",
+                "model",
+                started_at,
+                run_input,
+            )
+        finally:
+            self._live_tokens.pop(ctx.run_id, None)
+
+        if self._executions is not None and result.status != "awaiting_input":
+            await self._executions.finish_run(result)
+        return result
+
+    async def _resume_state(
+        self, ctx: ExecutionContext, resume: ResumeRequest
+    ) -> _ResumeState | None:
+        """Rebuild the walk's position from the durable event log: the pause
+        frame names the paused node (its NodeSink stamped node_id); node
+        outputs, the walk's node count, and the paused node's OWN iteration
+        count all replay from the same sequence."""
+        if self._executions is None:
+            return None
+        outputs: dict[str, Any] = {}
+        last_output = ""
+        started_count = 0
+        pause: RunAwaitingInput | None = None
+        async for event in self._executions.list_events(ctx.run_id):
+            if isinstance(event, NodeStarted):
+                started_count += 1
+            elif isinstance(event, NodeCompleted):
+                outputs[event.node_id] = event.output
+                last_output = event.output
+            elif isinstance(event, RunAwaitingInput):
+                pause = event
+        if pause is None or pause.node_id is None:
+            return None
+        node_iterations = 0
+        async for event in self._executions.list_events(ctx.run_id):
+            if isinstance(event, IterationStarted) and event.node_id == pause.node_id:
+                node_iterations += 1
+        return _ResumeState(
+            node_id=pause.node_id,
+            outputs=outputs,
+            last_output=last_output,
+            count=started_count,
+            open_iteration=max(node_iterations - 1, 0),
+            resume=resume,
+        )
+
     # --- resolution (D28 pattern, fifth application) ----------------------------
 
     async def _resolve(
@@ -277,15 +405,59 @@ class WorkflowRuntime:
         input: str,
         ctx: ExecutionContext,
         sink: InProcessEventSink,
+        resume_state: _ResumeState | None = None,
     ) -> LoopOutcome:
         nodes = {node.id: node for node in wf.nodes}
         outgoing: dict[str, list[str]] = {node_id: [] for node_id in nodes}
         for edge in wf.edges:
             outgoing[edge.from_node].append(edge.to_node)
-        outputs: dict[str, Any] = {}
         current: str | None = wf.start_node_id
         count = 0
         last_output = ""
+        outputs: dict[str, Any] = {}
+
+        if resume_state is not None:
+            # The S10 composition (ADR 0015 §7): resume the PAUSED node's
+            # segment without re-emitting its node.started — it started in the
+            # original segment; the gapless sequence continues from the
+            # resumed loop's first event. Upstream outputs ride the replay.
+            state = resume_state
+            outputs, last_output, count = state.outputs, state.last_output, state.count
+            node = nodes[state.node_id]
+            node_sink = NodeSink(sink, node.id)
+            outcome = await self._runner.resume_segment(
+                versions[node.id],
+                ctx.run_id,
+                ctx,
+                node_sink,
+                state.resume,
+                open_iteration=state.open_iteration,
+            )
+            if outcome.kind == "paused":
+                return LoopOutcome(kind="paused", iterations=count, pause=outcome.pause)
+            if outcome.kind == "failed":
+                # D43: no node.failed — the inner failure becomes the run's
+                # terminal, the node named in the error string.
+                return LoopOutcome(
+                    kind="failed",
+                    error=f"node {node.id!r}: {outcome.error or 'unknown error'}",
+                    error_kind=outcome.error_kind,
+                    iterations=count,
+                )
+            output = outcome.final_message or ""
+            outputs[node.id] = output
+            last_output = output
+            await node_sink.append(
+                NodeCompleted(
+                    event_id=_uuid(),
+                    run_id=ctx.run_id,
+                    created_at=_now(),
+                    node_id=node.id,
+                    node_type="agent",
+                    output=output[:2000],
+                )
+            )
+            current = _next_node(outgoing[node.id])
 
         while current is not None:
             ctx.check_limits()  # deadline / cancellation are the run's own
@@ -525,6 +697,7 @@ class WorkflowRuntime:
                 started_at=started_at,
                 finished_at=None,
                 event_cursor=pause.pause_cursor,
+                metadata=dict(ctx.metadata),
             )
         if outcome.kind == "completed":
             cursor = await self._finalize(
@@ -669,6 +842,7 @@ class WorkflowRuntime:
             started_at=started_at,
             finished_at=datetime.now(UTC),
             event_cursor=cursor,
+            metadata=dict(ctx.metadata),
         )
 
 

@@ -9,6 +9,7 @@ the real AgentRuntime loop is the agent suite's business. The worker's
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import uuid4
 
 from jarvis.domain.agent import (
@@ -18,6 +19,7 @@ from jarvis.domain.agent import (
     StrategyConfig,
     ToolBinding,
 )
+from jarvis.domain.events import NodeCompleted, NodeStarted, RunAwaitingInput
 from jarvis.domain.execution import ExecutionContext, RunResult
 from jarvis.domain.message import Usage
 from jarvis.domain.workflow import (
@@ -31,7 +33,9 @@ from jarvis.domain.workflow import (
     WorkflowNode,
     WorkflowVersion,
 )
+from jarvis.events.bus import InProcessEventSink
 from jarvis.models.errors import ModelError
+from jarvis.ports.queue import ResumeRequest
 from jarvis.runtime.agent_runtime import LoopOutcome, PauseOutcome
 from jarvis.runtime.limits import RunLimits
 from jarvis.runtime.workflow_runtime import WorkflowRuntime
@@ -43,11 +47,14 @@ from jarvis.tools.runtime import ToolRuntime
 
 class FakeRunner:
     """SegmentRunner over a script of LoopOutcomes (or callables receiving
-    ctx — for mid-walk cancel triggering and usage writes)."""
+    ctx — for mid-walk cancel triggering and usage writes). `resume_script`
+    drives `resume_segment` separately."""
 
-    def __init__(self, script=None) -> None:
+    def __init__(self, script=None, resume_script=None) -> None:
         self.calls: list[tuple[AgentVersion, str, ExecutionContext, object]] = []
         self.script = list(script or [])
+        self.resume_script = list(resume_script or [])
+        self.resumes: list[tuple[AgentVersion, object, int | None]] = []
 
     async def _run_segment(self, version, input, ctx, sink, started=None):
         self.calls.append((version, input, ctx, sink))
@@ -57,6 +64,15 @@ class FakeRunner:
                 return step(ctx)
             return step
         return LoopOutcome(kind="completed", final_message=f"done:{input}", iterations=1)
+
+    async def resume_segment(self, version, run_id, ctx, sink, resume, *, open_iteration=None):
+        self.resumes.append((version, resume, open_iteration))
+        if self.resume_script:
+            step = self.resume_script.pop(0)
+            if callable(step):
+                return step(ctx)
+            return step
+        return LoopOutcome(kind="completed", final_message="resumed", iterations=1)
 
     def cancel(self, run_id, reason="cancelled by user") -> bool:
         return True
@@ -71,18 +87,29 @@ class RecordingExecutions:
         self.finished: list[RunResult] = []
         self.marked: list[tuple[str, object]] = []
         self.tool_rows: list[tuple[str, object]] = []
+        self.rows: dict[str, RunResult] = {}
+        self.events: dict[str, list[Any]] = {}
 
     async def create_run(self, result):
         self.created.append(result)
+        self.rows[result.run_id] = result
 
     async def finish_run(self, result):
         self.finished.append(result)
+        self.rows[result.run_id] = result
 
     async def mark_awaiting_input(self, run_id, awaiting_until, *, total_usage=None):
         self.marked.append((run_id, awaiting_until))
 
     async def save_tool_execution(self, run_id, result, arguments):
         self.tool_rows.append((run_id, result))
+
+    async def get(self, run_id: str):
+        return self.rows.get(run_id)
+
+    async def list_events(self, run_id: str):
+        for event in self.events.get(run_id, []):
+            yield event
 
 
 def _agent(pin: str = "pin-1", agent_id: str = "agent-1") -> AgentVersion:
@@ -161,6 +188,9 @@ def _runtime(runner, versions=None, tools=(), limits=None, executions=None, mcp=
 
 def _ctx(run_id: str = "wrun-1", **kw) -> ExecutionContext:
     return ExecutionContext(run_id=run_id, agent_id="wf-1", agent_version_id="wfv-1", **kw)
+
+
+_RESUME = ResumeRequest(kind="content", content="answer")
 
 
 class TestLinearChain:
@@ -486,3 +516,147 @@ class TestPauseInsideNode:
         events = runtime.bus.get("wrun-1").events
         assert events[-1].type == "node.started"
         assert "run.completed" not in [e.type for e in events]
+
+
+class TestResume:
+    """The S10 composition (ADR 0015 §7): resume re-enters the walk at the
+    node whose pause frame the event log names."""
+
+    def _paused_log(self, repo: RecordingExecutions, *, output_a: str = "A out") -> None:
+        """A durable log like a real paused walk left it: node a completed,
+        node b started and paused (the pause frame rode the node sink)."""
+        run_id = "wrun-1"
+        repo.rows[run_id] = RunResult(
+            run_id=run_id, agent_id="wf-1", status="awaiting_input", input="hi"
+        )
+        repo.events[run_id] = [
+            NodeStarted(
+                event_id=str(uuid4()),
+                run_id=run_id,
+                created_at=datetime.now(UTC),
+                node_id="a",
+                node_type="agent",
+            ),
+            NodeCompleted(
+                event_id=str(uuid4()),
+                run_id=run_id,
+                created_at=datetime.now(UTC),
+                node_id="a",
+                node_type="agent",
+                output=output_a,
+            ),
+            NodeStarted(
+                event_id=str(uuid4()),
+                run_id=run_id,
+                created_at=datetime.now(UTC),
+                node_id="b",
+                node_type="agent",
+            ),
+            RunAwaitingInput(
+                event_id=str(uuid4()),
+                run_id=run_id,
+                created_at=datetime.now(UTC),
+                reason="tool_approval",
+                pending_calls=[],
+                awaiting_until=datetime.now(UTC) + timedelta(hours=1),
+                node_id="b",
+            ),
+        ]
+
+    async def test_resume_continues_the_walk_from_the_paused_node(self):
+        wf = _workflow(
+            [_agent_node("a", template="{{input}}"), _agent_node("b", template="{{node.a}}!")],
+            [WorkflowEdge(from_node="a", to_node="b")],
+        )
+        repo = RecordingExecutions()
+        self._paused_log(repo, output_a="A out")
+        runner = FakeRunner(
+            resume_script=[LoopOutcome(kind="completed", final_message="B", iterations=1)]
+        )
+        runtime = _runtime(runner, executions=repo)
+        ctx = _ctx()
+        sink = InProcessEventSink("wrun-1")
+        result = await runtime.resume(wf, "wrun-1", ctx, sink, _RESUME)
+
+        assert result.status == "succeeded"
+        assert result.final_message == "B"  # the resumed node is the walk's last
+        # the paused node resumed — NOT re-executed from the start
+        assert [v.id for v, _r, _o in runner.resumes] == ["pin-1"] and runner.calls == []
+        events = sink.events
+        assert [e.type for e in events] == ["node.completed", "run.completed"]
+        assert events[0].node_id == "b"  # the resumed node, not node a
+
+    async def test_resume_then_downstream_node_runs(self):
+        wf = _workflow(
+            [_agent_node("a"), _agent_node("b"), _agent_node("c", template="{{node.b}}")],
+            [
+                WorkflowEdge(from_node="a", to_node="b"),
+                WorkflowEdge(from_node="b", to_node="c"),
+            ],
+        )
+        repo = RecordingExecutions()
+        self._paused_log(repo, output_a="A out")
+        runner = FakeRunner(
+            resume_script=[LoopOutcome(kind="completed", final_message="B", iterations=1)],
+            script=[LoopOutcome(kind="completed", final_message="C", iterations=1)],
+        )
+        runtime = _runtime(runner, executions=repo)
+        result = await runtime.resume(wf, "wrun-1", _ctx(), InProcessEventSink("wrun-1"), _RESUME)
+
+        assert result.status == "succeeded"
+        # node c rode the fresh-walk path and saw the resumed node's output
+        assert result.final_message == "C" and [c[1] for c in runner.calls] == ["B"]
+
+    async def test_resume_can_pause_again(self):
+        wf = _workflow(
+            [_agent_node("a", pin="pin-1"), _agent_node("b", pin="pin-1")],
+            [WorkflowEdge(from_node="a", to_node="b")],
+        )
+        repo = RecordingExecutions()
+        self._paused_log(repo)
+        pause = PauseOutcome(
+            reason="strategy",
+            question="again?",
+            awaiting_until=datetime.now(UTC) + timedelta(hours=1),
+            pause_cursor=9,
+        )
+        runtime = _runtime(
+            FakeRunner(resume_script=[LoopOutcome(kind="paused", iterations=1, pause=pause)]),
+            executions=repo,
+        )
+        result = await runtime.resume(wf, "wrun-1", _ctx(), InProcessEventSink("wrun-1"), _RESUME)
+
+        assert result.status == "awaiting_input"
+        assert result.event_cursor == 9
+        assert repo.finished == []
+
+    async def test_resume_inner_failure_names_the_node(self):
+        wf = _workflow(
+            [_agent_node("a"), _agent_node("b")],
+            [WorkflowEdge(from_node="a", to_node="b")],
+        )
+        repo = RecordingExecutions()
+        self._paused_log(repo)
+        runtime = _runtime(
+            FakeRunner(
+                resume_script=[LoopOutcome(kind="failed", error="boom", error_kind="strategy")]
+            ),
+            executions=repo,
+        )
+        result = await runtime.resume(wf, "wrun-1", _ctx(), InProcessEventSink("wrun-1"), _RESUME)
+
+        assert result.status == "failed"
+        assert result.error_kind == "strategy"
+        assert result.error == "node 'b': boom"
+
+    async def test_no_pause_frame_is_an_internal_terminal(self):
+        wf = _workflow([_agent_node("a")])
+        repo = RecordingExecutions()
+        repo.rows["wrun-1"] = RunResult(
+            run_id="wrun-1", agent_id="wf-1", status="awaiting_input", input="hi"
+        )
+        runtime = _runtime(FakeRunner(), executions=repo)
+        result = await runtime.resume(wf, "wrun-1", _ctx(), InProcessEventSink("wrun-1"), _RESUME)
+
+        assert result.status == "failed"
+        assert "no pause frame" in (result.error or "")

@@ -1013,6 +1013,7 @@ class SqlExecutionRepo:
             started_at=result.started_at,
             finished_at=result.finished_at,
             event_cursor=result.event_cursor,
+            metadata_json=result.metadata,
         )
 
     @staticmethod
@@ -1034,6 +1035,7 @@ class SqlExecutionRepo:
             started_at=row.started_at,
             finished_at=row.finished_at,
             event_cursor=row.event_cursor,
+            metadata=row.metadata_json or {},
         )
 
     @staticmethod

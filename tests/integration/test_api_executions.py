@@ -51,8 +51,9 @@ async def test_cancel_queued_run_never_reaches_the_runtime(client, container, ag
     assert version is not None
     message = _queue_message(
         container.settings,
-        definition,
-        version,
+        "agent",
+        definition.id,
+        version.id,
         RunRequest(input="go"),
         Principal(tenant_id="default", mode="anonymous"),
     )

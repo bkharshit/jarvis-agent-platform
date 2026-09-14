@@ -503,6 +503,107 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workflows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Workflows */
+        get: operations["list_workflows_v1_workflows_get"];
+        put?: never;
+        /** Create Workflow */
+        post: operations["create_workflow_v1_workflows_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workflows/{workflow_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Workflow */
+        get: operations["get_workflow_v1_workflows__workflow_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Workflow */
+        delete: operations["delete_workflow_v1_workflows__workflow_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Workflow */
+        patch: operations["update_workflow_v1_workflows__workflow_id__patch"];
+        trace?: never;
+    };
+    "/v1/workflows/{workflow_id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Workflow
+         * @description Blocking run — enqueue with kind="workflow" (D41), then wait for the
+         *     segment to end. A pause INSIDE an agent node (S10 composition, ADR 0015
+         *     §7) ends the segment like an agent pause: the route returns the
+         *     awaiting_input row and the client resumes with
+         *     POST /executions/{id}/resume.
+         */
+        post: operations["run_workflow_v1_workflows__workflow_id__run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workflows/{workflow_id}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stream Workflow
+         * @description SSE run: enqueue with kind="workflow", then frame every event the
+         *     worker writes — including `node.*` events stamped with the executing
+         *     node's node_id (D43). Resume with `Last-Event-ID` plus `run_id`, exactly
+         *     like the agents stream.
+         */
+        post: operations["stream_workflow_v1_workflows__workflow_id__stream_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workflows/{workflow_id}/versions/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Workflow Version */
+        get: operations["get_workflow_version_v1_workflows__workflow_id__versions__version__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -582,6 +683,21 @@ export interface components {
         AgentList: {
             /** Items */
             items: components["schemas"]["AgentDefinition"][];
+        };
+        /**
+         * AgentNodeConfig
+         * @description Runs one agent with a `{{...}}`-templated input. `agent_version_id`
+         *     is None on drafts and pinned by `update_and_publish` (D42). Template
+         *     variables: the workflow `input`, upstream outputs `node.<id>`, and run
+         *     `variables`.
+         */
+        AgentNodeConfig: {
+            /** Agent Id */
+            agent_id: string;
+            /** Agent Version Id */
+            agent_version_id?: string | null;
+            /** Input Template */
+            input_template: string;
         };
         /**
          * AgentUpsertRequest
@@ -703,6 +819,43 @@ export interface components {
             };
         };
         /**
+         * ConditionNodeConfig
+         * @description Evaluated against the most recent upstream node's output text (the
+         *     single predecessor edge taken — sequential walks make this
+         *     unambiguous). `else_node` is required.
+         */
+        ConditionNodeConfig: {
+            /** Routes */
+            routes: components["schemas"]["ConditionRoute"][];
+            /** Else Node */
+            else_node: string;
+        };
+        /**
+         * ConditionOperator
+         * @description A closed operator set (ADR 0015 §2) — no model call, no Jinja.
+         */
+        ConditionOperator: {
+            /**
+             * Operator
+             * @enum {string}
+             */
+            operator: "contains" | "equals" | "regex" | "not_empty";
+            /**
+             * Value
+             * @default
+             */
+            value: string;
+        };
+        /**
+         * ConditionRoute
+         * @description First matching route wins; the node's config carries the else.
+         */
+        ConditionRoute: {
+            when: components["schemas"]["ConditionOperator"];
+            /** To Node */
+            to_node: string;
+        };
+        /**
          * CredentialCreate
          * @description POST /credentials — `secret` is the BYOK key material. It is
          *     encrypted server-side and never stored or returned in plaintext
@@ -760,7 +913,7 @@ export interface components {
             /** Cursor */
             cursor: number;
             /** Event */
-            event: components["schemas"]["RunStarted"] | components["schemas"]["IterationStarted"] | components["schemas"]["ModelInvocationStarted"] | components["schemas"]["TextDelta"] | components["schemas"]["ModelInvocationCompleted"] | components["schemas"]["ToolCallRequested"] | components["schemas"]["ToolCallStarted"] | components["schemas"]["ToolCallCompleted"] | components["schemas"]["ToolCallFailed"] | components["schemas"]["ToolCallDeclined"] | components["schemas"]["IterationCompleted"] | components["schemas"]["RunAwaitingInput"] | components["schemas"]["RunCompleted"] | components["schemas"]["RunFailed"] | components["schemas"]["RunCancelled"];
+            event: components["schemas"]["RunStarted"] | components["schemas"]["IterationStarted"] | components["schemas"]["ModelInvocationStarted"] | components["schemas"]["TextDelta"] | components["schemas"]["ModelInvocationCompleted"] | components["schemas"]["ToolCallRequested"] | components["schemas"]["ToolCallStarted"] | components["schemas"]["ToolCallCompleted"] | components["schemas"]["ToolCallFailed"] | components["schemas"]["ToolCallDeclined"] | components["schemas"]["NodeStarted"] | components["schemas"]["NodeCompleted"] | components["schemas"]["IterationCompleted"] | components["schemas"]["RunAwaitingInput"] | components["schemas"]["RunCompleted"] | components["schemas"]["RunFailed"] | components["schemas"]["RunCancelled"];
         };
         /**
          * EnvCredentialRef
@@ -792,11 +945,19 @@ export interface components {
             messages: components["schemas"]["Message"][];
             /** Tool Executions */
             tool_executions: components["schemas"]["ToolResult"][];
+            /** Names */
+            names?: {
+                [key: string]: string;
+            };
         };
         /** ExecutionList */
         ExecutionList: {
             /** Items */
             items: components["schemas"]["RunResult"][];
+            /** Names */
+            names?: {
+                [key: string]: string;
+            };
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -830,6 +991,8 @@ export interface components {
              * Format: date-time
              */
             created_at?: string;
+            /** Node Id */
+            node_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -852,6 +1015,8 @@ export interface components {
              * Format: date-time
              */
             created_at?: string;
+            /** Node Id */
+            node_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1136,6 +1301,8 @@ export interface components {
              * Format: date-time
              */
             created_at?: string;
+            /** Node Id */
+            node_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1160,6 +1327,8 @@ export interface components {
              * Format: date-time
              */
             created_at?: string;
+            /** Node Id */
+            node_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1201,6 +1370,78 @@ export interface components {
             credential_ref?: (components["schemas"]["EnvCredentialRef"] | components["schemas"]["StoredCredentialRef"]) | null;
         };
         /**
+         * NodeCompleted
+         * @description A workflow node finished; `output` carries the agent's final message
+         *     or the tool's result (never an inner terminal event).
+         */
+        NodeCompleted: {
+            /** Event Id */
+            event_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /** Node Id */
+            node_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "node.completed";
+            /**
+             * Node Type
+             * @enum {string}
+             */
+            node_type: "agent" | "tool" | "condition";
+            /**
+             * Output
+             * @default
+             */
+            output: string;
+            /**
+             * Is Error
+             * @default false
+             */
+            is_error: boolean;
+        };
+        /**
+         * NodeStarted
+         * @description A workflow node began executing. `node_id` overrides the envelope's
+         *     optional field with a required one — the event IS the node boundary
+         *     marker; there is no `node.failed` (D43: an inner failure surfaces as
+         *     the run's terminal `run.failed` naming the node).
+         */
+        NodeStarted: {
+            /** Event Id */
+            event_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Sequence */
+            sequence?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /** Node Id */
+            node_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "node.started";
+            /**
+             * Node Type
+             * @enum {string}
+             */
+            node_type: "agent" | "tool" | "condition";
+        };
+        /**
          * ResumeBody
          * @description Body for POST /executions/{id}/resume (S10, ADR 0010 §4; ADR 0011):
          *     an ask_human pause answers with `content`; a tool-approval pause answers
@@ -1237,6 +1478,8 @@ export interface components {
              * Format: date-time
              */
             created_at?: string;
+            /** Node Id */
+            node_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1273,6 +1516,8 @@ export interface components {
              * Format: date-time
              */
             created_at?: string;
+            /** Node Id */
+            node_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1295,6 +1540,8 @@ export interface components {
              * Format: date-time
              */
             created_at?: string;
+            /** Node Id */
+            node_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1319,6 +1566,8 @@ export interface components {
              * Format: date-time
              */
             created_at?: string;
+            /** Node Id */
+            node_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1407,6 +1656,10 @@ export interface components {
             finished_at?: string | null;
             /** Event Cursor */
             event_cursor?: number | null;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
         };
         /** RunStarted */
         RunStarted: {
@@ -1421,6 +1674,8 @@ export interface components {
              * Format: date-time
              */
             created_at?: string;
+            /** Node Id */
+            node_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1494,6 +1749,8 @@ export interface components {
              * Format: date-time
              */
             created_at?: string;
+            /** Node Id */
+            node_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1551,6 +1808,8 @@ export interface components {
              * Format: date-time
              */
             created_at?: string;
+            /** Node Id */
+            node_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1595,6 +1854,8 @@ export interface components {
              * Format: date-time
              */
             created_at?: string;
+            /** Node Id */
+            node_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1618,6 +1879,8 @@ export interface components {
              * Format: date-time
              */
             created_at?: string;
+            /** Node Id */
+            node_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1649,6 +1912,8 @@ export interface components {
              * Format: date-time
              */
             created_at?: string;
+            /** Node Id */
+            node_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1676,6 +1941,8 @@ export interface components {
              * Format: date-time
              */
             created_at?: string;
+            /** Node Id */
+            node_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1698,6 +1965,20 @@ export interface components {
             };
             /** Annotations */
             annotations?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * ToolNodeConfig
+         * @description Executes one bound tool (builtin or `mcp__server__tool`).
+         *     `arguments` are the tool call's arguments — string values may carry
+         *     `{{...}}` templates; `binding.config` stays the tool-level config
+         *     (timeout etc.), exactly the ToolContext.config an agent run passes.
+         */
+        ToolNodeConfig: {
+            binding: components["schemas"]["ToolBinding"];
+            /** Arguments */
+            arguments?: {
                 [key: string]: unknown;
             };
         };
@@ -1790,6 +2071,123 @@ export interface components {
             display_name: string;
             /** Role */
             role?: string | null;
+        };
+        /** WorkflowDefinition */
+        WorkflowDefinition: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Nodes */
+            nodes: components["schemas"]["WorkflowNode"][];
+            /** Edges */
+            edges?: components["schemas"]["WorkflowEdge"][];
+            /** Start Node Id */
+            start_node_id: string;
+            /**
+             * Max Node Executions
+             * @default 24
+             */
+            max_node_executions: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at?: string;
+        };
+        /** WorkflowDetail */
+        WorkflowDetail: {
+            definition: components["schemas"]["WorkflowDefinition"];
+            /** Versions */
+            versions: components["schemas"]["VersionSummary"][];
+            /** Lints */
+            lints?: string[];
+        };
+        /** WorkflowEdge */
+        WorkflowEdge: {
+            /** From Node */
+            from_node: string;
+            /** To Node */
+            to_node: string;
+            /** Label */
+            label?: string | null;
+        };
+        /** WorkflowList */
+        WorkflowList: {
+            /** Items */
+            items: components["schemas"]["WorkflowDefinition"][];
+        };
+        /** WorkflowNode */
+        WorkflowNode: {
+            /** Id */
+            id: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "agent" | "tool" | "condition";
+            /** Config */
+            config: components["schemas"]["AgentNodeConfig"] | components["schemas"]["ToolNodeConfig"] | components["schemas"]["ConditionNodeConfig"];
+        };
+        /**
+         * WorkflowUpsertRequest
+         * @description Create/patch payload for a workflow (S6, ADR 0015 §6) — the graph the
+         *     client authored. Node configs validate against the typed per-type
+         *     configs; `agent_version_id` stays None on drafts (publish pins, D42).
+         */
+        WorkflowUpsertRequest: {
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Nodes */
+            nodes: components["schemas"]["WorkflowNode"][];
+            /** Edges */
+            edges?: components["schemas"]["WorkflowEdge"][];
+            /** Start Node Id */
+            start_node_id: string;
+            /**
+             * Max Node Executions
+             * @default 24
+             */
+            max_node_executions: number;
+        };
+        /**
+         * WorkflowVersion
+         * @description Immutable, append-only snapshot of a WorkflowDefinition — the same
+         *     D1 replay argument as AgentVersion, one level up.
+         */
+        WorkflowVersion: {
+            /** Id */
+            id: string;
+            /** Workflow Id */
+            workflow_id: string;
+            /** Version */
+            version: number;
+            snapshot: components["schemas"]["WorkflowDefinition"];
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
         };
     };
     responses: never;
@@ -2899,6 +3297,268 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModelListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_workflows_v1_workflows_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_workflow_v1_workflows_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowUpsertRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_workflow_v1_workflows__workflow_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_workflow_v1_workflows__workflow_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_workflow_v1_workflows__workflow_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowUpsertRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_workflow_v1_workflows__workflow_id__run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_workflow_v1_workflows__workflow_id__stream_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_workflow_version_v1_workflows__workflow_id__versions__version__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowVersion"];
                 };
             };
             /** @description Validation Error */

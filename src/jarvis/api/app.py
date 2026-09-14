@@ -27,6 +27,7 @@ from jarvis.api.routes.executions import router as executions_router
 from jarvis.api.routes.mcp import router as mcp_router
 from jarvis.api.routes.members import router as members_router
 from jarvis.api.routes.models import router as models_router
+from jarvis.api.routes.workflows import router as workflows_router
 from jarvis.config import Settings
 
 logger = logging.getLogger("jarvis.api")
@@ -83,6 +84,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(credentials_router, prefix="/v1")
     app.include_router(conversations_router, prefix="/v1")
     app.include_router(models_router, prefix="/v1")
+    app.include_router(workflows_router, prefix="/v1")
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

@@ -529,10 +529,12 @@ async def test_resume_without_row_is_acked_without_execution():
 
 
 class FakeWorkflowRuntime:
-    """The workflow runtime's narrow worker contract: run() to a terminal."""
+    """The workflow runtime's narrow worker contract: run() to a terminal,
+    resume() through the paused node (S10 composition, ADR 0015 §7)."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
+        self.resumes: list[tuple[str, object]] = []
 
     async def run(self, version, input, ctx, sink=None):
         self.calls.append((ctx.run_id, input))
@@ -561,6 +563,27 @@ class FakeWorkflowRuntime:
             status="succeeded",
             final_message="walked",
             iterations=2,
+            event_cursor=cursor,
+        )
+
+    async def resume(self, version, run_id, ctx, sink, resume):
+        self.resumes.append((run_id, resume))
+        cursor = await sink.finalize(
+            RunCompleted(
+                event_id=str(uuid4()),
+                run_id=ctx.run_id,
+                created_at=datetime.now(UTC),
+                final_message="resumed",
+                total_usage=Usage(),
+                iterations=1,
+            )
+        )
+        return RunResult(
+            run_id=ctx.run_id,
+            agent_id=ctx.agent_id,
+            status="succeeded",
+            final_message="resumed",
+            iterations=1,
             event_cursor=cursor,
         )
 
@@ -624,8 +647,12 @@ async def test_workflow_kind_executes_through_the_workflow_runtime():
     # the ack after the runtime returned a terminal result
 
 
-async def test_workflow_resume_is_an_honest_terminal_until_the_api_lands():
+async def test_workflow_resume_executes_through_the_workflow_runtime():
+    """The S10 composition (ADR 0015 §7): a workflow run paused inside an
+    agent node resumes through WorkflowRuntime.resume — the same stale-guard
+    and ack contract as the agent path."""
     queue, executions, notifier = FakeQueue(), FakeExecutions(), NotifyRecorder()
+    wf_runtime = FakeWorkflowRuntime()
     definition = _definition("agent-1")
     worker = Worker(
         queue=queue,
@@ -633,9 +660,12 @@ async def test_workflow_resume_is_an_honest_terminal_until_the_api_lands():
         executions=executions,
         runtime=ScriptedRuntime(),
         persist=worker_persist(executions, notifier),
-        workflow_runtime=FakeWorkflowRuntime(),
+        workflow_runtime=wf_runtime,
         workflow_versions=WorkflowVersionStub(),
     )
+    resume = ResumeRequest(kind="content", content="prod")
+    # the paused run's row — the resume claim's stale-guard needs it
+    executions.runs["wrun-2"] = RunResult(run_id="wrun-2", agent_id="wf-1", status="awaiting_input")
     await queue.enqueue(
         RunQueueMessage(
             run_id="wrun-2",
@@ -643,7 +673,7 @@ async def test_workflow_resume_is_an_honest_terminal_until_the_api_lands():
             agent_version_id="wfv-1",
             input="hi",
             kind="workflow",
-            resume=ResumeRequest(kind="content", content="prod"),
+            resume=resume,
         )
     )
 
@@ -651,10 +681,9 @@ async def test_workflow_resume_is_an_honest_terminal_until_the_api_lands():
     await _await_live(worker)
 
     assert queue.acked == ["wrun-2"]
-    assert executions.runs["wrun-2"].status == "failed"
-    assert "not supported" in (executions.runs["wrun-2"].error or "")
+    assert wf_runtime.resumes == [("wrun-2", resume)]
     types = [event.type for _c, event in executions.events["wrun-2"]]
-    assert types == ["run.failed"]
+    assert types == ["run.completed"]  # the fake runtime's resumed walk walked
 
 
 async def test_workflow_kind_without_a_workflow_runtime_stays_claimed():

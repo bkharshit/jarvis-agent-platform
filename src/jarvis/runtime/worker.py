@@ -221,27 +221,10 @@ class Worker:
                     await self._queue.ack(message.run_id)
                     return
                 if message.resume is not None:
-                    # S10 composition for workflows lands with the API's
-                    # resume route (commit 7) — an honest terminal until then,
-                    # never a silent skip.
-                    cursor = await sink.finalize(
-                        _failed_event(
-                            message.run_id,
-                            "workflow resume is not supported yet",
-                            "model",
-                        )
-                    )
-                    await self._executions.finish_run(
-                        self._result(
-                            message,
-                            "failed",
-                            cursor,
-                            error="workflow resume is not supported yet",
-                            error_kind="model",
-                            finished_at=datetime.now(UTC),
-                        )
-                    )
-                    await self._queue.ack(message.run_id)
+                    # The S10 composition (ADR 0015 §7): a pause inside an
+                    # agent node resumes through the workflow runtime, which
+                    # re-enters the walk at the paused node.
+                    await self._execute_workflow_resume(message, wf_version)
                     return
                 started_at = datetime.now(UTC)
                 await self._executions.mark_running(message.run_id, started_at)
@@ -333,6 +316,38 @@ class Worker:
                 await heartbeat
         await self._queue.ack(message.run_id)
         logger.info("run %s resumed segment finished", message.run_id)
+
+    async def _execute_workflow_resume(
+        self, message: RunQueueMessage, version: WorkflowVersion
+    ) -> None:
+        """A resumed workflow segment (S10 composition, ADR 0015 §7): the
+        same stale-guard, sink seeding, and heartbeat dance as an agent
+        resume — the workflow runtime re-enters its walk at the paused node."""
+        assert self._workflow_runtime is not None  # the claim branch asserted the pair
+        row = await self._executions.get(message.run_id)
+        if row is None or row.status != "awaiting_input":
+            await self._queue.ack(message.run_id)
+            logger.info(
+                "stale workflow resume for run %s (status=%s) — acked, skipped",
+                message.run_id,
+                getattr(row, "status", None),
+            )
+            return
+        offset = await self._executions.next_event_sequence(message.run_id)
+        sink = InProcessEventSink(message.run_id, persist=self._persist, sequence_offset=offset)
+        started_at = datetime.now(UTC)
+        await self._executions.mark_running(message.run_id, started_at)
+        ctx = self._context(message)
+        heartbeat = asyncio.create_task(self._heartbeat(message.run_id, ctx))
+        try:
+            assert message.resume is not None  # the claim branch narrowed it
+            await self._workflow_runtime.resume(version, message.run_id, ctx, sink, message.resume)
+        finally:
+            heartbeat.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat
+        await self._queue.ack(message.run_id)
+        logger.info("workflow run %s resumed segment finished", message.run_id)
 
     def _context(self, message: RunQueueMessage) -> ExecutionContext:
         return ExecutionContext(

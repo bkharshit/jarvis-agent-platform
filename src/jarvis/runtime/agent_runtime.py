@@ -778,37 +778,83 @@ class AgentRuntime:
         tooling: McpTooling,
     ) -> RunResult:
         try:
-            return await self._resume_segment_body(
-                run_input, ctx, sink, client, agent, started_at, resume, tooling
+            outcome = await self._resume_loop(ctx, sink, client, agent, resume, tooling)
+            return await self._after_loop(ctx, sink, outcome, started_at, run_input)
+        finally:
+            # S4 (D38): the resumed segment's MCP connections close with the
+            # segment; a later resume re-resolves and reconnects.
+            await tooling.aclose()
+
+    async def resume_segment(
+        self,
+        version: AgentVersion,
+        run_id: str,
+        ctx: ExecutionContext,
+        sink: InProcessEventSink,
+        resume: ResumeRequest,
+        *,
+        open_iteration: int | None = None,
+    ) -> LoopOutcome:
+        """The workflow runtime's resume seam (ADR 0015 §5, the S10
+        composition): everything `resume()` does between the row re-seed and
+        the loop — usage re-seed from the run row so limits span the whole
+        chain, client + tooling resolution (D28/D38) — returning the outcome
+        WITHOUT terminal events or row writes. Raises on model/tooling
+        failure; callers hold the try. `open_iteration` overrides the
+        replay-based re-seed: a workflow run's event log spans nodes, and the
+        workflow runtime counts the PAUSED node's own iterations."""
+        agent = version.snapshot
+        ctx.temperature = agent.temperature
+        self._live_tokens[run_id] = ctx
+        if self._executions is not None:
+            row = await self._executions.get(run_id)
+            if row is not None:
+                ctx.usage = row.total_usage.model_copy()
+        client = await self._models.resolve(agent.model, principal=ctx.principal)
+        if self._trace_llm:
+            client = TracedModelClient(client, ctx, buffer=self.llm_trace_buffer)
+        tooling = await self._resolve_tooling(agent, ctx)  # S4 (D38): re-resolve per segment
+        try:
+            return await self._resume_loop(
+                ctx, sink, client, agent, resume, tooling, open_iteration
             )
         finally:
             # S4 (D38): the resumed segment's MCP connections close with the
             # segment; a later resume re-resolves and reconnects.
             await tooling.aclose()
 
-    async def _resume_segment_body(
+    async def _resume_loop(
         self,
-        run_input: str,
         ctx: ExecutionContext,
         sink: InProcessEventSink,
         client: ModelClient,
         agent: AgentDefinition,
-        started_at: datetime,
         resume: ResumeRequest,
         tooling: McpTooling,
-    ) -> RunResult:
+        open_iteration: int | None = None,
+    ) -> LoopOutcome:
+        """The resumed segment's loop entry: counter re-seed from the durable
+        log, message rebuild, batch/answer entry decision, then the loop.
+        No terminals, no row writes — the callers own those."""
         # Re-seed the chain's counters from the durable log: the open
         # iteration is the last one that STARTED (no IterationCompleted was
         # emitted at the pause) and the pause event carries the gated batch.
         pause_event: RunAwaitingInput | None = None
         iteration_starts = 0
-        if self._executions is not None:
+        if open_iteration is None:
+            if self._executions is not None:
+                async for event in self._executions.list_events(ctx.run_id):
+                    if isinstance(event, IterationStarted):
+                        iteration_starts += 1
+                    elif isinstance(event, RunAwaitingInput):
+                        pause_event = event
+            open_iteration = max(iteration_starts - 1, 0)
+        elif self._executions is not None:
+            # the caller already knows the paused node's iteration — still
+            # scan for the pause frame (the gated batch rides it)
             async for event in self._executions.list_events(ctx.run_id):
-                if isinstance(event, IterationStarted):
-                    iteration_starts += 1
-                elif isinstance(event, RunAwaitingInput):
+                if isinstance(event, RunAwaitingInput):
                     pause_event = event
-        open_iteration = max(iteration_starts - 1, 0)
         ctx.iteration = open_iteration
 
         conversation_id = await self._resume_conversation(ctx, agent)
@@ -865,7 +911,7 @@ class AgentRuntime:
             pending_calls=pending_calls,
             refusals=refusals,
         )
-        return await self._after_loop(ctx, sink, outcome, started_at, run_input)
+        return outcome
 
     async def _resume_conversation(
         self, ctx: ExecutionContext, agent: AgentDefinition

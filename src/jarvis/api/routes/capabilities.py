@@ -43,8 +43,7 @@ _SECTION_FLAGS: dict[str, dict[str, Any]] = {
     "tools": {"enabled": True, "summary": "Builtin tool registry and agent bindings"},
     "models": {"enabled": True, "mode": "read-only", "summary": "Provider and model info"},
     "workflows": {
-        "enabled": False,
-        "stage": "S6",
+        "enabled": True,
         "summary": "DAG runs reusing the same event model",
     },
     "knowledge": {"enabled": False, "stage": "S8", "summary": "Datasets and retrieval"},
@@ -122,6 +121,13 @@ async def _mcp_detail(container: AppContainer, *, tenant_id: str | None) -> dict
     }
 
 
+async def _workflows_detail(container: AppContainer) -> dict[str, Any]:
+    """S6 (ADR 0015 §6): the Workflows section is live — the derived fact is
+    the repo's workflow count plus the backend's node-type set (v1)."""
+    workflows = await container.workflows.list_workflows(limit=200)
+    return {"node_types": ["agent", "tool", "condition"], "count": len(workflows)}
+
+
 async def build_capabilities(
     container: AppContainer, *, tenant_id: str | None = None
 ) -> CapabilitiesResponse:
@@ -143,6 +149,8 @@ async def build_capabilities(
             # route, and the awaiting_input inbox are real (UI enablement).
             # ADR 0014: the debug LLM trace view rides the settings flag.
             detail = {"human_in_the_loop": True, "llm_trace": container.settings.llm_trace}
+        elif key == "workflows":
+            detail = await _workflows_detail(container)
         elif key == "models":
             detail = await _model_providers_detail(container)
         elif key == "plugins":

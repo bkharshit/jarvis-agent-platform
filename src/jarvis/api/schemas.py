@@ -24,6 +24,7 @@ from jarvis.domain.execution import RunResult
 from jarvis.domain.mcp import MCP_NAME_SLUG, McpServer, McpServerConfig
 from jarvis.domain.message import Message
 from jarvis.domain.tools import ToolDescriptor, ToolResult
+from jarvis.domain.workflow import WorkflowDefinition, WorkflowEdge, WorkflowNode
 from jarvis.ports.queue import ResumeRequest
 
 
@@ -97,14 +98,41 @@ class EventList(_Model):
     events: list[CursorEvent]
 
 
+class WorkflowUpsertRequest(_Model):
+    """Create/patch payload for a workflow (S6, ADR 0015 §6) — the graph the
+    client authored. Node configs validate against the typed per-type
+    configs; `agent_version_id` stays None on drafts (publish pins, D42)."""
+
+    name: str = Field(min_length=1)
+    description: str = ""
+    nodes: list[WorkflowNode]
+    edges: list[WorkflowEdge] = Field(default_factory=list)
+    start_node_id: str = Field(min_length=1)
+    max_node_executions: int = Field(default=24, ge=1, le=128)
+
+
+class WorkflowDetail(_Model):
+    definition: WorkflowDefinition
+    versions: list[VersionSummary]
+    lints: list[str] = Field(default_factory=list)
+
+
+class WorkflowList(_Model):
+    items: list[WorkflowDefinition]
+
+
 class ExecutionDetail(_Model):
     run: RunResult
     messages: list[Message]
     tool_executions: list[ToolResult]
+    # agent_id -> display name, resolved from the agents AND workflows repos
+    # (S6, D41: a workflow run's agent_id is the workflow id).
+    names: dict[str, str] = Field(default_factory=dict)
 
 
 class ExecutionList(_Model):
     items: list[RunResult]
+    names: dict[str, str] = Field(default_factory=dict)
 
 
 class LlmTraceEntry(_Model):

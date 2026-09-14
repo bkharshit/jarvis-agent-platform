@@ -1595,6 +1595,378 @@
         }
       }
     },
+    "/v1/workflows": {
+      "post": {
+        "tags": [
+          "workflows"
+        ],
+        "summary": "Create Workflow",
+        "operationId": "create_workflow_v1_workflows_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowUpsertRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "workflows"
+        ],
+        "summary": "List Workflows",
+        "operationId": "list_workflows_v1_workflows_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workflows/{workflow_id}": {
+      "get": {
+        "tags": [
+          "workflows"
+        ],
+        "summary": "Get Workflow",
+        "operationId": "get_workflow_v1_workflows__workflow_id__get",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "workflows"
+        ],
+        "summary": "Update Workflow",
+        "operationId": "update_workflow_v1_workflows__workflow_id__patch",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowUpsertRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "workflows"
+        ],
+        "summary": "Delete Workflow",
+        "operationId": "delete_workflow_v1_workflows__workflow_id__delete",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workflows/{workflow_id}/run": {
+      "post": {
+        "tags": [
+          "workflows"
+        ],
+        "summary": "Run Workflow",
+        "description": "Blocking run \u2014 enqueue with kind=\"workflow\" (D41), then wait for the\nsegment to end. A pause INSIDE an agent node (S10 composition, ADR 0015\n\u00a77) ends the segment like an agent pause: the route returns the\nawaiting_input row and the client resumes with\nPOST /executions/{id}/resume.",
+        "operationId": "run_workflow_v1_workflows__workflow_id__run_post",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workflows/{workflow_id}/stream": {
+      "post": {
+        "tags": [
+          "workflows"
+        ],
+        "summary": "Stream Workflow",
+        "description": "SSE run: enqueue with kind=\"workflow\", then frame every event the\nworker writes \u2014 including `node.*` events stamped with the executing\nnode's node_id (D43). Resume with `Last-Event-ID` plus `run_id`, exactly\nlike the agents stream.",
+        "operationId": "stream_workflow_v1_workflows__workflow_id__stream_post",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workflows/{workflow_id}/versions/{version}": {
+      "get": {
+        "tags": [
+          "workflows"
+        ],
+        "summary": "Get Workflow Version",
+        "operationId": "get_workflow_version_v1_workflows__workflow_id__versions__version__get",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowVersion"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/healthz": {
       "get": {
         "summary": "Healthz",
@@ -1752,6 +2124,39 @@
           "items"
         ],
         "title": "AgentList"
+      },
+      "AgentNodeConfig": {
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Agent Id"
+          },
+          "agent_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Version Id"
+          },
+          "input_template": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Input Template"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "agent_id",
+          "input_template"
+        ],
+        "title": "AgentNodeConfig",
+        "description": "Runs one agent with a `{{...}}`-templated input. `agent_version_id`\nis None on drafts and pinned by `update_and_publish` (D42). Template\nvariables: the workflow `input`, upstream outputs `node.<id>`, and run\n`variables`."
       },
       "AgentUpsertRequest": {
         "properties": {
@@ -2113,6 +2518,76 @@
         ],
         "title": "CapabilitiesResponse"
       },
+      "ConditionNodeConfig": {
+        "properties": {
+          "routes": {
+            "items": {
+              "$ref": "#/components/schemas/ConditionRoute"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Routes"
+          },
+          "else_node": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Else Node"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "routes",
+          "else_node"
+        ],
+        "title": "ConditionNodeConfig",
+        "description": "Evaluated against the most recent upstream node's output text (the\nsingle predecessor edge taken \u2014 sequential walks make this\nunambiguous). `else_node` is required."
+      },
+      "ConditionOperator": {
+        "properties": {
+          "operator": {
+            "type": "string",
+            "enum": [
+              "contains",
+              "equals",
+              "regex",
+              "not_empty"
+            ],
+            "title": "Operator"
+          },
+          "value": {
+            "type": "string",
+            "title": "Value",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "operator"
+        ],
+        "title": "ConditionOperator",
+        "description": "A closed operator set (ADR 0015 \u00a72) \u2014 no model call, no Jinja."
+      },
+      "ConditionRoute": {
+        "properties": {
+          "when": {
+            "$ref": "#/components/schemas/ConditionOperator"
+          },
+          "to_node": {
+            "type": "string",
+            "title": "To Node"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "when",
+          "to_node"
+        ],
+        "title": "ConditionRoute",
+        "description": "First matching route wins; the node's config carries the else."
+      },
       "CredentialCreate": {
         "properties": {
           "name": {
@@ -2297,6 +2772,12 @@
                 "$ref": "#/components/schemas/ToolCallDeclined"
               },
               {
+                "$ref": "#/components/schemas/NodeStarted"
+              },
+              {
+                "$ref": "#/components/schemas/NodeCompleted"
+              },
+              {
                 "$ref": "#/components/schemas/IterationCompleted"
               },
               {
@@ -2320,6 +2801,8 @@
                 "iteration.started": "#/components/schemas/IterationStarted",
                 "model.invocation.completed": "#/components/schemas/ModelInvocationCompleted",
                 "model.invocation.started": "#/components/schemas/ModelInvocationStarted",
+                "node.completed": "#/components/schemas/NodeCompleted",
+                "node.started": "#/components/schemas/NodeStarted",
                 "run.awaiting_input": "#/components/schemas/RunAwaitingInput",
                 "run.cancelled": "#/components/schemas/RunCancelled",
                 "run.completed": "#/components/schemas/RunCompleted",
@@ -2416,6 +2899,13 @@
             },
             "type": "array",
             "title": "Tool Executions"
+          },
+          "names": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Names"
           }
         },
         "additionalProperties": false,
@@ -2435,6 +2925,13 @@
             },
             "type": "array",
             "title": "Items"
+          },
+          "names": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Names"
           }
         },
         "additionalProperties": false,
@@ -2504,6 +3001,17 @@
             "format": "date-time",
             "title": "Created At"
           },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          },
           "type": {
             "type": "string",
             "const": "iteration.completed",
@@ -2553,6 +3061,17 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
           },
           "type": {
             "type": "string",
@@ -3258,6 +3777,17 @@
             "format": "date-time",
             "title": "Created At"
           },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          },
           "type": {
             "type": "string",
             "const": "model.invocation.completed",
@@ -3312,6 +3842,17 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
           },
           "type": {
             "type": "string",
@@ -3423,6 +3964,130 @@
         "title": "ModelRef",
         "description": "Reference to a model. `credential_ref` is a *reference* (env-var name\nor stored credential id) \u2014 credential material never enters the domain,\na snapshot, or an API response (ADR 0006 \u00a71)."
       },
+      "NodeCompleted": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "node_id": {
+            "type": "string",
+            "title": "Node Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "node.completed",
+            "title": "Type",
+            "default": "node.completed"
+          },
+          "node_type": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "tool",
+              "condition"
+            ],
+            "title": "Node Type"
+          },
+          "output": {
+            "type": "string",
+            "title": "Output",
+            "default": ""
+          },
+          "is_error": {
+            "type": "boolean",
+            "title": "Is Error",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "run_id",
+          "node_id",
+          "node_type"
+        ],
+        "title": "NodeCompleted",
+        "description": "A workflow node finished; `output` carries the agent's final message\nor the tool's result (never an inner terminal event)."
+      },
+      "NodeStarted": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "node_id": {
+            "type": "string",
+            "title": "Node Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "node.started",
+            "title": "Type",
+            "default": "node.started"
+          },
+          "node_type": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "tool",
+              "condition"
+            ],
+            "title": "Node Type"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "run_id",
+          "node_id",
+          "node_type"
+        ],
+        "title": "NodeStarted",
+        "description": "A workflow node began executing. `node_id` overrides the envelope's\noptional field with a required one \u2014 the event IS the node boundary\nmarker; there is no `node.failed` (D43: an inner failure surfaces as\nthe run's terminal `run.failed` naming the node)."
+      },
       "ResumeBody": {
         "properties": {
           "content": {
@@ -3493,6 +4158,17 @@
             "format": "date-time",
             "title": "Created At"
           },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          },
           "type": {
             "type": "string",
             "const": "run.awaiting_input",
@@ -3562,6 +4238,17 @@
             "format": "date-time",
             "title": "Created At"
           },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          },
           "type": {
             "type": "string",
             "const": "run.cancelled",
@@ -3611,6 +4298,17 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
           },
           "type": {
             "type": "string",
@@ -3666,6 +4364,17 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
           },
           "type": {
             "type": "string",
@@ -3891,6 +4600,11 @@
               }
             ],
             "title": "Event Cursor"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
           }
         },
         "additionalProperties": false,
@@ -3927,6 +4641,17 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
           },
           "type": {
             "type": "string",
@@ -4096,6 +4821,17 @@
             "format": "date-time",
             "title": "Created At"
           },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          },
           "type": {
             "type": "string",
             "const": "text.delta",
@@ -4210,6 +4946,17 @@
             "format": "date-time",
             "title": "Created At"
           },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          },
           "type": {
             "type": "string",
             "const": "tool.call.completed",
@@ -4276,6 +5023,17 @@
             "format": "date-time",
             "title": "Created At"
           },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          },
           "type": {
             "type": "string",
             "const": "tool.call.declined",
@@ -4327,6 +5085,17 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
           },
           "type": {
             "type": "string",
@@ -4394,6 +5163,17 @@
             "format": "date-time",
             "title": "Created At"
           },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          },
           "type": {
             "type": "string",
             "const": "tool.call.requested",
@@ -4450,6 +5230,17 @@
             "format": "date-time",
             "title": "Created At"
           },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          },
           "type": {
             "type": "string",
             "const": "tool.call.started",
@@ -4503,6 +5294,25 @@
           "description"
         ],
         "title": "ToolDescriptor"
+      },
+      "ToolNodeConfig": {
+        "properties": {
+          "binding": {
+            "$ref": "#/components/schemas/ToolBinding"
+          },
+          "arguments": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Arguments"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "binding"
+        ],
+        "title": "ToolNodeConfig",
+        "description": "Executes one bound tool (builtin or `mcp__server__tool`).\n`arguments` are the tool call's arguments \u2014 string values may carry\n`{{...}}` templates; `binding.config` stays the tool-level config\n(timeout etc.), exactly the ToolContext.config an agent run passes."
       },
       "ToolResult": {
         "properties": {
@@ -4694,6 +5504,277 @@
         ],
         "title": "WhoamiResponse",
         "description": "GET /auth/whoami \u2014 the acting principal. `mode` mirrors\ndomain.auth.AuthMode; `email`/`display_name` are None/\"\" for the\nanonymous principal."
+      },
+      "WorkflowDefinition": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowNode"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Nodes"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowEdge"
+            },
+            "type": "array",
+            "title": "Edges"
+          },
+          "start_node_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Start Node Id"
+          },
+          "max_node_executions": {
+            "type": "integer",
+            "maximum": 128.0,
+            "minimum": 1.0,
+            "title": "Max Node Executions",
+            "default": 24
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "nodes",
+          "start_node_id"
+        ],
+        "title": "WorkflowDefinition"
+      },
+      "WorkflowDetail": {
+        "properties": {
+          "definition": {
+            "$ref": "#/components/schemas/WorkflowDefinition"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/VersionSummary"
+            },
+            "type": "array",
+            "title": "Versions"
+          },
+          "lints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Lints"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "definition",
+          "versions"
+        ],
+        "title": "WorkflowDetail"
+      },
+      "WorkflowEdge": {
+        "properties": {
+          "from_node": {
+            "type": "string",
+            "minLength": 1,
+            "title": "From Node"
+          },
+          "to_node": {
+            "type": "string",
+            "minLength": 1,
+            "title": "To Node"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "from_node",
+          "to_node"
+        ],
+        "title": "WorkflowEdge"
+      },
+      "WorkflowList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowDefinition"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "WorkflowList"
+      },
+      "WorkflowNode": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "title": "Id"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "tool",
+              "condition"
+            ],
+            "title": "Type"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentNodeConfig"
+              },
+              {
+                "$ref": "#/components/schemas/ToolNodeConfig"
+              },
+              {
+                "$ref": "#/components/schemas/ConditionNodeConfig"
+              }
+            ],
+            "title": "Config"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "config"
+        ],
+        "title": "WorkflowNode"
+      },
+      "WorkflowUpsertRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowNode"
+            },
+            "type": "array",
+            "title": "Nodes"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowEdge"
+            },
+            "type": "array",
+            "title": "Edges"
+          },
+          "start_node_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Start Node Id"
+          },
+          "max_node_executions": {
+            "type": "integer",
+            "maximum": 128.0,
+            "minimum": 1.0,
+            "title": "Max Node Executions",
+            "default": 24
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "nodes",
+          "start_node_id"
+        ],
+        "title": "WorkflowUpsertRequest",
+        "description": "Create/patch payload for a workflow (S6, ADR 0015 \u00a76) \u2014 the graph the\nclient authored. Node configs validate against the typed per-type\nconfigs; `agent_version_id` stays None on drafts (publish pins, D42)."
+      },
+      "WorkflowVersion": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "workflow_id": {
+            "type": "string",
+            "title": "Workflow Id"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/WorkflowDefinition"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "default": ""
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "workflow_id",
+          "version",
+          "snapshot"
+        ],
+        "title": "WorkflowVersion",
+        "description": "Immutable, append-only snapshot of a WorkflowDefinition \u2014 the same\nD1 replay argument as AgentVersion, one level up."
       }
     }
   }

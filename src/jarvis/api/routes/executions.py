@@ -15,11 +15,15 @@ from fastapi.responses import StreamingResponse
 from jarvis.api.auth import AuthContext, AuthDep
 from jarvis.api.deps import AppContainer
 from jarvis.api.errors import ApiError
-from jarvis.api.routes.agents import (
+from jarvis.api.routes._run_routes import (
     SEGMENT_END_STATUSES,
     ContainerDep,
-    _await_row_status,
-    _await_segment,
+)
+from jarvis.api.routes._run_routes import (
+    await_row_status as _await_row_status,
+)
+from jarvis.api.routes._run_routes import (
+    await_segment as _await_segment,
 )
 from jarvis.api.schemas import (
     CancelResult,
@@ -49,6 +53,22 @@ async def _require_run(executions: TenantScopedExecutions, run_id: str) -> RunRe
     return run
 
 
+async def _names(container: AppContainer, agent_ids: list[str]) -> dict[str, str]:
+    """agent_id -> display name for the rows being served (S6, D41): agents
+    resolve through the agent repo, workflow runs (their agent_id is a
+    workflow id) through the workflow repo — misses stay absent."""
+    names: dict[str, str] = {}
+    for resource_id in dict.fromkeys(agent_ids):  # de-dup, keep order
+        definition = await container.agents.get(resource_id)
+        if definition is not None:
+            names[resource_id] = definition.name
+            continue
+        workflow = await container.workflows.get(resource_id)
+        if workflow is not None:
+            names[resource_id] = workflow.name
+    return names
+
+
 @router.get("")
 async def list_executions(
     agent_id: str | None = None,
@@ -57,6 +77,7 @@ async def list_executions(
     limit: int = 50,
     offset: int = 0,
     auth: AuthContext = AuthDep,
+    container: AppContainer = ContainerDep,
 ) -> ExecutionList:
     items = await auth.executions.list_runs(
         agent_id=agent_id,
@@ -65,15 +86,21 @@ async def list_executions(
         limit=limit,
         offset=offset,
     )
-    return ExecutionList(items=items)
+    names = await _names(container, [run.agent_id for run in items])
+    return ExecutionList(items=items, names=names)
 
 
 @router.get("/{run_id}")
-async def get_execution(run_id: str, auth: AuthContext = AuthDep) -> ExecutionDetail:
+async def get_execution(
+    run_id: str,
+    auth: AuthContext = AuthDep,
+    container: AppContainer = ContainerDep,
+) -> ExecutionDetail:
     run = await _require_run(auth.executions, run_id)
     messages = await auth.executions.list_messages(run_id)
     tool_executions = await auth.executions.list_tool_executions(run_id)
-    return ExecutionDetail(run=run, messages=messages, tool_executions=tool_executions)
+    names = await _names(container, [run.agent_id])
+    return ExecutionDetail(run=run, messages=messages, tool_executions=tool_executions, names=names)
 
 
 @router.get("/{run_id}/llm-trace", response_model=LlmTraceResponse)
@@ -104,7 +131,11 @@ async def cancel_run(
     run = await _require_run(auth.executions, run_id)
     if run.status in TERMINAL_STATUSES:
         return CancelResult(run_id=run_id, cancelled=False, status=run.status)
-    if run.status == "running" and container.runtime.cancel(run_id):
+    # Both executors own live tokens (S6, D41): the workflow sibling holds
+    # its own dict — a cheap lookup each, first hit wins.
+    if run.status == "running" and (
+        container.runtime.cancel(run_id) or container.workflow_runtime.cancel(run_id)
+    ):
         return CancelResult(run_id=run_id, cancelled=True, status=run.status)
     if run.status == "awaiting_input":
         finished = await finish_paused_run(

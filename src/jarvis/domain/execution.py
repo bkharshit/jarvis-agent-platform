@@ -130,3 +130,6 @@ class RunResult(_Model):
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
     event_cursor: int | None = None
+    # Row metadata (D41): a workflow run stamps {"kind": "workflow"} so
+    # listings distinguish the sibling executor's rows. Empty for agents.
+    metadata: dict[str, Any] = Field(default_factory=dict)
