@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import InstrumentedAttribute
 
-from jarvis.domain.agent import AgentDefinition, AgentVersion
+from jarvis.domain.agent import AgentDefinition, AgentVersion, ConversationMemoryState
 from jarvis.domain.auth import (
     ApiKeyRecord,
     SessionRecord,
@@ -1156,6 +1156,42 @@ class SqlConversationRepo:
         if limit is not None:
             rows.reverse()
         return [SqlExecutionRepo._load_message(row) for row in rows]
+
+    async def get_summary_state(
+        self, conversation_id: str, *, tenant_id: str | None = None
+    ) -> ConversationMemoryState | None:
+        """S12 (D45): the rolling-summary state. None when the conversation
+        does not exist (or belongs to another tenant, D29 — absent, not
+        leaked)."""
+        query = select(ConversationRow.summary, ConversationRow.summarized_count).where(
+            ConversationRow.id == conversation_id
+        )
+        if tenant_id is not None:
+            query = query.where(ConversationRow.tenant_id == tenant_id)
+        async with self._sessionmaker() as session:
+            row = (await session.execute(query)).one_or_none()
+        if row is None:
+            return None
+        return ConversationMemoryState(summary=row.summary, summarized_count=row.summarized_count)
+
+    async def save_summary(
+        self,
+        conversation_id: str,
+        *,
+        summary: str,
+        summarized_count: int,
+        tenant_id: str | None = None,
+    ) -> None:
+        """S12 (D45): persist the compaction result. A foreign tenant_id
+        matches no row — the write is silently a no-op, same absence rule
+        as every other scoped write (D29)."""
+        query = update(ConversationRow).where(ConversationRow.id == conversation_id)
+        if tenant_id is not None:
+            query = query.where(ConversationRow.tenant_id == tenant_id)
+        query = query.values(summary=summary, summarized_count=summarized_count)
+        async with self._sessionmaker() as session:
+            await session.execute(query)
+            await session.commit()
 
 
 class SqlAuthRepo:

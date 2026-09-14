@@ -350,3 +350,47 @@ async def test_awaiting_input_pause_transitions(container, agent):
     )
     assert (await repo.get("run-hil-3")).status == "succeeded"
     assert await repo.expired_awaiting(now) == []
+
+
+@pytest.mark.db
+async def test_conversation_summary_state_roundtrip(container, agent):
+    """S12 (D45): summary state persists on the conversation row; tenant
+    scoping follows the D29 absence rule (foreign tenant reads None)."""
+    from uuid import uuid4
+
+    from jarvis.domain.agent import AgentDefinition
+
+    definition = AgentDefinition(
+        id=str(uuid4()),
+        name="summary-state-agent",
+        model=ModelRef(provider="mock", model="mock-model"),
+        strategy=StrategyConfig(type="function_calling"),
+    )
+    await container.agents.create(definition)
+    conversation_id = await container.conversations.get_or_create(definition.id, "s-summary")
+
+    state = await container.conversations.get_summary_state(conversation_id)
+    assert state is not None
+    assert state.summary is None and state.summarized_count == 0
+
+    await container.conversations.save_summary(
+        conversation_id, summary="the user asked about quotas", summarized_count=4
+    )
+    state = await container.conversations.get_summary_state(conversation_id)
+    assert state is not None
+    assert state.summary == "the user asked about quotas"
+    assert state.summarized_count == 4
+
+    # overwriting rolls the state forward (compaction is rolling, not append)
+    await container.conversations.save_summary(
+        conversation_id, summary="quotas then billing", summarized_count=9
+    )
+    state = await container.conversations.get_summary_state(conversation_id)
+    assert state is not None and state.summarized_count == 9
+
+    # a foreign tenant sees absence, not the state (D29)
+    foreign = await container.conversations.get_summary_state(conversation_id, tenant_id="t-other")
+    assert foreign is None
+
+    # unknown conversation reads as absent
+    assert await container.conversations.get_summary_state("no-such-conversation") is None

@@ -13,6 +13,7 @@ import pytest
 from jarvis.domain.agent import (
     AgentDefinition,
     AgentVersion,
+    ConversationMemoryState,
     MemoryConfig,
     ModelRef,
     StrategyConfig,
@@ -66,6 +67,7 @@ class _RecordingRepo:
         self.events: dict[str, list[object]] = {}
         self.conversations: dict[str, list[Message]] = {}
         self.sequences: dict[str, list[int]] = {}
+        self.summary_state: dict[str, tuple[str, int]] = {}
 
     # ExecutionRepo subset used by the runtime
     async def create_run(self, result):
@@ -121,6 +123,16 @@ class _RecordingRepo:
     async def history(self, conversation_id, limit=None):
         messages = self.conversations.get(conversation_id, [])
         return messages[-limit:] if limit is not None else list(messages)
+
+    # ConversationRepo — S12 (D45) summary state
+    async def get_summary_state(self, conversation_id, *, tenant_id=None):
+        state = self.summary_state.get(conversation_id)
+        if state is None:
+            return ConversationMemoryState()
+        return ConversationMemoryState(summary=state[0], summarized_count=state[1])
+
+    async def save_summary(self, conversation_id, *, summary, summarized_count, tenant_id=None):
+        self.summary_state[conversation_id] = (summary, summarized_count)
 
 
 def _agent(**overrides) -> AgentDefinition:

@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Protocol
 
-from jarvis.domain.agent import AgentDefinition, AgentVersion
+from jarvis.domain.agent import AgentDefinition, AgentVersion, ConversationMemoryState
 from jarvis.domain.events import ExecutionEvent
 from jarvis.domain.execution import ExecutionStatus, RunResult
 from jarvis.domain.mcp import McpServer
@@ -167,6 +167,25 @@ class ConversationRepo(Protocol):
         ...
 
     async def history(self, conversation_id: str, limit: int | None = None) -> list[Message]: ...
+
+    async def get_summary_state(
+        self, conversation_id: str, *, tenant_id: str | None = None
+    ) -> ConversationMemoryState | None:
+        """The rolling-summary state (S12, D45). None when the conversation
+        does not exist; a zero state means "nothing summarized yet"."""
+        ...
+
+    async def save_summary(
+        self,
+        conversation_id: str,
+        *,
+        summary: str,
+        summarized_count: int,
+        tenant_id: str | None = None,
+    ) -> None:
+        """Persist the compaction result (S12, D45). `tenant_id` scopes the
+        write to the owning conversation when supplied (D29)."""
+        ...
 
 
 class McpServerRepo(Protocol):

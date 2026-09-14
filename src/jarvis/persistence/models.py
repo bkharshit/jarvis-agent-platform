@@ -381,6 +381,10 @@ class ConversationRow(Base):
         index=True,
     )
     session_id: Mapped[str] = mapped_column(String, nullable=False)
+    # S12 (D45): the rolling-summary state (summarize strategy) — how many
+    # leading messages the `summary` covers; 0/None = a window conversation.
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summarized_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now
     )
