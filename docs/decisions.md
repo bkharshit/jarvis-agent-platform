@@ -468,6 +468,58 @@ the code.
   `PromptContext` exactly like the summary — the seams S12 builds are
   the ones S8 rides.
 
+- **D48 (2026-09-15, S11 planning) — Evaluation data model: three
+  tables, cases as JSONB snapshots (ADR 0017 §2).** `eval_datasets`
+  (cases/scorers/judge_model JSONB), `eval_runs` (dataset JSONB
+  snapshot + pinned agent_version_id), `eval_results` (case_id,
+  run_id, scores JSONB, error, scored_at). Deviation from the
+  roadmap sketch, recorded: NO separate `eval_cases` table — cases
+  are only ever read as a whole dataset (no per-case CRUD or
+  queries), the D1/ADR 0002 snapshot discipline already governs
+  JSONB, and a stable per-case uuid inside the JSONB references
+  results without an FK into a mutable table. Child run_ids are
+  stored EAGERLY on `eval_results` at create time (each run_id is
+  generated inside `queue_message` before enqueue): `ExecutionRepo
+  .list_runs` has no metadata filter (verified), and the eval never
+  needs one — child metadata `{"eval": {...}}` is traceability only.
+  The eval-run row snapshots the dataset (D1): later dataset edits
+  never rewrite a past run's meaning. Tenancy via explicit
+  `tenant_id` kwargs (the McpServerRepo pattern; D29 foreign rows
+  read as absent).
+
+- **D49 (2026-09-15, S11 planning) — Eval status derived at read;
+  scoring lazy and persisted once (ADR 0017 §4).** No status column
+  on `eval_runs`: the detail read derives running/completed from the
+  child run rows (any non-terminal child → "running"). Scoring fires
+  on the first completed detail read — observation (final message +
+  tool order via `list_tool_executions`) → the dataset-snapshot
+  scorers → persist once (`scores` + `scored_at` set is the
+  idempotency guard); re-evaluation is a NEW eval run, never a silent
+  score mutation. A failed child is scored honestly against its
+  observation — no special-casing. An `awaiting_input` child (a
+  human-in-the-loop agent) keeps the eval "running" — a recorded
+  limitation: eval agents must not pause; the stuck child remains
+  visible/resumable in `/executions`.
+
+- **D50 (2026-09-15, S11 planning) — Scorer port: five deterministic
+  scorers + an honest llm_judge (ADR 0017 §5).** `ports/scoring.py`
+  defines the `Scorer` Protocol (`name`, `score(case, observation) ->
+  Score`); adapters: exact / contains / regex / json_schema /
+  tool_sequence (deterministic, unit-tested pure) plus `llm_judge` —
+  ONE `generate()` through the model factory resolving the dataset's
+  `judge_model` (the D28 pattern; no runtime loop, no streaming, no
+  new credential surface). Judge failure (ModelError or unparseable
+  verdict) persists `passed=null` + the error detail — never a
+  silent retry, never a fabricated pass; re-evaluation is a new eval
+  run. A dataset listing `llm_judge` without a `judge_model` is
+  rejected 422 at create/update (`ApiError(422, "validation", ...)` —
+  the models.py convention): an invalid dataset can never be
+  snapshotted. The judge call happens on the read path, outside any
+  run — the frozen event envelope (ADR 0003) is untouched, and the
+  worker/queue need zero changes (child eval runs ARE ordinary runs:
+  `queue_message` + `create_queued_run` per case, pinned
+  `agent_version_id`, resolved by the worker as-is).
+
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 
 Redis/queues · plugins & marketplace · multi-tenancy/auth · RAG · workflow

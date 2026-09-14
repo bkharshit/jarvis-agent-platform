@@ -424,6 +424,26 @@ Executions section.
 
 ## S11 — Evaluation framework
 
+> **Planned 2026-09-15** (planning session; no S11 code exists yet —
+> this record pins the verified design before the build). Design pinned
+> in `docs/adr/0017-evaluation-framework.md` (D48–D50 in decisions.md),
+> commit sequence in `docs/implementation-plan-s11.md`. Key deltas from
+> the sketch below, all verified against code before writing: cases
+> live as JSONB snapshots on the dataset AND the eval-run row (no
+> separate `eval_cases` table — D48; a stable per-case uuid replaces
+> the case FK); child runs are ORDINARY agent-kind runs through the
+> existing queue (`queue_message` + `create_queued_run` per case,
+> pinned `agent_version_id` — the worker is unchanged, verified at
+> worker.py:245), with child run_ids stored eagerly on `eval_results`
+> (`list_runs` has no metadata filter — verified); eval status has NO
+> column, it derives at read from the child rows, and scoring is LAZY
+> on the first completed detail read, persisted once (D49); `llm_judge`
+> requires a dataset-level `judge_model` (422 otherwise, D50) and fails
+> honestly (passed=null + error detail); routes are top-level
+> `/v1/evaluations*` (the MCP-resource pattern), not the sketch's
+> nested `/v1/agents/{id}/evals`. Manual testing is JOINT with S12
+> (one session, two walkthrough scripts) per Harshit's 2026-09-15 call.
+
 **Goal:** score agent versions against test sets, using the data Phase 1
 already persists — no new instrumentation needed.
 
