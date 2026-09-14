@@ -35,7 +35,14 @@ async def test_capabilities_shape(client):
     # derived details come from the real registries
     assert sections["agents"]["detail"]["strategies"] == ["function_calling", "react"]
     builtins = {t["name"] for t in sections["tools"]["detail"]["builtins"]}
-    assert builtins == {"calculator", "current_time", "http_get"}
+    assert builtins == {
+        "calculator",
+        "current_time",
+        "http_get",
+        "memory_get",
+        "memory_put",
+        "memory_delete",
+    }
     providers = {p["name"] for p in sections["models"]["detail"]["providers"]}
     assert providers == {"mock", "openai_compatible"}
     # S10: human-in-the-loop is live (pause frames, resume route, inbox)
