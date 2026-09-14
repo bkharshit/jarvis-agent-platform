@@ -454,6 +454,23 @@ version comparison).
 
 ## S12 — Richer memory
 
+> **Planned 2026-09-14** (planning session; no S12 code exists yet —
+> this record pins the verified design before the build). Design pinned
+> in `docs/adr/0016-richer-memory.md` (D45–D47 in decisions.md), commit
+> sequence in `docs/implementation-plan-s12.md`. Key deltas from the
+> sketch below, all verified against code before writing: the rolling
+> summary is conversation STATE, not a new message role (`summary` +
+> `summarized_count` columns — the `message_role` enum stays frozen);
+> compaction is ONE `generate()` through the agent's already-resolved
+> client at the D28 site, usage counted, and a summarizer ModelError
+> DEGRADES the segment to the plain window (memory can never fail a
+> run — D5); the resumed-segment rebuild switches from full history to
+> summary + window (fixes the S6-documented v1 approximation);
+> `ToolContext` gains optional `tenant_id`; vector memory is DEFERRED
+> to S8 (D47 — pgvector not installed on this machine, verified, and
+> the embedding seam is S8's to design), so no `store` field and no
+> `MemoryStore` port ship speculatively.
+
 **Goal:** beyond the flat last-N window Phase 1 ships.
 
 **Rides on:** `MemoryConfig` + `ConversationRepo` already separate

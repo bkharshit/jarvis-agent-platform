@@ -414,6 +414,60 @@ the code.
   design note recorded (ADR 0015 §7) — per-branch sub-contexts with
   merged usage, anticipated by the `node_id`/NodeSink design.
 
+- **D45 (2026-09-14, S12 planning) — Rolling conversation summary:
+  state on the conversation row, one in-segment model call, degrade to
+  window (ADR 0016 §2).** `MemoryConfig.strategy:
+  Literal["window", "summarize"] = "window"` (additive; old snapshots
+  parse unchanged — the D41 default argument). The summary is
+  conversation STATE, not a message: the conversation row gains
+  `summary TEXT NULL` + `summarized_count INTEGER NOT NULL DEFAULT 0`
+  (count == the gapless per-conversation sequence boundary), so no
+  `message_role` enum migration and no synthetic role leaking into
+  transcript/replay paths. Compaction runs at fresh-segment entry
+  inside the segment's try (the D28 site): evicted slice → ONE
+  `generate()` through the agent's ALREADY-RESOLVED client (no second
+  model, no new credential surface), usage into `ctx.usage` (the
+  orchestrator owns the budget), state saved through two new
+  `ConversationRepo` methods (`get_summary_state`/`save_summary` — the
+  one ports/ change, pre-declared). Failure rules under D5: cancel
+  propagates (run.cancelled); any other ModelError degrades the segment
+  to the plain window with the old summary, logged — memory can never
+  fail a run. No event types, no envelope changes: memory is invisible
+  to the event stream by design. Resumed segments rebuild with
+  summary + window read-only (no compaction on resume) — fixing the
+  documented S6 v1 approximation where `_rebuild_messages` fed the
+  FULL conversation.
+
+- **D46 (2026-09-14, S12 planning) — Scratchpad: builtin tools over a
+  per-session, tenant-scoped KV store (ADR 0016 §3).** A new
+  `ScratchpadRepo` port (get/put/delete keyed agent_id + session_id +
+  key) over one `memory_scratch` table (UNIQUE(agent_id, session_id,
+  key), upsert). Three builtins — `memory_get`/`memory_put`/
+  `memory_delete` — constructed with the store (AppContainer wiring,
+  same line as calculator; capabilities' builtins list picks them up
+  for free). Orthogonal to `memory.enabled` by design: the scratchpad
+  is a TOOL surface, its reads/writes are ordinary tool calls persisted
+  in `tool_executions`. Value cap `max_value_chars` (default 16,000,
+  per-binding overridable through the config that already flows to
+  `ToolContext.config`). No session_id → honest is_error ToolResult,
+  never an exception. `ToolContext` gains optional `tenant_id`
+  (threaded from `ExecutionContext` by the runtime) — additive domain
+  change, pre-declared; without it two tenants sharing an agent with
+  the same session id would see each other's values.
+
+- **D47 (2026-09-14, S12 planning) — Vector memory deferred to S8.**
+  Two live blockers, both verified: pgvector is not installed on this
+  machine's Postgres (`pg_available_extensions` has no `vector`), and
+  the embedding-provider seam (which model embeds, dimension pinning,
+  distance metric, index tenancy) is S8's to design with its retriever
+  — building it inside S12 would guess at S8's requirements. No
+  speculative `MemoryStore` port; `MemoryConfig.strategy` gains
+  `vector` when S8 lands (additive, snapshot-compatible). Design note
+  recorded (ADR 0016 §7): tenant-scoped store, per-segment resolution
+  through the model factory (the D28 pattern), recall injected through
+  `PromptContext` exactly like the summary — the seams S12 builds are
+  the ones S8 rides.
+
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 
 Redis/queues · plugins & marketplace · multi-tenancy/auth · RAG · workflow
