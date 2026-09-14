@@ -249,4 +249,98 @@ describe("applyEvent", () => {
     );
     expect(done.status).toBe("completed");
   });
+
+  // --- S6 (D43): workflow node grouping -------------------------------------
+
+  it("groups inner events under the node that produced them", () => {
+    const state = apply(
+      initialRunConsoleState(),
+      started(),
+      ev({ type: "node.started", node_id: "a", node_type: "agent" }),
+      ev({ type: "iteration.started", iteration: 1 }),
+      ev({ type: "text.delta", text: "A out" }),
+      ev({ type: "run.completed", final_message: "A out", total_usage: { input_tokens: 1, output_tokens: 1 }, iterations: 1 }),
+    );
+    const flush = flushPending(state);
+    const node = flush.items.find((item) => item.kind === "node") as
+      | { kind: "node"; nodeId: string; nodeType: string; status: string; items: { kind: string; text?: string }[] }
+      | undefined;
+    expect(node).toBeDefined();
+    expect(node!.nodeId).toBe("a");
+    expect(node!.nodeType).toBe("agent");
+    expect(node!.status).toBe("running"); // closed implicitly by the terminal
+    // the text landed INSIDE the group, not top-level
+    expect(flush.items.filter((item) => item.kind === "message")).toHaveLength(0);
+    expect(node!.items.some((item) => item.kind === "message" && item.text === "A out")).toBe(true);
+    expect(flush.status).toBe("completed");
+  });
+
+  it("closes the group on node.completed and continues the walk", () => {
+    const state = apply(
+      initialRunConsoleState(),
+      started(),
+      ev({ type: "node.started", node_id: "a", node_type: "agent" }),
+      ev({ type: "text.delta", text: "A" }),
+      ev({ type: "node.completed", node_id: "a", node_type: "agent", output: "A", is_error: false }),
+      ev({ type: "node.started", node_id: "b", node_type: "agent" }),
+      ev({ type: "text.delta", text: "B" }),
+      ev({ type: "node.completed", node_id: "b", node_type: "agent", output: "B", is_error: false }),
+      ev({ type: "run.completed", final_message: "B", total_usage: { input_tokens: 1, output_tokens: 1 }, iterations: 2 }),
+    );
+    const flush = flushPending(state);
+    const nodes = flush.items.filter((item) => item.kind === "node") as {
+      nodeId: string;
+      status: string;
+      output: string;
+      items: unknown[];
+    }[];
+    expect(nodes).toHaveLength(2);
+    expect(nodes.map((n) => n.nodeId)).toEqual(["a", "b"]);
+    expect(nodes.every((n) => n.status === "completed")).toBe(true);
+    expect(nodes[0].output).toBe("A");
+    expect(flush.finalMessage).toBe("B");
+  });
+
+  it("marks the open node failed when the run fails inside it (no node.failed, D43)", () => {
+    const state = apply(
+      initialRunConsoleState(),
+      started(),
+      ev({ type: "node.started", node_id: "b", node_type: "agent" }),
+      ev({
+        type: "run.failed",
+        error: "node 'b': boom",
+        error_kind: "strategy",
+        total_usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+    );
+    const node = state.items.find((item) => item.kind === "node") as
+      | { nodeId: string; status: string }
+      | undefined;
+    expect(node?.nodeId).toBe("b");
+    expect(node?.status).toBe("failed");
+    expect(state.status).toBe("failed");
+  });
+
+  it("an in-node pause stays inside the group until the resumed segment closes it", () => {
+    const paused = apply(
+      initialRunConsoleState(),
+      started(),
+      ev({ type: "node.started", node_id: "a", node_type: "agent" }),
+      ev({ type: "run.awaiting_input", reason: "tool_approval", question: "", pending_calls: [{ id: "c1", name: "calculator", arguments: {} }], awaiting_until: "2026-09-14T00:00:00Z" }),
+    );
+    expect(paused.status).toBe("awaiting_input");
+    // the resumed segment's completion closes the group
+    const resumed = apply(
+      paused,
+      ev({ type: "text.delta", text: "A done" }),
+      ev({ type: "node.completed", node_id: "a", node_type: "agent", output: "A done", is_error: false }),
+      ev({ type: "run.completed", final_message: "A done", total_usage: { input_tokens: 1, output_tokens: 1 }, iterations: 1 }),
+    );
+    const flush = flushPending(resumed);
+    const node = flush.items.find((item) => item.kind === "node") as
+      | { status: string; items: { text?: string }[] }
+      | undefined;
+    expect(node?.status).toBe("completed");
+    expect(node?.items.some((item) => item.text === "A done")).toBe(true);
+  });
 });

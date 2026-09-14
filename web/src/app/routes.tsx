@@ -12,6 +12,9 @@ import { ToolsPage } from "@/sections/tools/ToolsPage";
 import { ModelsPage } from "@/sections/models/ModelsPage";
 import { PluginsPage } from "@/sections/plugins/PluginsPage";
 import { SettingsPage } from "@/sections/settings/SettingsPage";
+import { WorkflowsList } from "@/sections/workflows/WorkflowsList";
+import { WorkflowEditorPage } from "@/sections/workflows/WorkflowEditor";
+import { WorkflowRunConsole } from "@/sections/workflows/WorkflowRunConsole";
 
 import { SectionGate } from "@/capabilities/SectionGate";
 import type { SectionKey } from "@/capabilities/sectionRegistry";
@@ -57,7 +60,10 @@ export function sectionRoutes() {
     },
     { path: "/tools", element: gated("tools", <ToolsPage />) },
     { path: "/models", element: gated("models", <ModelsPage />) },
-    { path: "/workflows", element: gated("workflows") },
+    { path: "/workflows", element: gated("workflows", <WorkflowsList />) },
+    { path: "/workflows/new", element: gated("workflows", <WorkflowEditorPage />) },
+    { path: "/workflows/:workflowId/run", element: gated("workflows", <WorkflowRunConsole />) },
+    { path: "/workflows/:workflowId", element: gated("workflows", <WorkflowEditorPage />) },
     { path: "/knowledge", element: gated("knowledge") },
     { path: "/evaluations", element: gated("evaluations") },
     { path: "/observability", element: gated("observability") },

@@ -24,6 +24,14 @@ class TestRequest extends RealRequest {
 // check requires the real prototype); a forward function keeps TS happy.
 globalThis.Request = TestRequest as typeof Request;
 
+// jsdom has no ResizeObserver; the workflow canvas (@xyflow/react) needs one.
+class ResizeObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+globalThis.ResizeObserver ??= ResizeObserverStub as unknown as typeof ResizeObserver;
+
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterAll(() => server.close());
 

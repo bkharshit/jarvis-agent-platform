@@ -22,13 +22,20 @@ export function executionQueryKey(runId: string) {
   return ["executions", runId] as const;
 }
 
+export interface ExecutionListPayload {
+  items: RunResult[];
+  /** agent_id -> display name (S6, D41: a workflow run's agent_id is a
+   * workflow id) — absent keys mean "no resolvable name". */
+  names: Record<string, string>;
+}
+
 export function useExecutions(filters: {
   agent?: string | null;
   status?: ExecutionStatus | null;
 }) {
   return useQuery({
     queryKey: executionsQueryKey(filters),
-    queryFn: async () => {
+    queryFn: async (): Promise<ExecutionListPayload> => {
       const body = await unwrap(
         client.GET("/v1/executions", {
           params: {
@@ -39,9 +46,18 @@ export function useExecutions(filters: {
           },
         }),
       );
-      return body.items;
+      return { items: body.items, names: body.names ?? {} };
     },
   });
+}
+
+/** The display name for a run's agent_id: the resolvable name, else the
+ * raw id. `names` comes from the same payload (detail or list). */
+export function runResourceName(
+  agentId: string,
+  names: Record<string, string> | undefined,
+): string {
+  return names?.[agentId] ?? agentId;
 }
 
 export function useExecution(runId: string | undefined) {

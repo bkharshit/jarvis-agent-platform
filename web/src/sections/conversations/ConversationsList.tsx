@@ -11,7 +11,8 @@ import { groupSessions } from "./groupSessions";
 const PAGE_CAP = 50;
 
 function ConversationsListInner() {
-  const { data: runs, isPending, isError, error } = useExecutions({});
+  const { data, isPending, isError, error } = useExecutions({});
+  const runs = data?.items;
 
   if (isPending) {
     return <p className="px-6 py-10 text-sm text-neutral-400">Loading sessions…</p>;
@@ -20,7 +21,7 @@ function ConversationsListInner() {
     return <p className="px-6 py-10 text-sm text-red-400">{error.message}</p>;
   }
 
-  const { sessions, total } = groupSessions(runs, PAGE_CAP);
+  const { sessions, total } = groupSessions(runs ?? [], PAGE_CAP);
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">

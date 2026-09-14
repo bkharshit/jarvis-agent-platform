@@ -63,7 +63,26 @@ export interface IterationMarkerView {
 export type TimelineItem =
   | ToolCardView
   | MessageView
-  | IterationMarkerView;
+  | IterationMarkerView
+  | NodeGroupView;
+
+/** S6 (D43): a workflow run's inner events group under the node that
+ * produced them — node.started opens the group, node.completed closes it.
+ * Nested one level; a walk is sequential so no group can be open inside a
+ * group. */
+export interface NodeGroupView {
+  kind: "node";
+  id: string;
+  nodeId: string;
+  nodeType: "agent" | "tool" | "condition";
+  status: "running" | "completed" | "failed";
+  output?: string;
+  isError?: boolean;
+  items: TimelineItem[];
+}
+
+/** The open node group's timeline id, while one is open (S6). */
+type OpenNode = { itemId: string } | null;
 
 export interface RunConsoleState {
   status: RunStatus;
@@ -81,6 +100,8 @@ export interface RunConsoleState {
   /** S10: non-null while status is awaiting_input — the human's decision. */
   pause: PauseView | null;
   seenEventIds: ReadonlySet<string>;
+  /** S6: the currently open node group (workflow runs). */
+  openNode: OpenNode;
 }
 
 export function initialRunConsoleState(): RunConsoleState {
@@ -97,16 +118,45 @@ export function initialRunConsoleState(): RunConsoleState {
     iterations: null,
     pause: null,
     seenEventIds: new Set(),
+    openNode: null,
   };
 }
 
 /** Terminal/abort: pending buffer must never outlive the run. */
 export function flushPending(state: RunConsoleState): RunConsoleState {
   if (state.pendingText === "") return state;
-  return appendMessageText(
-    { ...state, pendingText: "" },
-    state.pendingText,
-  );
+  const text = state.pendingText;
+  if (state.openNode !== null) {
+    return updateNodeGroup({ ...state, pendingText: "" }, state.openNode.itemId, (group) => ({
+      ...group,
+      items: appendTextToItems(group.items, text),
+    }));
+  }
+  return { ...state, pendingText: "", items: appendTextToItems(state.items, text) };
+}
+
+/** Append into the open node group when one is open (S6), else top-level. */
+function pushItem(state: RunConsoleState, item: TimelineItem): RunConsoleState {
+  if (state.openNode === null) {
+    return { ...state, items: [...state.items, item] };
+  }
+  return updateNodeGroup(state, state.openNode.itemId, (group) => ({
+    ...group,
+    items: [...group.items, item],
+  }));
+}
+
+function updateNodeGroup(
+  state: RunConsoleState,
+  itemId: string,
+  update: (group: NodeGroupView) => NodeGroupView,
+): RunConsoleState {
+  return {
+    ...state,
+    items: state.items.map((item) =>
+      item.kind === "node" && item.id === itemId ? update(item) : item,
+    ),
+  };
 }
 
 /**
@@ -141,13 +191,43 @@ export function applyEvent(
         runId: event.run_id,
         sessionId: event.session_id ?? state.sessionId,
       };
+    case "node.started": {
+      // S6: open the node's group — everything until node.completed nests.
+      const item: NodeGroupView = {
+        kind: "node",
+        id: event.event_id,
+        nodeId: event.node_id,
+        nodeType: event.node_type,
+        status: "running",
+        items: [],
+      };
+      return {
+        ...base,
+        items: [...state.items, item],
+        openNode: { itemId: event.event_id },
+      };
+    }
+    case "node.completed": {
+      // Defensive: a completed without an open group folds to base.
+      if (base.openNode === null) return base;
+      // Buffered text deltas belong to this node's segment — fold them in
+      // before the group closes (flushPending routes to the open group).
+      const flushed = flushPending(base);
+      const closed = updateNodeGroup(flushed, flushed.openNode!.itemId, (group) => ({
+        ...group,
+        status: "completed",
+        output: event.output,
+        isError: event.is_error,
+      }));
+      return { ...closed, openNode: null };
+    }
     case "iteration.started": {
       const item: IterationMarkerView = {
         kind: "iteration",
         id: event.event_id,
         iteration: event.iteration,
       };
-      return { ...base, items: [...state.items, item] };
+      return pushItem(base, item);
     }
     case "iteration.completed":
       return base;
@@ -187,7 +267,7 @@ export function applyEvent(
         status: "requested",
         arguments: event.arguments,
       };
-      return { ...base, items: [...state.items, item] };
+      return pushItem(base, item);
     }
     case "tool.call.started":
       return mapToolCard(base, event.tool_call_id, (card) => ({
@@ -224,12 +304,22 @@ export function applyEvent(
         usage: event.total_usage,
         iterations: event.iterations,
         pendingText: "",
+        openNode: null,
       };
     }
     case "run.failed": {
       const flushed = flushPending(base);
+      // D43: no node.failed — an inner failure surfaces as the run terminal
+      // while the node's group is still open; close it as failed.
+      const withClosed =
+        flushed.openNode !== null
+          ? updateNodeGroup(flushed, flushed.openNode.itemId, (group) => ({
+              ...group,
+              status: "failed",
+            }))
+          : flushed;
       return {
-        ...flushed,
+        ...withClosed,
         status: "failed",
         error: {
           message: event.error,
@@ -237,6 +327,7 @@ export function applyEvent(
         },
         usage: event.total_usage,
         pendingText: "",
+        openNode: null,
       };
     }
     case "run.cancelled": {
@@ -247,6 +338,7 @@ export function applyEvent(
         error: { message: event.reason, kind: "cancelled" },
         usage: event.total_usage,
         pendingText: "",
+        openNode: null,
       };
     }
     default: {
@@ -265,29 +357,23 @@ function mapToolCard(
   toolCallId: string,
   update: (card: ToolCardView) => ToolCardView,
 ): RunConsoleState {
-  return {
-    ...state,
-    items: state.items.map((item) =>
-      item.kind === "tool" && item.toolCallId === toolCallId ? update(item) : item,
-    ),
-  };
+  // Tool cards live at top level OR inside the open node group (S6) —
+  // search both.
+  const mapList = (items: TimelineItem[]): TimelineItem[] =>
+    items.map((item) => {
+      if (item.kind === "tool" && item.toolCallId === toolCallId) return update(item);
+      if (item.kind === "node") return { ...item, items: mapList(item.items) };
+      return item;
+    });
+  return { ...state, items: mapList(state.items) };
 }
 
-function appendMessageText(state: RunConsoleState, text: string): RunConsoleState {
-  const last = state.items[state.items.length - 1];
+function appendTextToItems(items: TimelineItem[], text: string): TimelineItem[] {
+  const last = items[items.length - 1];
   if (last?.kind === "message") {
-    return {
-      ...state,
-      items: [
-        ...state.items.slice(0, -1),
-        { ...last, text: last.text + text },
-      ],
-    };
+    return [...items.slice(0, -1), { ...last, text: last.text + text }];
   }
-  return {
-    ...state,
-    items: [...state.items, { kind: "message", id: `msg-${state.items.length}`, text }],
-  };
+  return [...items, { kind: "message", id: `msg-${items.length}`, text }];
 }
 
 // --- live store -----------------------------------------------------------

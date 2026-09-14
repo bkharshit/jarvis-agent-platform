@@ -41,7 +41,8 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function AwaitingInputInbox() {
-  const { data: runs } = useExecutions({ status: "awaiting_input" });
+  const { data } = useExecutions({ status: "awaiting_input" });
+  const runs = data?.items;
   if (runs === undefined || runs.length === 0) return null;
   return (
     <div className="mt-6 rounded border border-violet-900 bg-violet-950/30 p-4" data-testid="awaiting-input-inbox">
@@ -69,10 +70,12 @@ function ExecutionsListInner() {
   const statusFilter = searchParams.get("status");
   const { data: capabilities } = useCapabilities();
   const inboxEnabled = humanInTheLoop(capabilities);
-  const { data: runs, isPending, isError, error } = useExecutions({
+  const { data, isPending, isError, error } = useExecutions({
     agent: agentFilter,
     status: (statusFilter as ExecutionStatus | null) ?? null,
   });
+  const runs = data?.items;
+  const names = data?.names ?? {};
 
   function setFilter(key: "status", value: string) {
     const next = new URLSearchParams(searchParams);
@@ -135,7 +138,11 @@ function ExecutionsListInner() {
                   </Link>
                 </td>
                 <td className="py-2 pr-4"><StatusBadge status={run.status} /></td>
-                <td className="py-2 pr-4 font-mono text-xs text-neutral-400">{run.agent_id.slice(0, 12)}…</td>
+                {/* S6, D41: a workflow run's agent_id resolves through the
+                    workflows repo — show the name when the payload carries one. */}
+                <td className="py-2 pr-4 font-mono text-xs text-neutral-400" title={run.agent_id}>
+                  {(names[run.agent_id] ?? run.agent_id).slice(0, 24)}
+                </td>
                 <td className="py-2 pr-4 font-mono text-xs text-neutral-400">
                   {run.session_id ?? "—"}
                 </td>

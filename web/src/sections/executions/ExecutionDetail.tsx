@@ -127,6 +127,10 @@ function ExecutionDetailInner() {
   }
 
   const { run, messages, tool_executions } = detail;
+  // S6, D41: a workflow run's agent_id resolves through the workflows repo
+  // (metadata.kind === "workflow" marks the sibling executor's rows).
+  const resourceName = detail.names?.[run.agent_id] ?? run.agent_id;
+  const isWorkflow = run.metadata?.["kind"] === "workflow";
 
   async function resume(body: { content?: string; decisions?: Record<string, boolean> }) {
     setActing(true);
@@ -183,7 +187,7 @@ function ExecutionDetailInner() {
 
       <div className="mt-4 flex flex-col gap-1.5">
         <SummaryRow label="Status" value={run.status} />
-        <SummaryRow label="Agent" value={run.agent_id} />
+        <SummaryRow label={isWorkflow ? "Workflow" : "Agent"} value={resourceName} />
         <SummaryRow label="Session" value={run.session_id ?? "—"} />
         <SummaryRow label="Input" value={run.input} />
         {run.final_message !== null && run.final_message !== undefined && (

@@ -89,17 +89,30 @@ export interface RunStreamHandle {
   abort: () => void;
 }
 
+/** The stream POSTs to the executor's own route — same frame format either
+ * way (S6, D41: only the path differs). */
 export function connectRunStream(
   agentId: string,
   options: RunStreamOptions,
 ): RunStreamHandle {
+  return connectStream(`/v1/agents/${agentId}/stream`, options);
+}
+
+export function connectWorkflowRunStream(
+  workflowId: string,
+  options: RunStreamOptions,
+): RunStreamHandle {
+  return connectStream(`/v1/workflows/${workflowId}/stream`, options);
+}
+
+function connectStream(url: string, options: RunStreamOptions): RunStreamHandle {
   const controller = new AbortController();
-  void runLoop(agentId, options, controller);
+  void runLoop(url, options, controller);
   return { abort: () => controller.abort() };
 }
 
 async function runLoop(
-  agentId: string,
+  url: string,
   options: RunStreamOptions,
   controller: AbortController,
 ): Promise<void> {
@@ -111,7 +124,7 @@ async function runLoop(
       if (controller.signal.aborted) return;
     }
     try {
-      const done = await connectOnce(agentId, options, controller.signal);
+      const done = await connectOnce(url, options, controller.signal);
       if (done) {
         // Segment end (terminal or pause) — the stream is finished for now;
         // a pause is completed upstream via the resume route, not a reconnect.
@@ -133,13 +146,13 @@ async function runLoop(
 }
 
 async function connectOnce(
-  agentId: string,
+  url: string,
   options: RunStreamOptions,
   signal: AbortSignal,
 ): Promise<boolean> {
   const runId = options.getRunId();
   const lastEventId = options.getLastEventId();
-  const response = await fetch(`/v1/agents/${agentId}/stream`, {
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
