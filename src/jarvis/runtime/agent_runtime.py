@@ -173,20 +173,22 @@ class AgentRuntime:
             )
 
         try:
-            # Inside the try: credential resolution is IO (S2) and can fail —
-            # the failure must become a persisted terminal `model` state
-            # (D5), never an exception past the runtime (which the worker
-            # would treat as a claim failure and retry forever).
-            client = await self._models.resolve(agent.model, principal=ctx.principal)
-            if self._trace_llm:
-                client = TracedModelClient(client, ctx, buffer=self.llm_trace_buffer)
-            # S4 (D38): MCP toolset resolution is the same seam, third
-            # application — its failure is a persisted terminal `tool`
-            # state naming the server, before any token is spent.
-            tooling = await self._resolve_tooling(agent, ctx)
-            result = await self._execute(
-                version, input, ctx, sink, client, agent, started_at, tooling
+            outcome = await self._run_segment(
+                version,
+                input,
+                ctx,
+                sink,
+                started=RunStarted(
+                    event_id=_uuid(),
+                    run_id=ctx.run_id,
+                    created_at=_now(),
+                    agent_id=agent.id,
+                    agent_version_id=version.id,
+                    session_id=ctx.session_id,
+                    input=input,
+                ),
             )
+            result = await self._after_loop(ctx, sink, outcome, started_at, input)
         except ExecutionCancelled as exc:
             result = await self._terminal_cancelled(ctx, sink, exc, started_at, input)
         except ModelAbortedError as exc:
@@ -226,19 +228,34 @@ class AgentRuntime:
             await self._executions.finish_run(result)
         return result
 
-    # --- happy path ---------------------------------------------------------
+    # --- segment (S6 commit 4: the fresh-run body, extracted) ----------------
 
-    async def _execute(
+    async def _run_segment(
         self,
         version: AgentVersion,
         input: str,
         ctx: ExecutionContext,
         sink: InProcessEventSink,
-        client: ModelClient,
-        agent: AgentDefinition,
-        started_at: datetime,
-        tooling: McpTooling,
-    ) -> RunResult:
+        started: RunStarted | None = None,
+    ) -> LoopOutcome:
+        """One segment of a run: model/tooling resolution (D28/D38), memory,
+        prompt build, and the loop. Extracted from `run()` (S6, ADR 0015
+        commit 4) so the workflow runtime can ride the same path for its
+        agent nodes; `started=None` suppresses the segment's own run.started
+        — a workflow run has exactly ONE run.started, emitted by its caller
+        (D41). Raises on model/tooling failure; callers hold the try."""
+        agent = version.snapshot
+        # Inside the segment: credential resolution is IO (S2) and can fail —
+        # the failure must become a persisted terminal `model` state (D5),
+        # never an escape past the runtime (which the worker would treat as
+        # a claim failure and retry forever).
+        client = await self._models.resolve(agent.model, principal=ctx.principal)
+        if self._trace_llm:
+            client = TracedModelClient(client, ctx, buffer=self.llm_trace_buffer)
+        # S4 (D38): MCP toolset resolution is the same seam, third
+        # application — its failure is a persisted terminal `tool` state
+        # naming the server, before any token is spent.
+        tooling = await self._resolve_tooling(agent, ctx)
         try:
             history, conversation_id = await self._load_memory(ctx, agent)
 
@@ -258,26 +275,16 @@ class AgentRuntime:
             ctx.output_schema = agent.output_schema
             ctx.structured_mode = client.capabilities.structured_output
 
-            await sink.append(
-                RunStarted(
-                    event_id=_uuid(),
-                    run_id=ctx.run_id,
-                    created_at=_now(),
-                    agent_id=agent.id,
-                    agent_version_id=version.id,
-                    session_id=ctx.session_id,
-                    input=input,
-                )
-            )
+            if started is not None:
+                await sink.append(started)
             user_message = messages[-1]
             await self._save_message(ctx, user_message)
             if conversation_id:
                 await self._conversations.append_message(conversation_id, user_message, ctx.run_id)  # type: ignore[union-attr]
 
-            outcome = await self._loop(
+            return await self._loop(
                 ctx, agent, client, sink, messages, conversation_id, tooling=tooling
             )
-            return await self._after_loop(ctx, sink, outcome, started_at, input)
         finally:
             # S4 (D38): the segment's MCP connections close with the
             # segment — completed, failed, cancelled, or paused alike.
