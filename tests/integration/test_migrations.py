@@ -29,6 +29,8 @@ EXPECTED_TABLES = {
     "api_keys",
     "credentials",
     "mcp_servers",
+    "workflows",
+    "workflow_versions",
 }
 
 
@@ -145,6 +147,10 @@ def test_awaiting_input_status_and_deadline_column() -> None:
     status, error = asyncio.run(check())
     assert status == "failed"
     assert error is not None and "downgrade" in error
+
+    # This test leaves the DB at 0006 — restore the true head so later
+    # tests see the full schema (the same discipline as the 0005 test).
+    command.upgrade(config, "head")
 
 
 def test_credential_ref_snapshot_rewrite() -> None:
@@ -283,3 +289,7 @@ def test_mcp_servers_unique_indexes_cycle() -> None:
 
     names = asyncio.run(indexes())
     assert names == {"uq_mcp_servers_owned_name", "uq_mcp_servers_shared_name"}
+
+    # This test historically ended at 0007 because that WAS head — restore
+    # the true head so later tests see the full schema.
+    command.upgrade(config, "head")

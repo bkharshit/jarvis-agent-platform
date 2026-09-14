@@ -91,6 +91,64 @@ class AgentVersionRow(Base):
     )
 
 
+class WorkflowRow(Base):
+    """Mutable pointer row; the graph lives in version snapshots (S6,
+    ADR 0015). `agent_executions.agent_id` carries a workflow id for
+    workflow runs — no FK on purpose (D41: one shared executions table)."""
+
+    __tablename__ = "workflows"
+    __table_args__ = (
+        # The 0007 pattern: Postgres treats NULLs as distinct, so name
+        # uniqueness across the owned/shared split needs two partial indexes.
+        Index(
+            "uq_workflows_owned_name",
+            "tenant_id",
+            "name",
+            unique=True,
+            postgresql_where=text("tenant_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_workflows_shared_name",
+            "name",
+            unique=True,
+            postgresql_where=text("tenant_id IS NULL"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # NULL = platform-shared (visible to every tenant, ADR 0009 §4).
+    tenant_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("tenants.id"), nullable=True, index=True
+    )
+    current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
+
+
+class WorkflowVersionRow(Base):
+    """Immutable append-only snapshot of a full WorkflowDefinition."""
+
+    __tablename__ = "workflow_versions"
+    __table_args__ = (UniqueConstraint("workflow_id", "version", name="uq_workflow_version"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workflow_id: Mapped[str] = mapped_column(
+        String, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    label: Mapped[str] = mapped_column(String, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+
+
 class AgentExecutionRow(Base):
     """One agent run; id is the run_id (ADR 0003: every execution has an id)."""
 
@@ -415,4 +473,6 @@ __all__ = [
     "ToolExecutionRow",
     "USER_ROLES",
     "UserRow",
+    "WorkflowRow",
+    "WorkflowVersionRow",
 ]

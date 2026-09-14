@@ -27,12 +27,56 @@ from jarvis.domain.events import ExecutionEvent
 from jarvis.domain.execution import ExecutionStatus, RunResult
 from jarvis.domain.message import Message
 from jarvis.domain.tools import ToolResult
+from jarvis.domain.workflow import WorkflowDefinition, WorkflowVersion
 from jarvis.persistence.repositories import (
     SqlAgentRepo,
     SqlConversationRepo,
     SqlExecutionRepo,
+    SqlWorkflowRepo,
 )
 from jarvis.ports.queue import RunQueueMessage
+
+
+class TenantScopedWorkflows:
+    """WorkflowRepo over one tenant's workflows (+ platform-shared ones)."""
+
+    def __init__(self, inner: SqlWorkflowRepo, tenant_id: str) -> None:
+        self._inner = inner
+        self._tenant_id = tenant_id
+
+    async def create(self, definition: WorkflowDefinition) -> WorkflowDefinition:
+        return await self._inner.create(definition, tenant_id=self._tenant_id)
+
+    async def get(self, workflow_id: str) -> WorkflowDefinition | None:
+        return await self._inner.get(workflow_id, tenant_id=self._tenant_id)
+
+    async def get_by_name(self, name: str) -> WorkflowDefinition | None:
+        return await self._inner.get_by_name(name, tenant_id=self._tenant_id)
+
+    async def list_workflows(self, limit: int = 50, offset: int = 0) -> list[WorkflowDefinition]:
+        return await self._inner.list_workflows(
+            limit=limit, offset=offset, tenant_id=self._tenant_id
+        )
+
+    async def update_and_publish(
+        self, definition: WorkflowDefinition, label: str = ""
+    ) -> WorkflowVersion:
+        return await self._inner.update_and_publish(definition, label, tenant_id=self._tenant_id)
+
+    async def get_version(self, workflow_id: str, version: int) -> WorkflowVersion | None:
+        return await self._inner.get_version(workflow_id, version, tenant_id=self._tenant_id)
+
+    async def latest_version(self, workflow_id: str) -> WorkflowVersion | None:
+        return await self._inner.latest_version(workflow_id, tenant_id=self._tenant_id)
+
+    async def list_versions(self, workflow_id: str) -> list[WorkflowVersion]:
+        return await self._inner.list_versions(workflow_id, tenant_id=self._tenant_id)
+
+    async def delete(self, workflow_id: str) -> bool:
+        return await self._inner.delete(workflow_id, tenant_id=self._tenant_id)
+
+    async def has_executions(self, workflow_id: str) -> bool:
+        return await self._inner.has_executions(workflow_id)
 
 
 class TenantScopedAgents:
@@ -180,4 +224,5 @@ __all__ = [
     "TenantScopedAgents",
     "TenantScopedConversations",
     "TenantScopedExecutions",
+    "TenantScopedWorkflows",
 ]

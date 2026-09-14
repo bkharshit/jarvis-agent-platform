@@ -29,6 +29,7 @@ from jarvis.persistence.repositories import (
     SqlExecutionRepo,
     SqlMcpServerRepo,
     SqlRunQueue,
+    SqlWorkflowRepo,
 )
 from jarvis.runtime.agent_runtime import AgentRuntime
 from jarvis.runtime.limits import RunLimits
@@ -49,6 +50,7 @@ class AppContainer:
     settings: Settings
     engine: AsyncEngine
     agents: SqlAgentRepo
+    workflows: SqlWorkflowRepo
     executions: SqlExecutionRepo
     conversations: SqlConversationRepo
     queue: SqlRunQueue
@@ -74,6 +76,7 @@ class AppContainer:
         engine = create_async_engine(settings.database_url)
         sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
         agents = SqlAgentRepo(sessionmaker)
+        workflows = SqlWorkflowRepo(sessionmaker)
         executions = SqlExecutionRepo(sessionmaker)
         conversations = SqlConversationRepo(sessionmaker)
         queue = SqlRunQueue(sessionmaker)
@@ -152,6 +155,7 @@ class AppContainer:
             settings=settings,
             engine=engine,
             agents=agents,
+            workflows=workflows,
             executions=executions,
             conversations=conversations,
             queue=queue,

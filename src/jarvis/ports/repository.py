@@ -17,6 +17,7 @@ from jarvis.domain.execution import ExecutionStatus, RunResult
 from jarvis.domain.mcp import McpServer
 from jarvis.domain.message import Message, Usage
 from jarvis.domain.tools import ToolResult
+from jarvis.domain.workflow import WorkflowDefinition, WorkflowVersion
 
 
 class AgentRepo(Protocol):
@@ -47,6 +48,59 @@ class AgentRepo(Protocol):
         ...
 
     async def has_executions(self, agent_id: str) -> bool: ...
+
+
+class WorkflowRepo(Protocol):
+    """Workflows + append-only version history (S6, ADR 0015) — the exact
+    AgentRepo shape one level up: same pointer row / immutable snapshot
+    split, same tenancy (NULL = shared), same delete-with-executions
+    refusal. `get_version_by_id` is how the worker resolves the workflow
+    version pinned on a queue message (the AgentVersionLoader pattern)."""
+
+    async def create(
+        self, definition: WorkflowDefinition, *, tenant_id: str | None = None
+    ) -> WorkflowDefinition:
+        """Create the workflow and publish its first version."""
+        ...
+
+    async def get(
+        self, workflow_id: str, *, tenant_id: str | None = None
+    ) -> WorkflowDefinition | None: ...
+
+    async def get_by_name(
+        self, name: str, *, tenant_id: str | None = None
+    ) -> WorkflowDefinition | None: ...
+
+    async def list_workflows(
+        self, limit: int = 50, offset: int = 0, *, tenant_id: str | None = None
+    ) -> list[WorkflowDefinition]: ...
+
+    async def update_and_publish(
+        self, definition: WorkflowDefinition, label: str = "", *, tenant_id: str | None = None
+    ) -> WorkflowVersion:
+        """Update mutable fields, pin agent-node versions (D42), append a new
+        immutable snapshot."""
+        ...
+
+    async def get_version(
+        self, workflow_id: str, version: int, *, tenant_id: str | None = None
+    ) -> WorkflowVersion | None: ...
+
+    async def get_version_by_id(self, version_id: str) -> WorkflowVersion | None: ...
+
+    async def latest_version(
+        self, workflow_id: str, *, tenant_id: str | None = None
+    ) -> WorkflowVersion | None: ...
+
+    async def list_versions(
+        self, workflow_id: str, *, tenant_id: str | None = None
+    ) -> list[WorkflowVersion]: ...
+
+    async def delete(self, workflow_id: str, *, tenant_id: str | None = None) -> bool:
+        """Returns False if the workflow has executions (caller maps to 409)."""
+        ...
+
+    async def has_executions(self, workflow_id: str) -> bool: ...
 
 
 class ExecutionRepo(Protocol):
@@ -140,4 +194,10 @@ class McpServerRepo(Protocol):
     async def delete(self, server_id: str, *, tenant_id: str | None = None) -> bool: ...
 
 
-__all__ = ["AgentRepo", "ConversationRepo", "ExecutionRepo", "McpServerRepo"]
+__all__ = [
+    "AgentRepo",
+    "ConversationRepo",
+    "ExecutionRepo",
+    "McpServerRepo",
+    "WorkflowRepo",
+]

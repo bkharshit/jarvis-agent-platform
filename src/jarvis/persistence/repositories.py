@@ -37,6 +37,7 @@ from jarvis.domain.execution import ExecutionStatus, RunResult
 from jarvis.domain.mcp import McpServer, McpServerConfig
 from jarvis.domain.message import Message, Usage
 from jarvis.domain.tools import ToolResult
+from jarvis.domain.workflow import WorkflowDefinition, WorkflowVersion
 from jarvis.persistence.models import (
     DEFAULT_TENANT,
     AgentExecutionRow,
@@ -54,6 +55,8 @@ from jarvis.persistence.models import (
     TenantRow,
     ToolExecutionRow,
     UserRow,
+    WorkflowRow,
+    WorkflowVersionRow,
 )
 from jarvis.ports.queue import ResumeRequest, RunQueueMessage
 
@@ -413,6 +416,244 @@ class SqlMcpServerRepo:
             tenant_id=row.tenant_id,
             created_at=row.created_at,
             updated_at=row.updated_at,
+        )
+
+
+class SqlWorkflowRepo:
+    """Workflows with append-only version history (S6, ADR 0015) — the
+    SqlAgentRepo shape mirrored one level up: pointer row + immutable
+    JSONB snapshot, `_shared_visible` reads, writes stamp the binding
+    tenant, None = platform-shared. Agent-node pins are frozen by the
+    API's publish step (D42) — this repo stores the snapshot it is given."""
+
+    def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
+        self._sessionmaker = sessionmaker
+
+    async def create(
+        self, definition: WorkflowDefinition, *, tenant_id: str | None = None
+    ) -> WorkflowDefinition:
+        version = WorkflowVersion(
+            id=_uuid(),
+            workflow_id=definition.id,
+            version=1,
+            snapshot=definition,
+            label="initial",
+        )
+        async with self._sessionmaker() as session:
+            session.add(
+                WorkflowRow(
+                    id=definition.id,
+                    name=definition.name,
+                    description=definition.description,
+                    current_version=1,
+                    tenant_id=tenant_id,
+                )
+            )
+            session.add(self._version_row(version))
+            await session.commit()
+        return definition
+
+    async def get(
+        self, workflow_id: str, *, tenant_id: str | None = None
+    ) -> WorkflowDefinition | None:
+        async with self._sessionmaker() as session:
+            row = await self._visible_row(session, workflow_id, tenant_id)
+            if row is None:
+                return None
+            snapshot = await self._snapshot_for(session, row)
+        return WorkflowDefinition.model_validate(snapshot)
+
+    async def get_by_name(
+        self, name: str, *, tenant_id: str | None = None
+    ) -> WorkflowDefinition | None:
+        async with self._sessionmaker() as session:
+            query = select(WorkflowRow).where(WorkflowRow.name == name)
+            if tenant_id is not None:
+                query = query.where(_shared_visible(WorkflowRow.tenant_id, tenant_id))
+            # Tenant-owned rows shadow same-name shared rows (D37): owned first.
+            query = query.order_by(WorkflowRow.tenant_id.is_(None)).limit(1)
+            row = (await session.execute(query)).scalar_one_or_none()
+            if row is None:
+                return None
+            snapshot = await self._snapshot_for(session, row)
+        return WorkflowDefinition.model_validate(snapshot)
+
+    async def list_workflows(
+        self, limit: int = 50, offset: int = 0, *, tenant_id: str | None = None
+    ) -> list[WorkflowDefinition]:
+        async with self._sessionmaker() as session:
+            query = select(WorkflowRow)
+            if tenant_id is not None:
+                query = query.where(_shared_visible(WorkflowRow.tenant_id, tenant_id))
+            rows = (
+                await session.execute(
+                    query.order_by(WorkflowRow.created_at).limit(limit).offset(offset)
+                )
+            ).scalars()
+            workflows = []
+            for row in rows:
+                snapshot = await self._snapshot_for(session, row)
+                workflows.append(WorkflowDefinition.model_validate(snapshot))
+        return workflows
+
+    async def update_and_publish(
+        self, definition: WorkflowDefinition, label: str = "", *, tenant_id: str | None = None
+    ) -> WorkflowVersion:
+        async with self._sessionmaker() as session:
+            row = await self._visible_row(session, definition.id, tenant_id)
+            if row is None:
+                raise LookupError(f"workflow {definition.id} not found")
+            next_version = row.current_version + 1
+            row.name = definition.name
+            row.description = definition.description
+            row.current_version = next_version
+            version = WorkflowVersion(
+                id=_uuid(),
+                workflow_id=definition.id,
+                version=next_version,
+                snapshot=definition,
+                label=label,
+            )
+            session.add(self._version_row(version))
+            await session.commit()
+        return version
+
+    async def get_version(
+        self, workflow_id: str, version: int, *, tenant_id: str | None = None
+    ) -> WorkflowVersion | None:
+        async with self._sessionmaker() as session:
+            row = await self._visible_version_row(session, workflow_id, version, tenant_id)
+            if row is None:
+                return None
+            return self._load_version(row)
+
+    async def get_version_by_id(self, version_id: str) -> WorkflowVersion | None:
+        """Load a frozen snapshot by its id — how the worker resolves the
+        workflow version pinned on a queue message (D41)."""
+        async with self._sessionmaker() as session:
+            row = await session.get(WorkflowVersionRow, version_id)
+            if row is None:
+                return None
+            return self._load_version(row)
+
+    async def latest_version(
+        self, workflow_id: str, *, tenant_id: str | None = None
+    ) -> WorkflowVersion | None:
+        async with self._sessionmaker() as session:
+            query = (
+                select(WorkflowVersionRow)
+                .join(WorkflowRow, WorkflowRow.id == WorkflowVersionRow.workflow_id)
+                .where(WorkflowVersionRow.workflow_id == workflow_id)
+            )
+            if tenant_id is not None:
+                query = query.where(_shared_visible(WorkflowRow.tenant_id, tenant_id))
+            row = (
+                await session.execute(query.order_by(WorkflowVersionRow.version.desc()).limit(1))
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            return self._load_version(row)
+
+    async def list_versions(
+        self, workflow_id: str, *, tenant_id: str | None = None
+    ) -> list[WorkflowVersion]:
+        async with self._sessionmaker() as session:
+            query = (
+                select(WorkflowVersionRow)
+                .join(WorkflowRow, WorkflowRow.id == WorkflowVersionRow.workflow_id)
+                .where(WorkflowVersionRow.workflow_id == workflow_id)
+            )
+            if tenant_id is not None:
+                query = query.where(_shared_visible(WorkflowRow.tenant_id, tenant_id))
+            rows = (await session.execute(query.order_by(WorkflowVersionRow.version))).scalars()
+            return [self._load_version(row) for row in rows]
+
+    async def delete(self, workflow_id: str, *, tenant_id: str | None = None) -> bool:
+        """False if the workflow has executions (caller maps to 409) —
+        workflow runs live in agent_executions keyed by the workflow id
+        (D41), so the same guard pattern as agents applies."""
+        if await self.has_executions(workflow_id):
+            return False
+        async with self._sessionmaker() as session:
+            row = await self._visible_row(session, workflow_id, tenant_id)
+            if row is None:
+                return False
+            await session.delete(row)  # versions cascade
+            await session.commit()
+        return True
+
+    async def has_executions(self, workflow_id: str) -> bool:
+        async with self._sessionmaker() as session:
+            row = (
+                await session.execute(
+                    select(AgentExecutionRow.id)
+                    .where(AgentExecutionRow.agent_id == workflow_id)
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        return row is not None
+
+    # --- helpers -----------------------------------------------------------
+
+    @staticmethod
+    async def _visible_row(
+        session: AsyncSession, workflow_id: str, tenant_id: str | None
+    ) -> WorkflowRow | None:
+        if tenant_id is None:
+            return await session.get(WorkflowRow, workflow_id)
+        query = select(WorkflowRow).where(
+            WorkflowRow.id == workflow_id, _shared_visible(WorkflowRow.tenant_id, tenant_id)
+        )
+        return (await session.execute(query)).scalar_one_or_none()
+
+    @staticmethod
+    async def _visible_version_row(
+        session: AsyncSession, workflow_id: str, version: int, tenant_id: str | None
+    ) -> WorkflowVersionRow | None:
+        query = (
+            select(WorkflowVersionRow)
+            .join(WorkflowRow, WorkflowRow.id == WorkflowVersionRow.workflow_id)
+            .where(
+                WorkflowVersionRow.workflow_id == workflow_id,
+                WorkflowVersionRow.version == version,
+            )
+        )
+        if tenant_id is not None:
+            query = query.where(_shared_visible(WorkflowRow.tenant_id, tenant_id))
+        return (await session.execute(query)).scalar_one_or_none()
+
+    @staticmethod
+    async def _snapshot_for(session: AsyncSession, row: WorkflowRow) -> dict[str, Any]:
+        version_row = (
+            await session.execute(
+                select(WorkflowVersionRow.snapshot).where(
+                    WorkflowVersionRow.workflow_id == row.id,
+                    WorkflowVersionRow.version == row.current_version,
+                )
+            )
+        ).scalar_one()
+        return dict(version_row)
+
+    @staticmethod
+    def _version_row(version: WorkflowVersion) -> WorkflowVersionRow:
+        return WorkflowVersionRow(
+            id=version.id,
+            workflow_id=version.workflow_id,
+            version=version.version,
+            snapshot=version.snapshot.model_dump(mode="json"),
+            label=version.label,
+            created_at=version.created_at,
+        )
+
+    @staticmethod
+    def _load_version(row: WorkflowVersionRow) -> WorkflowVersion:
+        return WorkflowVersion(
+            id=row.id,
+            workflow_id=row.workflow_id,
+            version=row.version,
+            snapshot=WorkflowDefinition.model_validate(dict(row.snapshot)),
+            label=row.label,
+            created_at=row.created_at,
         )
 
 
@@ -1472,6 +1713,7 @@ class SqlRunQueue:
 
 __all__ = [
     "SqlAgentRepo",
+    "SqlWorkflowRepo",
     "SqlAuthRepo",
     "SqlConversationRepo",
     "SqlExecutionRepo",

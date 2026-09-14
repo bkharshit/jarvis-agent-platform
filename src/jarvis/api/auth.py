@@ -31,6 +31,7 @@ from jarvis.persistence.scoped import (
     TenantScopedAgents,
     TenantScopedConversations,
     TenantScopedExecutions,
+    TenantScopedWorkflows,
 )
 from jarvis.security import hash_api_key, is_api_key
 
@@ -54,6 +55,7 @@ class AuthContext:
     agents: TenantScopedAgents
     executions: TenantScopedExecutions
     conversations: TenantScopedConversations
+    workflows: TenantScopedWorkflows
     repo: SqlAuthRepo
 
     @classmethod
@@ -69,6 +71,7 @@ class AuthContext:
             agents=TenantScopedAgents(container.agents, principal.tenant_id),
             executions=TenantScopedExecutions(container.executions, principal.tenant_id),
             conversations=TenantScopedConversations(container.conversations, principal.tenant_id),
+            workflows=TenantScopedWorkflows(container.workflows, principal.tenant_id),
             repo=container.auth,
         )
 

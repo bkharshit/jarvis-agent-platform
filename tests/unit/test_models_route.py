@@ -34,6 +34,7 @@ def _stub_container(settings: Settings | None = None) -> SimpleNamespace:
         settings=settings or Settings(_env_file=None),
         models=DefaultModelProviderFactory(),
         agents=None,
+        workflows=None,
         executions=None,
         conversations=None,
         auth=None,
