@@ -60,7 +60,7 @@ describe("definition ⇄ canvas ⇄ payload round-trip", () => {
         config: {
           agent_id: "agent-2",
           agent_version_id: null,
-          input_template: "{{node.a.output}}",
+          input_template: "{{node.a}}",
         },
       },
     ],
@@ -103,7 +103,7 @@ describe("definition ⇄ canvas ⇄ payload round-trip", () => {
     expect(nodeB.config).toEqual({
       agent_id: "agent-2",
       agent_version_id: null,
-      input_template: "{{node.a.output}}",
+      input_template: "{{node.a}}",
     });
     expect(Object.keys(nodeB.config).some((k) => k.startsWith("_"))).toBe(false);
   });

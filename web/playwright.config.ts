@@ -15,6 +15,11 @@ export default defineConfig({
   use: {
     baseURL: "http://localhost:5173",
     trace: "retain-on-failure",
+    // Human-speed runs: every action pauses so a --headed session is
+    // watchable. 0 on CI; E2E_SLOWMO=<ms> overrides (0 = full speed).
+    launchOptions: {
+      slowMo: Number(process.env.E2E_SLOWMO ?? (process.env.CI ? 0 : 500)),
+    },
   },
   webServer: {
     command: "npm run dev",

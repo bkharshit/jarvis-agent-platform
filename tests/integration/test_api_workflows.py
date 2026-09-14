@@ -188,7 +188,7 @@ async def test_blocking_run_walks_the_graph_and_names_the_workflow(
     b = await container.agents.create(_agent("wf-b"))
     mock.add_turn(mock_turn("A out"))
     mock.add_turn(mock_turn("B got A out"))
-    nodes = [_agent_node("a", a.id), _agent_node("b", b.id, template="{{node.a.output}}")]
+    nodes = [_agent_node("a", a.id), _agent_node("b", b.id, template="{{node.a}}")]
     detail = await _post_workflow(
         client,
         _workflow_body(nodes, [WorkflowEdge(from_node="a", to_node="b")], "a"),
@@ -261,7 +261,7 @@ async def test_pause_inside_node_then_resume_continues_the_walk(
     )
     mock.add_turn(mock_turn("A done"))
     mock.add_turn(mock_turn("B done"))
-    nodes = [_agent_node("a", a.id), _agent_node("b", b.id, template="{{node.a.output}}")]
+    nodes = [_agent_node("a", a.id), _agent_node("b", b.id, template="{{node.a}}")]
     detail = await _post_workflow(
         client, _workflow_body(nodes, [WorkflowEdge(from_node="a", to_node="b")], "a")
     )
@@ -313,8 +313,8 @@ async def test_condition_node_routes_on_upstream_output(client, container, mock:
                 else_node="fallback",
             ),
         ),
-        _agent_node("yes", yes_node.id, template="{{node.a.output}}"),
-        _agent_node("fallback", fallback.id, template="{{node.a.output}}"),
+        _agent_node("yes", yes_node.id, template="{{node.a}}"),
+        _agent_node("fallback", fallback.id, template="{{node.a}}"),
     ]
     detail = await _post_workflow(
         client, _workflow_body(nodes, [WorkflowEdge(from_node="a", to_node="cond")], "a")

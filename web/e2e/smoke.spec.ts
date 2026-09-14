@@ -6,10 +6,26 @@ import { expect, test } from "@playwright/test";
 
 const agentName = `e2e-smoke-${Date.now()}`;
 const sessionId = `e2e-session-${Date.now()}`;
+const EMAIL = process.env.E2E_EMAIL ?? "s6-owner@jarvis.test";
+const PASSWORD = process.env.E2E_PASSWORD ?? "s3cret";
 
 test("create → run → executions → replay → conversations → disabled sections", async ({
   page,
 }) => {
+  // 0. Auth mode: a required-auth instance shows the AuthGate login
+  // screen on first navigation — sign in when it appears.
+  await page.goto("/agents");
+  const needsLogin = await page
+    .getByLabel("Email")
+    .isVisible()
+    .catch(() => false);
+  if (needsLogin) {
+    await page.getByLabel("Email").fill(EMAIL);
+    await page.getByLabel("Password").fill(PASSWORD);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page.getByText(agentName).or(page.getByRole("heading", { name: "Agents" }))).toBeVisible({ timeout: 20_000 });
+  }
+
   // 1. Create a mock function_calling agent.
   await page.goto("/agents/new");
   await page.getByLabel("Name").fill(agentName);
@@ -69,11 +85,12 @@ test("create → run → executions → replay → conversations → disabled se
   await page.getByText(sessionId).click();
   await expect(page.getByText(`agent ${agentId}`)).toBeVisible();
 
-  // 7. Every disabled section names its stage — no fake content.
+  // 7. Every disabled section names its stage — no fake content. Workflows
+  // went live in S6 and settings in S2, so both render real sections;
+  // the still-unbuilt stages keep their honest gates.
   await page.goto("/workflows");
+  await expect(page.getByRole("heading", { name: "Workflows" })).toBeVisible();
+  await page.goto("/knowledge");
   await expect(page.getByText("Coming soon — enabled by stage")).toBeVisible();
-  await expect(page.getByRole("main").getByText("S6")).toBeVisible();
-  await page.goto("/settings");
-  await expect(page.getByText("Coming soon — enabled by stage")).toBeVisible();
-  await expect(page.getByRole("main").getByText("S2")).toBeVisible();
+  await expect(page.getByRole("main").getByText("S8")).toBeVisible();
 });
