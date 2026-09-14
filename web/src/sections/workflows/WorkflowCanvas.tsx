@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Background,
   Controls,
@@ -16,10 +16,25 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import type { AgentDefinition, ToolBinding } from "@/api/queries/agents";
-import { useAgents } from "@/api/queries/agents";
-import { builtinTools, type BuiltinTool } from "@/capabilities/detail";
+import { useAgents, useCreateAgent } from "@/api/queries/agents";
+import { useCredentials } from "@/api/queries/settings";
+import {
+  builtinTools,
+  modelDefaults,
+  providerNames,
+  strategyNames,
+  type BuiltinTool,
+} from "@/capabilities/detail";
 import { useCapabilities } from "@/capabilities/useCapabilities";
-import type { CanvasEdge, CanvasGraph, CanvasNode, NodeType } from "./graphState";
+import { draftForCreate, toSavePayload, type AgentDraft, type CredentialKind } from "@/stores/editorStore";
+import {
+  nodeIdError,
+  renameNodeId,
+  type CanvasEdge,
+  type CanvasGraph,
+  type CanvasNode,
+  type NodeType,
+} from "./graphState";
 
 // The workflow canvas (S6): an xyflow graph of the three v1 node types, a
 // palette to add nodes, and a config panel for the selected node. The graph
@@ -66,6 +81,60 @@ function initialConfig(type: NodeType): Record<string, unknown> {
 
 // --- config panel ------------------------------------------------------------
 
+/** Editable node id: the id is the template-reference handle
+ * (`{{node.<id>}}`), so a rename rewrites every reference in the graph.
+ * Draft commits on blur/Enter; an invalid id surfaces and is not applied. */
+function NodeIdField({
+  node,
+  nodeIds,
+  onRename,
+}: {
+  node: CanvasNode;
+  nodeIds: string[];
+  onRename: (fromId: string, toId: string) => void;
+}) {
+  const [draft, setDraft] = useState(node.id);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => setDraft(node.id), [node.id]);
+  function commit() {
+    const candidate = draft.trim();
+    if (candidate === node.id) {
+      setError(null);
+      return;
+    }
+    const problem = nodeIdError(candidate, nodeIds, node.id);
+    if (problem !== null) {
+      setError(problem);
+      return;
+    }
+    onRename(node.id, candidate);
+    setError(null);
+  }
+  return (
+    <div className="min-w-0 flex-1">
+      <input
+        aria-label="Node id"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+        data-testid="node-id-input"
+        className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 font-mono text-sm text-neutral-100"
+      />
+      {error !== null && (
+        <p className="mt-1 text-xs text-red-400" role="alert" data-testid="node-id-error">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 interface PanelProps {
   node: CanvasNode | null;
   nodeIds: string[];
@@ -74,6 +143,180 @@ interface PanelProps {
   onChange: (config: Record<string, unknown>) => void;
   onSetStart: (nodeId: string) => void;
   onDelete: (nodeId: string) => void;
+  onRename: (fromId: string, toId: string) => void;
+}
+
+/** Inline agent creation from the canvas: the same draft shape and payload
+ * rules as the full Agents editor (toSavePayload — optionals omitted, never
+ * nulled), minus the fields a workflow node doesn't need on the spot. The
+ * created agent is selected on the node immediately. */
+function QuickAgentCard({ onCreated }: { onCreated: (agentId: string) => void }) {
+  const capabilities = useCapabilities();
+  const credentials = useCredentials();
+  const createAgent = useCreateAgent();
+  const [draft, setDraft] = useState<AgentDraft | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (draft === null) setDraft(draftForCreate(modelDefaults(capabilities.data)));
+  }, [draft, capabilities.data]);
+
+  if (draft === null) return null;
+  const patch = (p: Partial<AgentDraft>) => setDraft({ ...draft, ...p });
+  const providers = providerNames(capabilities.data);
+  const strategies = strategyNames(capabilities.data);
+  const field =
+    "w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-100";
+
+  function save() {
+    const payload = toSavePayload(draft!);
+    if (payload.error) {
+      setError(payload.error);
+      return;
+    }
+    setError(null);
+    createAgent.mutate(payload.body, {
+      onSuccess: (detail) => onCreated(detail.definition.id),
+      onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+    });
+  }
+
+  return (
+    <div
+      className="flex flex-col gap-2 rounded border border-neutral-800 bg-neutral-950 p-2"
+      data-testid="quick-agent-card"
+    >
+      <p className="text-xs font-medium text-neutral-300">New agent</p>
+      <input
+        aria-label="Agent name"
+        placeholder="agent name"
+        value={draft.name}
+        onChange={(e) => patch({ name: e.target.value })}
+        className={field}
+        data-testid="quick-agent-name"
+      />
+      <label className="flex flex-col gap-1 text-xs text-neutral-400">
+        Provider
+        <select
+          value={draft.model.provider}
+          onChange={(e) => patch({ model: { ...draft.model, provider: e.target.value } })}
+          className={field}
+          data-testid="quick-agent-provider"
+        >
+          {(providers.length > 0 ? providers : [draft.model.provider]).map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="flex flex-col gap-1 text-xs text-neutral-400">
+        Model
+        <input
+          value={draft.model.model}
+          onChange={(e) => patch({ model: { ...draft.model, model: e.target.value } })}
+          className={field}
+          data-testid="quick-agent-model"
+        />
+      </label>
+      <label className="flex flex-col gap-1 text-xs text-neutral-400">
+        Base URL (optional)
+        <input
+          value={draft.model.base_url}
+          placeholder="https://… (OpenAI-compatible)"
+          onChange={(e) => patch({ model: { ...draft.model, base_url: e.target.value } })}
+          className={field}
+          data-testid="quick-agent-base-url"
+        />
+      </label>
+      <label className="flex flex-col gap-1 text-xs text-neutral-400">
+        Credential
+        <select
+          value={draft.model.credential_kind}
+          onChange={(e) =>
+            patch({
+              model: {
+                ...draft.model,
+                credential_kind: e.target.value as CredentialKind,
+                credential_value: "",
+              },
+            })
+          }
+          className={field}
+          data-testid="quick-agent-credential-kind"
+        >
+          <option value="">Provider default (no credential ref)</option>
+          <option value="env">Environment variable</option>
+          <option value="stored">Stored credential (BYOK)</option>
+        </select>
+      </label>
+      {draft.model.credential_kind === "env" && (
+        <input
+          aria-label="Environment variable name"
+          placeholder="OPENAI_API_KEY"
+          value={draft.model.credential_value}
+          onChange={(e) => patch({ model: { ...draft.model, credential_value: e.target.value } })}
+          className={field}
+        />
+      )}
+      {draft.model.credential_kind === "stored" && (
+        <select
+          aria-label="Stored credential"
+          value={draft.model.credential_value}
+          onChange={(e) => patch({ model: { ...draft.model, credential_value: e.target.value } })}
+          className={field}
+        >
+          <option value="">Select a stored credential…</option>
+          {(credentials.data ?? []).map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name} ({c.provider})
+            </option>
+          ))}
+        </select>
+      )}
+      <label className="flex flex-col gap-1 text-xs text-neutral-400">
+        Strategy
+        <select
+          value={draft.strategy.type}
+          onChange={(e) => patch({ strategy: { ...draft.strategy, type: e.target.value } })}
+          className={field}
+          data-testid="quick-agent-strategy"
+        >
+          {(strategies.length > 0 ? strategies : [draft.strategy.type]).map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="flex flex-col gap-1 text-xs text-neutral-400">
+        System prompt
+        <textarea
+          rows={3}
+          value={draft.system_prompt}
+          onChange={(e) => patch({ system_prompt: e.target.value })}
+          className={field}
+          data-testid="quick-agent-system-prompt"
+        />
+      </label>
+      {error !== null && (
+        <p className="text-xs text-red-400" role="alert" data-testid="quick-agent-error">
+          {error}
+        </p>
+      )}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          data-testid="quick-agent-save"
+          onClick={() => void save()}
+          disabled={createAgent.isPending}
+          className="cursor-pointer rounded bg-neutral-100 px-2 py-1 text-xs font-medium text-neutral-900 hover:bg-white disabled:text-neutral-500"
+        >
+          {createAgent.isPending ? "Creating…" : "Create agent"}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function AgentForm({
@@ -84,6 +327,7 @@ function AgentForm({
   onChange: (config: Record<string, unknown>) => void;
 }) {
   const { data: agents } = useAgents();
+  const [quickOpen, setQuickOpen] = useState(false);
   const config = node.data.config as Record<string, unknown>;
   const agentId = (config.agent_id as string | undefined) ?? "";
   const template = (config.input_template as string | undefined) ?? "{{input}}";
@@ -104,6 +348,22 @@ function AgentForm({
           ))}
         </select>
       </label>
+      <button
+        type="button"
+        data-testid="new-agent-toggle"
+        onClick={() => setQuickOpen((open) => !open)}
+        className="cursor-pointer self-start rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-900"
+      >
+        {quickOpen ? "close" : "+ new agent"}
+      </button>
+      {quickOpen && (
+        <QuickAgentCard
+          onCreated={(createdId) => {
+            setQuickOpen(false);
+            onChange({ ...config, agent_id: createdId, agent_version_id: null });
+          }}
+        />
+      )}
       {agentId !== "" && (
         <p className="text-xs text-neutral-500" data-testid="pin-display">
           pins the agent's latest version at publish (D42)
@@ -268,7 +528,16 @@ function ConditionForm({
   );
 }
 
-function ConfigPanel({ node, nodeIds, startNodeId, builtins, onChange, onSetStart, onDelete }: PanelProps) {
+function ConfigPanel({
+  node,
+  nodeIds,
+  startNodeId,
+  builtins,
+  onChange,
+  onSetStart,
+  onDelete,
+  onRename,
+}: PanelProps) {
   if (node === null) {
     return (
       <div className="w-72 shrink-0 text-sm text-neutral-500" data-testid="node-panel-empty">
@@ -278,8 +547,8 @@ function ConfigPanel({ node, nodeIds, startNodeId, builtins, onChange, onSetStar
   }
   return (
     <div className="w-72 shrink-0 rounded border border-neutral-800 bg-neutral-900/60 p-3" data-testid="node-panel">
-      <div className="flex items-center justify-between">
-        <span className="font-mono text-sm text-neutral-100">{node.id}</span>
+      <div className="flex items-start justify-between gap-2">
+        <NodeIdField node={node} nodeIds={nodeIds} onRename={onRename} />
         <button
           type="button"
           onClick={() => onDelete(node.id)}
@@ -405,6 +674,10 @@ export function WorkflowCanvas({
             });
           }}
           onSetStart={(nodeId) => onChange({ ...graph, startNodeId: nodeId })}
+          onRename={(fromId, toId) => {
+            onChange(renameNodeId(graph, fromId, toId));
+            setSelectedId(toId); // keep the panel on the renamed node
+          }}
           onDelete={(nodeId) =>
             onChange({
               ...graph,

@@ -5,7 +5,10 @@ import {
   definitionToGraph,
   graphToPayload,
   hashDefinition,
+  nodeIdError,
+  renameNodeId,
   stripUnderscoreKeys,
+  type CanvasGraph,
 } from "./graphState";
 
 describe("stripUnderscoreKeys", () => {
@@ -36,6 +39,109 @@ describe("hashDefinition", () => {
   it("is stable across key order (the server-hash conflict guard)", () => {
     expect(hashDefinition({ a: 1, b: 2 })).toBe(hashDefinition({ b: 2, a: 1 }));
     expect(hashDefinition({ a: 1 })).not.toBe(hashDefinition({ a: 2 }));
+  });
+});
+
+describe("renameNodeId", () => {
+  const graph: CanvasGraph = {
+    nodes: [
+      {
+        id: "a",
+        type: "workflowNode",
+        position: { x: 0, y: 0 },
+        data: { type: "agent", config: { agent_id: "x1", input_template: "{{input}}" } },
+      },
+      {
+        id: "agent-2",
+        type: "workflowNode",
+        position: { x: 1, y: 0 },
+        data: {
+          type: "agent",
+          config: {
+            agent_id: "x2",
+            input_template: "digest of {{node.a}} and my own {{node.agent-2}}",
+          },
+        },
+      },
+      {
+        id: "c",
+        type: "workflowNode",
+        position: { x: 2, y: 0 },
+        data: {
+          type: "condition",
+          config: {
+            routes: [{ when: { operator: "contains", value: "x" }, to_node: "agent-2" }],
+            else_node: "a",
+          },
+        },
+      },
+    ],
+    edges: [
+      { id: "a->agent-2", source: "a", target: "agent-2" },
+      { id: "agent-2->c", source: "agent-2", target: "c" },
+    ],
+    startNodeId: "a",
+  };
+
+  it("renames the node and every reference to it", () => {
+    const next = renameNodeId(graph, "agent-2", "reader");
+    expect(next.nodes.map((n) => n.id)).toEqual(["a", "reader", "c"]);
+    expect(next.edges).toEqual([
+      { id: "a->reader", source: "a", target: "reader" },
+      { id: "reader->c", source: "reader", target: "c" },
+    ]);
+    expect(next.startNodeId).toBe("a");
+    // template refs in OTHER nodes' configs follow the rename
+    expect(next.nodes[1].data.config.input_template).toBe(
+      "digest of {{node.a}} and my own {{node.reader}}",
+    );
+    // condition structural targets follow
+    const condition = next.nodes[2].data.config as {
+      routes: { to_node: string }[];
+      else_node: string;
+    };
+    expect(condition.routes[0].to_node).toBe("reader");
+    expect(condition.else_node).toBe("a");
+  });
+
+  it("renames a dotted hop but not a longer id sharing the prefix", () => {
+    const g: CanvasGraph = {
+      nodes: [
+        { id: "a", type: "workflowNode", position: { x: 0, y: 0 }, data: { type: "tool", config: {} } },
+        {
+          id: "b",
+          type: "workflowNode",
+          position: { x: 1, y: 0 },
+          data: {
+            type: "agent",
+            config: { input_template: "{{node.a}} {{node.a2}} {{node.a.field}}" },
+          },
+        },
+      ],
+      edges: [],
+      startNodeId: "a",
+    };
+    const next = renameNodeId(g, "a", "z");
+    expect(next.nodes[1].data.config.input_template).toBe(
+      "{{node.z}} {{node.a2}} {{node.z.field}}",
+    );
+  });
+
+  it("keeps the start node pointing at the renamed node", () => {
+    const next = renameNodeId(graph, "a", "start");
+    expect(next.startNodeId).toBe("start");
+    expect(next.nodes[0].id).toBe("start");
+  });
+});
+
+describe("nodeIdError", () => {
+  it("enforces the backend's node-id pattern and uniqueness", () => {
+    expect(nodeIdError("", ["a"])).toBe("id must not be empty");
+    expect(nodeIdError("bad id", ["a"])).toContain("letters, digits");
+    expect(nodeIdError("a.b", ["a"])).toContain("letters, digits");
+    expect(nodeIdError("a", ["a", "b"])).toContain("another node");
+    expect(nodeIdError("a", ["a"], "a")).toBe(null); // renaming to itself
+    expect(nodeIdError("agent-1_x", ["b"])).toBe(null); // hyphen/underscore fine
   });
 });
 

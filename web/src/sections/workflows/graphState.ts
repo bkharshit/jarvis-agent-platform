@@ -164,3 +164,80 @@ const ObjectKeysSortReplacer = (_key: string, value: unknown): unknown => {
   }
   return value;
 };
+
+// --- node id rename ---------------------------------------------------------
+
+/** The backend's node-id rule (WorkflowNode.id pattern) — renames must
+ * satisfy it, because `{{node.<id>}}` template refs resolve through it. */
+const NODE_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+/** Why `candidate` cannot be a node id, or null when it can. `currentId`
+ * (the node being renamed) is exempt from the uniqueness check. */
+export function nodeIdError(
+  candidate: string,
+  takenIds: string[],
+  currentId: string | null = null,
+): string | null {
+  if (candidate.trim() === "") return "id must not be empty";
+  if (!NODE_ID_PATTERN.test(candidate)) return "only letters, digits, '-' and '_'";
+  if (takenIds.includes(candidate) && candidate !== currentId) {
+    return "another node already uses this id";
+  }
+  return null;
+}
+
+/** Rewrite `{{node.<id>}}` references in a string — including dotted hops
+ * (`{{node.<id>.field}}`) — without touching a *longer* id that merely
+ * starts with the old one (`{{node.a}}` vs `{{node.a2}}`). */
+function renameTemplateRefs(text: string, from: string, to: string): string {
+  const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.replace(
+    new RegExp(`\\{\\{node\\.${escaped}(?=[.}])`, "g"),
+    `{{node.${to}`,
+  );
+}
+
+/** One node config, renamed in place: string values get template refs
+ * rewritten; condition route/else targets are structural and compared
+ * exactly (they are node ids, not text). */
+function renameConfigRefs(
+  config: Record<string, unknown>,
+  from: string,
+  to: string,
+): Record<string, unknown> {
+  const walk = (value: unknown): unknown => {
+    if (typeof value === "string") return renameTemplateRefs(value, from, to);
+    if (Array.isArray(value)) return value.map(walk);
+    if (value !== null && typeof value === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [key, entry] of Object.entries(value)) {
+        out[key] =
+          (key === "to_node" || key === "else_node") && entry === from ? to : walk(entry);
+      }
+      return out;
+    }
+    return value;
+  };
+  return walk(config) as Record<string, unknown>;
+}
+
+/** Rename a node id everywhere it can be referenced: the node itself, edge
+ * endpoints (and edge ids), start_node_id, condition route targets, and
+ * `{{node.<id>}}` templates in every node's config. A rename that missed
+ * any of these would silently break the walk at run time. */
+export function renameNodeId(graph: CanvasGraph, from: string, to: string): CanvasGraph {
+  return {
+    nodes: graph.nodes.map((node) => ({
+      ...node,
+      id: node.id === from ? to : node.id,
+      data: { ...node.data, config: renameConfigRefs(node.data.config, from, to) },
+    })),
+    edges: graph.edges.map((edge) => {
+      if (edge.source !== from && edge.target !== from) return edge;
+      const source = edge.source === from ? to : edge.source;
+      const target = edge.target === from ? to : edge.target;
+      return { ...edge, id: `${source}->${target}`, source, target };
+    }),
+    startNodeId: graph.startNodeId === from ? to : graph.startNodeId,
+  };
+}

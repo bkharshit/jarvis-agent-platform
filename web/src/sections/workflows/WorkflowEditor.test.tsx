@@ -172,4 +172,98 @@ describe("<WorkflowEditorPage/>", () => {
     await user.click(screen.getByTestId("save-workflow"));
     expect(await screen.findByTestId("save-error")).toHaveTextContent("already exists");
   });
+
+  it("renames a node id from the panel and saves the renamed graph", async () => {
+    const user = userEvent.setup();
+    let posted: Request | null = null;
+    server.use(
+      http.get("/v1/agents", () =>
+        HttpResponse.json({ items: [{ id: "agent-1", name: "Research agent" }] }),
+      ),
+      http.post("/v1/workflows", ({ request }) => {
+        posted = request;
+        return HttpResponse.json(detailFixture, { status: 201 });
+      }),
+    );
+
+    renderWithProviders(<WorkflowEditorPage />, { capabilities: LIVE });
+    await user.click(screen.getByRole("button", { name: "+ agent" }));
+    await waitFor(() => expect(screen.getByTestId("node-panel-agent")).toBeInTheDocument());
+
+    // the panel's id field starts at the auto-generated id; rename it
+    const idInput = screen.getByTestId("node-id-input");
+    expect(idInput).toHaveValue("agent-1");
+    await user.clear(idInput);
+    await user.type(idInput, "search");
+    await user.tab(); // blur commits the rename
+
+    // an invalid id surfaces and is not applied
+    await user.clear(idInput);
+    await user.type(idInput, "bad id");
+    await user.tab();
+    expect(screen.getByTestId("node-id-error")).toHaveTextContent("letters, digits");
+
+    await user.clear(idInput);
+    await user.type(idInput, "search");
+    await user.tab();
+    expect(idInput).toHaveValue("search");
+
+    await user.type(screen.getByLabelText("Workflow name"), "renamed flow");
+    await user.click(screen.getByTestId("save-workflow"));
+    await waitFor(() => expect(posted).not.toBeNull());
+    const body = (await posted!.json()) as {
+      nodes: { id: string }[];
+      start_node_id: string;
+    };
+    expect(body.nodes[0]?.id).toBe("search");
+    expect(body.start_node_id).toBe("search");
+  });
+
+  it("creates an agent from the node panel and selects it on the node", async () => {
+    const user = userEvent.setup();
+    let postedAgent: Request | null = null;
+    server.use(
+      http.get("/v1/agents", () =>
+        HttpResponse.json({
+          items: [
+            { id: "agent-1", name: "Research agent" },
+            { id: "agent-new", name: "Fresh agent" },
+          ],
+        }),
+      ),
+      http.post("/v1/agents", ({ request }) => {
+        postedAgent = request;
+        return HttpResponse.json(
+          {
+            definition: { id: "agent-new", name: "Fresh agent" },
+            versions: [{ version: 1, id: "ver-1", created_at: "2026-09-14T00:00:00Z" }],
+          },
+          { status: 201 },
+        );
+      }),
+    );
+
+    renderWithProviders(<WorkflowEditorPage />, { capabilities: LIVE });
+    await user.click(screen.getByRole("button", { name: "+ agent" }));
+    await waitFor(() => expect(screen.getByTestId("node-panel-agent")).toBeInTheDocument());
+
+    await user.click(screen.getByTestId("new-agent-toggle"));
+    const card = await screen.findByTestId("quick-agent-card");
+    expect(card).toBeInTheDocument();
+    await user.type(screen.getByTestId("quick-agent-name"), "Fresh agent");
+    await user.click(screen.getByTestId("quick-agent-save"));
+
+    await waitFor(() => expect(postedAgent).not.toBeNull());
+    const body = (await postedAgent!.json()) as {
+      name: string;
+      strategy: { type: string };
+      memory: { enabled: boolean };
+    };
+    expect(body.name).toBe("Fresh agent");
+    expect(body.strategy.type).toBe("function_calling");
+    // the created agent is selected on the node, pin reset for re-publish
+    await waitFor(() =>
+      expect(screen.getByLabelText("Agent")).toHaveValue("agent-new"),
+    );
+  });
 });
