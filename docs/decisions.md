@@ -368,6 +368,52 @@ the code.
   the buffer); documented, not engineered around — a DB-backed trace was
   explicitly rejected as reversing the debug-only spirit.
 
+- **D41 (2026-09-14, S6 planning) — Workflow runs ARE
+  `agent_executions` rows; the queue gains a `kind` discriminator.** No
+  parallel run-shaped table: a workflow run puts the workflow id in the
+  row's `agent_id` column, the workflow version id in
+  `agent_version_id`, and `metadata.kind = "workflow"`. The entire
+  S1/S10 machinery (queue, leases, sweeper rules, pause-reaper,
+  cross-process cancel, `PgEventStream`, SSE resume) applies to
+  workflow runs unmodified — a separate `workflow_executions` table
+  was rejected as duplicating exactly what the roadmap said to reuse.
+  The one ports/ change (pre-declared, ADR 0015 §4):
+  `RunQueueMessage.kind: Literal["agent", "workflow"] = "agent"` —
+  default keeps every existing message byte-identical; the worker
+  branches only at its version-resolution site.
+
+- **D42 (2026-09-14, S6 planning) — Agent nodes pin agent versions at
+  PUBLISH time.** `update_and_publish` resolves the agent's latest
+  version and freezes `agent_version_id` into the workflow snapshot —
+  replay fidelity is the D1 argument one level up; a workflow
+  version's meaning never changes under it. Rejected: "latest at run
+  time" (a republished agent silently changes what a pinned workflow
+  version means). The D37 name-join pattern does not apply: MCP names
+  are registry join keys, agent versions are content. Stale pins are
+  publish-time *lints* (warnings), never failures.
+
+- **D43 (2026-09-14, S6 planning) — `node_id` joins the envelope;
+  nodes never emit terminals.** The frozen ADR 0003 envelope gains one
+  optional field, `node_id: str | None = None` (backward compatible
+  both directions; the amendment is pre-declared in ADR 0015 §3), plus
+  two new event types: `node.started` / `node.completed`. Every event
+  an executing node emits carries the node's id, stamped by a `NodeSink`
+  wrapper that also REFUSES terminal appends — the workflow runtime
+  alone finalizes, and the run's event log stays one gapless sequence.
+  There is no `node.failed` event type: a node's inner failure becomes
+  the run's terminal `run.failed`, error prefixed `node '<id>': ...`,
+  inner error kind preserved (one failure, one terminal).
+
+- **D44 (2026-09-14, S6 planning) — Sequential walk over acyclic
+  graphs; the executor owns the node cap.** Graphs validate acyclic at
+  create/update (422); execution walks from the start node one node at
+  a time — deterministic event order, trivially true replay. The
+  ADR 0004 rule transposed one level up: `WorkflowRuntime` owns
+  `max_node_executions` (default 24), a node owns one step. Parallel
+  fan-out, backward edges/loops, and join nodes are deferred WITH the
+  design note recorded (ADR 0015 §7) — per-branch sub-contexts with
+  merged usage, anticipated by the `node_id`/NodeSink design.
+
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 
 Redis/queues · plugins & marketplace · multi-tenancy/auth · RAG · workflow

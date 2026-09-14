@@ -285,6 +285,20 @@ renumbering S6–S14; nothing else in this doc refers to S5.
 
 ## S6 — Workflow engine
 
+> **Planned 2026-09-14, not yet built.** Design pinned in
+> `docs/adr/0015-workflow-engine.md` (D41–D44 in decisions.md), commit
+> sequence in `docs/implementation-plan-s6.md`. Key deltas from the
+> sketch below, all verified against code before writing: workflow
+> runs reuse `agent_executions` rows + the whole S1/S10 machinery with
+> a queue `kind` discriminator (D41); agent nodes pin agent versions at
+> publish time (D42); the envelope gains an optional `node_id` plus
+> `node.started`/`node.completed` types — the ADR 0003 amendment is
+> pre-declared in the ADR (D43); execution is a sequential walk over
+> acyclic graphs with a node cap — parallel fan-out and loops are
+> deferred with their design note recorded (D44, ADR §7). The React
+> Flow canvas is the superseded S5's core, built as this stage's UI
+> enablement.
+
 **Goal:** DAG/graph runs beyond the single-agent loop.
 
 **Rides on:** the deliberate Phase 1 decision that workflows are a *sibling
