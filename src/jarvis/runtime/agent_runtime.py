@@ -54,6 +54,7 @@ from jarvis.ports.tools import ToolRegistry
 from jarvis.prompt.engine import PromptContext, PromptEngine
 from jarvis.runtime.limits import RunLimits
 from jarvis.runtime.llm_trace import LlmTraceBuffer, TracedModelClient
+from jarvis.runtime.memory import ConversationMemory, MemoryView
 from jarvis.tools.mcp.errors import McpResolutionError
 from jarvis.tools.mcp.provider import McpTooling, McpToolProvider
 from jarvis.tools.runtime import ToolRuntime
@@ -257,14 +258,15 @@ class AgentRuntime:
         # naming the server, before any token is spent.
         tooling = await self._resolve_tooling(agent, ctx)
         try:
-            history, conversation_id = await self._load_memory(ctx, agent)
+            memory_view = await self._load_memory(ctx, agent, client)
 
             messages = self._prompt_engine.build(
                 PromptContext(
                     agent=agent,
                     input=input,
                     variables=ctx.variables,
-                    history=history,
+                    history=memory_view.history,
+                    memory_summary=memory_view.summary,
                     tools=self._bound_descriptors(agent, tooling.registry),
                     schema_in_prompt=(
                         agent.output_schema is not None
@@ -279,11 +281,13 @@ class AgentRuntime:
                 await sink.append(started)
             user_message = messages[-1]
             await self._save_message(ctx, user_message)
-            if conversation_id:
-                await self._conversations.append_message(conversation_id, user_message, ctx.run_id)  # type: ignore[union-attr]
+            if memory_view.conversation_id and self._conversations is not None:
+                await self._conversations.append_message(
+                    memory_view.conversation_id, user_message, ctx.run_id
+                )
 
             return await self._loop(
-                ctx, agent, client, sink, messages, conversation_id, tooling=tooling
+                ctx, agent, client, sink, messages, memory_view.conversation_id, tooling=tooling
             )
         finally:
             # S4 (D38): the segment's MCP connections close with the
@@ -589,6 +593,7 @@ class AgentRuntime:
                         variables=ctx.variables,
                         config=dict(binding.config) if binding else {},
                         cancel=ctx.cancel,
+                        tenant_id=ctx.tenant_id,
                     ),
                 )
                 tool_message = Message(
@@ -934,12 +939,21 @@ class AgentRuntime:
         """Reconstruct the model's context for a resumed segment: the system
         prompt plus the run transcript. With memory on, the conversation
         history is the superset (prior sessions folded in with this run's
-        messages — the loop appends to both); otherwise the run's own
-        persisted transcript is exactly what the original context was. The
-        system prompt renders against the SEGMENT's registry (S4: the
-        fresh segment's resolved tools must match what it can execute)."""
+        messages — the loop appends to both), reduced to the SAME view a
+        fresh segment sees: existing summary + window, read-only (S12,
+        D45 — no compaction on resume; fixes the S6-documented v1
+        approximation of feeding the FULL conversation). Otherwise the
+        run's own persisted transcript is exactly what the original
+        context was. The system prompt renders against the SEGMENT's
+        registry (S4: the fresh segment's resolved tools must match what
+        it can execute)."""
+        summary: str | None = None
         if conversation_id and self._conversations is not None:
-            transcript = await self._conversations.history(conversation_id)
+            view = await ConversationMemory(self._conversations).rebuild_view(
+                agent, ctx, conversation_id
+            )
+            transcript = view.history
+            summary = view.summary
         elif self._executions is not None:
             transcript = await self._executions.list_messages(run_id)
         else:
@@ -957,21 +971,26 @@ class AgentRuntime:
             )
         )
         messages = [Message(role="system", content=system)] if system else []
+        if summary:
+            messages.append(
+                Message(role="system", content="Summary of the earlier conversation:\n" + summary)
+            )
         messages.extend(transcript)
         return messages
 
     # --- memory -------------------------------------------------------------
 
     async def _load_memory(
-        self, ctx: ExecutionContext, agent: AgentDefinition
-    ) -> tuple[list[Message], str | None]:
-        if not agent.memory.enabled or not ctx.session_id or self._conversations is None:
-            return [], None
-        conversation_id = await self._conversations.get_or_create(
-            agent.id, ctx.session_id, tenant_id=ctx.tenant_id
-        )
-        history = await self._conversations.history(conversation_id)
-        return history, conversation_id
+        self, ctx: ExecutionContext, agent: AgentDefinition, client: ModelClient
+    ) -> MemoryView:
+        """The segment's memory view (S12, D45): full history + rolling
+        summary, with compaction when the summarize strategy is on. Window
+        agents (and every pre-S12 snapshot) get exactly the old
+        load-history behavior — byte-identical."""
+        if self._conversations is None or not agent.memory.enabled or not ctx.session_id:
+            return MemoryView(history=[])
+        memory = ConversationMemory(self._conversations)
+        return await memory.load(agent, ctx, client=client)
 
     # --- persistence helpers --------------------------------------------------
 

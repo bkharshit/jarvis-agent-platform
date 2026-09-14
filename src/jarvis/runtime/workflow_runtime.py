@@ -624,6 +624,7 @@ class WorkflowRuntime:
             variables=ctx.variables,
             config=dict(binding.config),
             cancel=ctx.cancel,
+            tenant_id=ctx.tenant_id,
         )
         result = await tooling.tool_runtime.execute(call, context)
         if self._executions is not None:

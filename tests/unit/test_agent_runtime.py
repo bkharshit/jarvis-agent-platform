@@ -29,7 +29,7 @@ from jarvis.domain.execution import ExecutionContext, RunResult
 from jarvis.domain.message import Message, ToolCall, Usage
 from jarvis.domain.tools import ToolDescriptor
 from jarvis.events.bus import InProcessEventSink
-from jarvis.models.errors import ModelBadRequestError
+from jarvis.models.errors import ModelBadRequestError, ModelError
 from jarvis.models.factory import DefaultModelProviderFactory
 from jarvis.models.mock import MockModelProvider, turn
 from jarvis.ports.queue import ResumeRequest
@@ -562,6 +562,136 @@ class TestMemoryAcrossRuns:
         await runtime.run(_version(agent), "x", _ctx("run-17"))
         assert repo.conversations == {}
         assert provider.requests[0].messages[-1].text == "x"
+
+
+class _RecordingFinishStrategy:
+    """Fixture strategy: records the messages it is handed, then finishes."""
+
+    name = "recording_fixture"
+
+    def __init__(self):
+        self.seen: list[Message] = []
+        self.calls = 0
+
+    async def step(self, ctx, messages, client, tools, sink):
+        self.calls += 1
+        if self.calls == 1:
+            self.seen = list(messages)
+        return FinishStep(assistant_message=Message(role="assistant", content="done"))
+
+
+class TestSummarizeStrategy:
+    """S12 (ADR 0016/D45): the summarize strategy compacts the evicted
+    prefix through the run's own client before the loop, degrades to the
+    plain window when the summarizer fails, and never compacts on resume."""
+
+    def _agent(self) -> AgentDefinition:
+        return _agent(memory=MemoryConfig(enabled=True, max_messages=2, strategy="summarize"))
+
+    def _seed(self, repo: _RecordingRepo, conversation_id: str, count: int = 6) -> None:
+        repo.conversations[conversation_id] = [
+            Message(role="user" if i % 2 == 0 else "assistant", content=f"prior {i}")
+            for i in range(count)
+        ]
+
+    async def test_compaction_consumes_a_turn_and_feeds_the_loop(self):
+        repo = _RecordingRepo()
+        self._seed(repo, "a1:sess-sum")
+        agent = self._agent()
+        provider = MockModelProvider([turn("compressed"), turn("final")])
+        runtime = _runtime(provider, repo=repo)
+
+        result = await runtime.run(
+            _version(agent), "new question", _ctx("run-sum-1", session_id="sess-sum")
+        )
+
+        assert result.status == "succeeded"
+        # compaction ran BEFORE the loop: one extra model call, the scripted
+        # summary landed as conversation state, the loop got the second turn
+        assert provider.invocations == 2
+        assert repo.summary_state["a1:sess-sum"] == ("compressed", 4)
+        loop_request = provider.requests[1]
+        texts = [m.text for m in loop_request.messages]
+        assert any("Summary of the earlier conversation:\ncompressed" in t for t in texts)
+        # the window keeps prior 4/5 verbatim; the summarized prefix is gone
+        assert any("prior 4" in t for t in texts)
+        assert any("prior 5" in t for t in texts)
+        assert not any("prior 3" in t for t in texts)
+        # the fresh input is still the last message
+        assert loop_request.messages[-1].text == "new question"
+
+    async def test_summarizer_failure_degrades_to_window(self):
+        repo = _RecordingRepo()
+        self._seed(repo, "a1:sess-degrade")
+        agent = self._agent()
+        provider = MockModelProvider([turn(error=ModelError("summarizer down")), turn("final")])
+        runtime = _runtime(provider, repo=repo)
+
+        result = await runtime.run(
+            _version(agent), "new question", _ctx("run-sum-2", session_id="sess-degrade")
+        )
+
+        # D45: memory never fails a run — the segment ran on the plain window
+        assert result.status == "succeeded"
+        assert repo.summary_state == {}
+        loop_request = provider.requests[1]
+        texts = [m.text for m in loop_request.messages]
+        assert not any("Summary of the earlier conversation" in t for t in texts)
+        assert any("prior 4" in t for t in texts)
+
+    async def test_resume_rebuilds_read_only_without_compaction(self):
+        repo = _RecordingRepo()
+        self._seed(repo, "a1:s1")
+        agent = self._agent()
+        ask = _AskHumanStrategy("Which environment?")
+        provider1 = MockModelProvider([turn("compressed"), turn("never")])
+        runtime1 = AgentRuntime(
+            strategies=SimpleNamespace(resolve=lambda config: ask),
+            tools=InMemoryToolRegistry(),
+            tool_runtime=ToolRuntime(InMemoryToolRegistry()),
+            models=DefaultModelProviderFactory(mock_provider=provider1),
+            conversations=repo,
+            executions=repo,
+        )
+        ctx = _ctx("run-sum-3", session_id="s1")
+        first = await runtime1.run(_version(agent), "deploy", ctx)
+        assert first.status == "awaiting_input"
+        # compaction consumed the scripted turn before the strategy paused
+        assert provider1.invocations == 1
+        assert repo.summary_state["a1:s1"] == ("compressed", 4)
+        _seed_events(repo, runtime1.bus.get("run-sum-3"))
+
+        finisher = _RecordingFinishStrategy()
+        provider2 = MockModelProvider([])
+        runtime2 = AgentRuntime(
+            strategies=SimpleNamespace(resolve=lambda config: finisher),
+            tools=InMemoryToolRegistry(),
+            tool_runtime=ToolRuntime(InMemoryToolRegistry()),
+            models=DefaultModelProviderFactory(mock_provider=provider2),
+            conversations=repo,
+            executions=repo,
+        )
+        sink = _resume_sink(repo, "run-sum-3")
+        result = await runtime2.resume(
+            _version(agent),
+            "run-sum-3",
+            _ctx("run-sum-3", session_id="s1"),
+            sink,
+            ResumeRequest(kind="content", content="prod"),
+        )
+
+        assert result.status == "succeeded"
+        # D45: the rebuild is read-only — no compaction call on resume
+        assert provider2.invocations == 0
+        texts = [m.text for m in finisher.seen]
+        assert any(t.startswith("Summary of the earlier conversation:\ncompressed") for t in texts)
+        # the window is the last two conversation messages (the run's own
+        # question exchange), NOT the pre-summary history
+        assert "deploy" in texts
+        assert "Which environment?" in texts
+        assert not any(t.startswith("prior ") for t in texts)
+        # the human's answer rides last
+        assert texts[-1] == "prod"
 
 
 class TestBlockingVsStreamedEquivalence:
