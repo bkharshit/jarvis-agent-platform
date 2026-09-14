@@ -42,12 +42,16 @@ VOLATILE = {
     "latency_ms",
     "awaiting_until",
     "agent_version_id",
+    "node_id",  # asserted None in _canonical — plain runs are never node-scoped
 }
 
 
 def _canonical(events) -> list[dict]:
     out = []
     for event in events:
+        # S6 (D43): a plain agent run is never node-scoped — every event the
+        # loop emits carries the envelope's default node_id=None.
+        assert event.node_id is None
         data = event.model_dump(mode="json")
         for key in VOLATILE:
             data.pop(key, None)

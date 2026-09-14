@@ -141,6 +141,46 @@ class InProcessEventSink:
             self._subscribers.remove(queue)
 
 
+class NodeSink:
+    """Event sink view for one workflow node (S6, ADR 0015 §5, D43): every
+    appended event gets the node's `node_id` stamped onto the envelope, and
+    terminal events are refused — the workflow runtime alone finalizes the
+    run. A node's inner agent loop emits no terminal inside a node;
+    `node.completed` (emitted by the runtime on the run sink) carries the
+    final message instead. `node.failed` is not an event type: the inner
+    failure surfaces as the run's terminal `run.failed` naming the node."""
+
+    def __init__(self, inner: InProcessEventSink, node_id: str) -> None:
+        self._inner = inner
+        self.node_id = node_id
+
+    @property
+    def run_id(self) -> str:
+        return self._inner.run_id
+
+    @property
+    def events(self) -> list[ExecutionEvent]:
+        return self._inner.events
+
+    async def append(self, event: ExecutionEvent) -> int:
+        if is_terminal(event):
+            raise EventSequenceError(
+                f"node {self.node_id!r} cannot append a terminal event — "
+                "the workflow runtime alone finalizes"
+            )
+        if event.node_id is not None and event.node_id != self.node_id:
+            raise EventSequenceError(
+                f"event node_id {event.node_id!r} does not match node sink {self.node_id!r}"
+            )
+        stamped = event.model_copy(update={"node_id": self.node_id})
+        return await self._inner.append(stamped)
+
+    async def finalize(self, event: TerminalEvent) -> int:
+        raise EventSequenceError(
+            f"node {self.node_id!r} cannot finalize — the workflow runtime alone finalizes"
+        )
+
+
 class InProcessEventBus:
     """Per-run sink registry. `get_or_create` is idempotent so a stream
     endpoint can subscribe before the run task creates/looks up the sink."""
@@ -185,6 +225,7 @@ class ReplayOnlyEventStream:
 __all__ = [
     "InProcessEventBus",
     "InProcessEventSink",
+    "NodeSink",
     "PersistFn",
     "ReplayOnlyEventStream",
 ]

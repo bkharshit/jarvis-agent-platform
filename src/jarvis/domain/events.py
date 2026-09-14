@@ -18,7 +18,12 @@ from jarvis.domain.message import ToolCall, Usage
 
 class _Event(BaseModel):
     """Shared envelope fields (ADR 0003). `sequence` is per-run, gapless,
-    sink-assigned — unassigned (None) until the sink stamps it."""
+    sink-assigned — unassigned (None) until the sink stamps it.
+
+    `node_id` (S6, ADR 0015 §3, D43): the workflow node that emitted the
+    event, stamped by the node's sink wrapper. None for plain agent-run
+    events and old persisted rows — backward compatible in both
+    directions."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -26,6 +31,7 @@ class _Event(BaseModel):
     run_id: str
     sequence: int | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    node_id: str | None = None
 
 
 # --- lifecycle -----------------------------------------------------------
@@ -114,6 +120,31 @@ class ToolCallDeclined(_Event):
     name: str
 
 
+# --- workflow nodes (S6, ADR 0015 §3, D43) -----------------------------------
+
+
+class NodeStarted(_Event):
+    """A workflow node began executing. `node_id` overrides the envelope's
+    optional field with a required one — the event IS the node boundary
+    marker; there is no `node.failed` (D43: an inner failure surfaces as
+    the run's terminal `run.failed` naming the node)."""
+
+    type: Literal["node.started"] = "node.started"
+    node_id: str
+    node_type: Literal["agent", "tool", "condition"]
+
+
+class NodeCompleted(_Event):
+    """A workflow node finished; `output` carries the agent's final message
+    or the tool's result (never an inner terminal event)."""
+
+    type: Literal["node.completed"] = "node.completed"
+    node_id: str
+    node_type: Literal["agent", "tool", "condition"]
+    output: str = ""
+    is_error: bool = False
+
+
 # --- pause (non-terminal; the segment ends here, ADR 0010 §1) ----------------
 
 
@@ -167,6 +198,8 @@ ExecutionEvent = Annotated[
     | ToolCallCompleted
     | ToolCallFailed
     | ToolCallDeclined
+    | NodeStarted
+    | NodeCompleted
     | IterationCompleted
     | RunAwaitingInput
     | RunCompleted
