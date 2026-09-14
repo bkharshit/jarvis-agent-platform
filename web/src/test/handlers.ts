@@ -12,7 +12,7 @@ export const agentFixture = {
   system_prompt: "You research.",
   tools: [{ name: "calculator", enabled: true, config: {} }],
   strategy: { type: "function_calling" as const, params: {} },
-  memory: { enabled: false, max_messages: 20 },
+  memory: { enabled: false, max_messages: 20, strategy: "window" as const },
   max_iterations: 8,
   temperature: 0.7,
   created_at: "2026-09-04T12:00:00Z",

@@ -55,7 +55,7 @@ function DefinitionTab({ definition }: { definition: AgentDefinition }) {
         <span className="text-neutral-400">Memory: </span>
         <span className="font-mono text-neutral-100">
           {definition.memory?.enabled
-            ? `enabled, max ${definition.memory.max_messages} messages`
+            ? `enabled, max ${definition.memory.max_messages} messages, ${definition.memory.strategy} strategy`
             : "disabled"}
         </span>
       </div>

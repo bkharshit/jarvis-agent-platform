@@ -611,6 +611,27 @@ function AgentEditorForm() {
                 }
               />
             </div>
+            <div>
+              <label htmlFor="memory-strategy" className={labelClass}>Strategy</label>
+              <select
+                id="memory-strategy"
+                className={inputClass}
+                value={draft.memory.strategy}
+                onChange={(e) =>
+                  update({
+                    memory: {
+                      ...draft.memory,
+                      strategy: e.target.value as "window" | "summarize",
+                    },
+                  })
+                }
+              >
+                <option value="window">window — keep the last N messages verbatim</option>
+                <option value="summarize">
+                  summarize — compact evicted history into a rolling summary
+                </option>
+              </select>
+            </div>
           </div>
         </fieldset>
 

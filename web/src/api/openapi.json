@@ -3634,6 +3634,15 @@
               }
             ],
             "title": "Session Key"
+          },
+          "strategy": {
+            "type": "string",
+            "enum": [
+              "window",
+              "summarize"
+            ],
+            "title": "Strategy",
+            "default": "window"
           }
         },
         "additionalProperties": false,

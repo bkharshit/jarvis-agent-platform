@@ -17,7 +17,7 @@ describe("toSavePayload", () => {
         credential_value: "",
       },
       user_prompt_template: "",
-      memory: { enabled: false, max_messages: 20, session_key: "" },
+      memory: { enabled: false, max_messages: 20, session_key: "", strategy: "window" as const },
       output_schema: "",
     };
     const { body, error } = toSavePayload(draft);
@@ -101,6 +101,21 @@ describe("toSavePayload", () => {
     expect(body.model?.provider).toBe("mock");
     expect(body.tools).toEqual(agentFixture.tools);
     expect(body.strategy?.type).toBe("function_calling");
+  });
+
+  it("carries the memory strategy through draft and payload (S12)", () => {
+    // default seed is the window strategy
+    const seeded = draftForCreate();
+    expect(seeded.memory.strategy).toBe("window");
+    // a summarize definition drafts its own strategy
+    const draft = draftFromDefinition({
+      ...agentFixture,
+      memory: { enabled: true, max_messages: 2, strategy: "summarize" },
+    });
+    expect(draft.memory.strategy).toBe("summarize");
+    const { body, error } = toSavePayload(draft);
+    expect(error).toBeUndefined();
+    expect(body.memory?.strategy).toBe("summarize");
   });
 });
 

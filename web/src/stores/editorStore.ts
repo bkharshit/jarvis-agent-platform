@@ -35,7 +35,12 @@ export interface AgentDraft {
   user_prompt_template: string;
   tools: ToolDraft[];
   strategy: { type: string; params: string }; // S3: plugins widen the set; options come from capabilities
-  memory: { enabled: boolean; max_messages: number; session_key: string };
+  memory: {
+    enabled: boolean;
+    max_messages: number;
+    session_key: string;
+    strategy: "window" | "summarize"; // S12 (D45): window = flat last-N, summarize = rolling summary
+  };
   max_iterations: number;
   temperature: number;
   output_schema: string; // JSON text; "" = unset
@@ -87,6 +92,7 @@ function draftFromDefinition(definition: AgentDefinition): AgentDraft {
       enabled: definition.memory?.enabled ?? false,
       max_messages: definition.memory?.max_messages ?? 20,
       session_key: definition.memory?.session_key ?? "",
+      strategy: definition.memory?.strategy ?? "window",
     },
     max_iterations: definition.max_iterations,
     temperature: definition.temperature,
@@ -120,7 +126,7 @@ function draftForCreate(defaults?: ModelDefaultsInput | null): AgentDraft {
     user_prompt_template: null,
     tools: [],
     strategy: { type: "function_calling", params: {} },
-    memory: { enabled: false, max_messages: 20 },
+    memory: { enabled: false, max_messages: 20, strategy: "window" },
     max_iterations: 8,
     temperature: 0.7,
     output_schema: null,
@@ -223,6 +229,7 @@ export function toSavePayload(draft: AgentDraft): SavePayload {
     memory: {
       enabled: draft.memory.enabled,
       max_messages: draft.memory.max_messages,
+      strategy: draft.memory.strategy,
       ...(draft.memory.session_key.trim() !== ""
         ? { session_key: draft.memory.session_key }
         : {}),

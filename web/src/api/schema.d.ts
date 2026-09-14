@@ -1254,6 +1254,12 @@ export interface components {
             max_messages: number;
             /** Session Key */
             session_key?: string | null;
+            /**
+             * Strategy
+             * @default window
+             * @enum {string}
+             */
+            strategy: "window" | "summarize";
         };
         /** Message */
         Message: {
