@@ -22,7 +22,11 @@ from jarvis.domain.agent import ToolBinding
 _NODE_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 # The workflow template pattern is the prompt engine's `{{var}}` with one
 # extension: `node.<id>` names an upstream node's output (ADR 0015 §2).
-_TEMPLATE_PATTERN = re.compile(r"\{\{([\w.]+)\}\}")
+# The id fragment must admit exactly what _NODE_ID_PATTERN admits —
+# including the hyphen (`{{node.agent-1}}`), or a valid node id is
+# unreferenceable and the placeholder passes through untouched
+# (live-found 2026-09-14: the walkthrough's bare-word ids masked it).
+_TEMPLATE_PATTERN = re.compile(r"\{\{([\w.-]+)\}\}")
 
 
 class _Model(BaseModel):

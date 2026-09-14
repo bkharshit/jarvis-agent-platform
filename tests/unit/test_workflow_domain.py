@@ -365,6 +365,14 @@ class TestTemplating:
         )
         assert rendered == "Previous step said: hello"
 
+    def test_hyphenated_node_id_substitutes(self) -> None:
+        # Node ids admit `-` (_NODE_ID_PATTERN) — the template reference must
+        # admit exactly the same set, or a valid id is unreferenceable and
+        # the placeholder passes through untouched (live-found in the S6
+        # walkthrough: {{node.agent-1}} reached the model literally).
+        rendered = render_template("Fact about {{node.agent-1}}", {"node": {"agent-1": "42"}})
+        assert rendered == "Fact about 42"
+
     def test_nested_dotted_key_reaches_dict_fields(self) -> None:
         rendered = render_template(
             "{{node.tool.json_field}}", {"node": {"tool": {"json_field": "inner"}}}
