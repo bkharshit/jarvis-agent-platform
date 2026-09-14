@@ -1413,6 +1413,7 @@ class SqlEvalRepo:
         agent_version_id: str,
         children: list[tuple[EvalCase, str]],
         *,
+        run_id: str | None = None,
         tenant_id: str | None = None,
     ) -> EvalRun:
         """The eval_run row (with the dataset snapshot, D1) plus one
@@ -1421,7 +1422,7 @@ class SqlEvalRepo:
         `queue_message` and enqueued via create_queued_run before this
         call (D48), so the FKs hold."""
         effective = tenant_id or DEFAULT_TENANT
-        run_id = str(uuid4())
+        run_id = run_id or str(uuid4())
         now = datetime.now(UTC)
         async with self._sessionmaker() as session:
             session.add(

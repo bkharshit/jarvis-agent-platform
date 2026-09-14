@@ -289,13 +289,15 @@ class EvalRepo(Protocol):
         agent_version_id: str,
         children: list[tuple[EvalCase, str]],
         *,
+        run_id: str | None = None,
         tenant_id: str | None = None,
     ) -> EvalRun:
         """Persist the eval_run row (with the dataset snapshot, D1) plus one
         eval_result per (case, child run_id) — ONE transaction. The caller
         has already enqueued every child run (each run_id was generated
         inside `queue_message` before enqueue, so results can reference the
-        runs eagerly, D48)."""
+        runs eagerly, D48). `run_id` lets the caller pin the eval-run id it
+        already stamped into the children's metadata; None = repo-generated."""
         ...
 
     async def list_runs(
