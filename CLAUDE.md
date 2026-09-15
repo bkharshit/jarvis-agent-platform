@@ -170,6 +170,31 @@ uv run jarvis serve        # API on :8000
   ids in every test and fixture masked it. Fixed + regression-tested
   (test_hyphenated_node_id_substitutes); the invariant to keep: widen
   or narrow the two patterns together.
+- **Result ids are random uuid4s — never ORDER BY them** (S11, found
+  live): Postgres returns uuid ties in heap order, which drifted
+  between reads and flaked tests; order by a meaningful column
+  (`case_id, id`) — the note lives at the get_results query.
+- **Eval children run CONCURRENTLY and the mock provider's scripted
+  turns are one global FIFO** (S11): per-case scripted answers are
+  unreliable on multi-case datasets. Integration tests stay
+  order-independent by matching the default reply everywhere (all
+  pass) or mismatching it everywhere (all fail) — see the header of
+  test_api_evaluations.py.
+- **Eval-dataset PATCH is wholesale** (S11, found live): the upsert
+  schema requires name AND cases AND scorers on EVERY PATCH — a
+  name-only body 422s. A PATCH body is a full dataset document, never
+  a diff. The web editor preserves judge_model fields it doesn't
+  collect (base_url/credential_ref) for the same reason.
+- **Tightening a domain constraint on a JSONB-persisted type needs a
+  story for existing rows** (S11, found live; cost a full UI outage):
+  `EvalCase.input` gained min_length=1, and ONE pre-existing row with
+  an empty input then raised on READ — list_datasets →
+  `_evaluations_detail` → GET /v1/capabilities 500 → every section of
+  the web shell showed "Cannot reach the JARVIS backend". Capabilities
+  derives its detail counts from full listings, so one poisoned row
+  bricks the whole shell. Repair existing rows in the same commit that
+  tightens the constraint (here: a one-line DELETE of empty-input
+  cases), or make the read lenient.
 
 ## Working agreement
 

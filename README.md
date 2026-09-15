@@ -7,7 +7,8 @@ establishes.
 > Status: Phase 1 (agent runtime) complete; roadmap stages F1 (product
 > shell), S1 (distributed runs, ADR 0008), S2 (auth, multi-tenancy,
 > BYOK credentials, ADR 0009/0006), S10 (human-in-the-loop,
-> ADR 0010) and S6 (workflow engine, ADR 0015) shipped. See
+> ADR 0010), S6 (workflow engine, ADR 0015), S12 (richer memory,
+> ADR 0016) and S11 (evaluation framework, ADR 0017) shipped. See
 > `docs/roadmap.md` for the stage list and `docs/adr/` for the design
 > decisions.
 > The frontend ships alongside the backend: the full product shell
@@ -96,6 +97,10 @@ uv run jarvis doctor --ping-model
 | GET/POST/PATCH/DELETE | `/workflows` | Workflow definitions (DAGs of agent/tool/condition nodes) — versioned like agents, 409 on duplicate name |
 | POST | `/workflows/{id}/publish` | Pin a new version snapshot |
 | POST | `/workflows/{id}/run` / `/stream` | Blocking run / SSE stream — same envelope as agents plus `node.started`/`node.completed` with a `node_id` (D43) |
+| GET/POST/PATCH/DELETE | `/evaluations/datasets` | Eval datasets — JSONB snapshots of test cases + scorers (+ judge model for `llm_judge`); PATCH is wholesale, `llm_judge` without a judge model is a 422 (D48/D50) |
+| POST | `/evaluations/datasets/{id}/runs` | Run a dataset against an agent's latest published version — 202; one ORDINARY queue run per case |
+| GET | `/evaluations/runs/{id}` | Eval-run detail: derived status (no column), lazily-scored results persisted once (D49) |
+| GET | `/evaluations/compare?agent_id=` | Score aggregation across the agent's pinned versions |
 
 Every error has one envelope shape: `{"error": {"kind", "message", "details"}}`.
 
@@ -343,6 +348,60 @@ routes), editable node ids (renames rewrite every `{{node.<id>}}`
 reference, edge, and condition target), inline agent creation, a
 server-hash concurrent-edit guard, and the run console rendering node
 groups. A live walkthrough is in `docs/walkthrough-s6.md`.
+
+### Richer memory (S12, ADR 0016)
+
+Conversation memory gains a strategy. `window` (the default, and what
+every pre-S12 snapshot drafts as) is the flat last-N slice; `summarize`
+compacts the evicted prefix into a rolling per-session summary through
+the agent's own model client — compaction consumes a turn, the summary
+rides the prompt as a system message, and a summarizer failure degrades
+to the plain window (memory can never fail a run). Alongside it, a
+per-session **scratchpad** (`memory_get` / `memory_put` / `memory_delete`
+builtins, bindable by any agent) gives the model working memory — keys
+are the caller's contract, a run without a session fails the tool call
+honestly rather than the run.
+
+```bash
+curl -X POST localhost:8000/v1/agents -H 'content-type: application/json' -d '{
+  "name": "summarizer", "strategy": {"type": "function_calling"},
+  "memory": {"enabled": true, "max_messages": 2, "strategy": "summarize"},
+  "tools": [{"name": "memory_get"}, {"name": "memory_put"}, {"name": "memory_delete"}]
+}'
+```
+
+### Evaluations (S11, ADR 0017)
+
+Evaluations are test-case datasets scored over ordinary runs. A dataset
+is a JSONB snapshot of cases (`input` / `expected`) plus scorers; an
+eval run fans out one ORDINARY queue run per case, pinned to the
+agent's latest published version — the children are indistinguishable
+from manual runs in `/executions`. Status is derived (no column) and
+scoring is lazy: the first completed detail read scores and persists
+each result exactly once. Scorers: `exact`, `contains`, `regex`,
+`json_schema`, `tool_sequence` (deterministic, against the final
+message and tool order) and `llm_judge`, which requires a dataset-level
+`judge_model` (a 422 at the boundary) and persists `passed=null` with
+the judge's failure detail when it cannot reach a verdict.
+
+```bash
+curl -X POST localhost:8000/v1/evaluations/datasets -H 'content-type: application/json' -d '{
+  "name": "smoke",
+  "cases": [{"id": "c-1", "input": "say hi", "expected": "Hello!"}],
+  "scorers": [{"name": "exact"}],
+  "judge_model": {"provider": "openai_compatible", "model": "llama3.1",
+                  "base_url": "https://ollama.com/v1",
+                  "credential_ref": {"type": "env", "env_var": "OLLAMA_API_KEY"}}
+}'
+curl -X POST localhost:8000/v1/evaluations/datasets/<id>/runs \
+  -H 'content-type: application/json' -d '{"agent_id": "<id>"}'
+curl localhost:8000/v1/evaluations/runs/<eval-run-id>   # first read scores
+```
+
+The web **Evaluations** section covers dataset CRUD (wholesale-PATCH
+editor), eval runs with per-case score chips linking each child run,
+and a per-version Compare view. A live walkthrough is in
+`docs/walkthrough-s11.md`.
 
 ### Queue-backed runs and distributed mode (S1, ADR 0008)
 

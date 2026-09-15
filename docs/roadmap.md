@@ -424,25 +424,35 @@ Executions section.
 
 ## S11 — Evaluation framework
 
-> **Planned 2026-09-15** (planning session; no S11 code exists yet —
-> this record pins the verified design before the build). Design pinned
-> in `docs/adr/0017-evaluation-framework.md` (D48–D50 in decisions.md),
-> commit sequence in `docs/implementation-plan-s11.md`. Key deltas from
-> the sketch below, all verified against code before writing: cases
-> live as JSONB snapshots on the dataset AND the eval-run row (no
-> separate `eval_cases` table — D48; a stable per-case uuid replaces
-> the case FK); child runs are ORDINARY agent-kind runs through the
-> existing queue (`queue_message` + `create_queued_run` per case,
-> pinned `agent_version_id` — the worker is unchanged, verified at
-> worker.py:245), with child run_ids stored eagerly on `eval_results`
-> (`list_runs` has no metadata filter — verified); eval status has NO
-> column, it derives at read from the child rows, and scoring is LAZY
-> on the first completed detail read, persisted once (D49); `llm_judge`
-> requires a dataset-level `judge_model` (422 otherwise, D50) and fails
-> honestly (passed=null + error detail); routes are top-level
-> `/v1/evaluations*` (the MCP-resource pattern), not the sketch's
-> nested `/v1/agents/{id}/evals`. Manual testing is JOINT with S12
-> (one session, two walkthrough scripts) per Harshit's 2026-09-15 call.
+> **Shipped 2026-09-15** (commits `d2fc28e..ca4b4a5`; the joint S12+S11
+> manual session found the empty-case-input 500 — fixed `d617749` with
+> `EvalCase.input` min_length=1 at the boundary — and the dataset
+> editor silently dropping uncollected judge_model fields — fixed
+> `ca4b4a5`; live notes in `docs/walkthrough-s11.md` §8). As planned:
+> design pinned in `docs/adr/0017-evaluation-framework.md` (D48–D50 in
+> decisions.md), commit sequence in `docs/implementation-plan-s11.md`.
+> Key deltas from the sketch below, all verified against code before
+> writing: cases live as JSONB snapshots on the dataset AND the
+> eval-run row (no separate `eval_cases` table — D48; a stable
+> per-case uuid replaces the case FK); child runs are ORDINARY
+> agent-kind runs through the existing queue (`queue_message` +
+> `create_queued_run` per case, pinned `agent_version_id` — the worker
+> is unchanged, verified at worker.py:245), with child run_ids stored
+> eagerly on `eval_results` (`list_runs` has no metadata filter —
+> verified); eval status has NO column, it derives at read from the
+> child rows, and scoring is LAZY on the first completed detail read,
+> persisted once (D49); `llm_judge` requires a dataset-level
+> `judge_model` (422 otherwise, D50) and fails honestly (passed=null +
+> error detail); routes are top-level `/v1/evaluations*` (the
+> MCP-resource pattern), not the sketch's nested
+> `/v1/agents/{id}/evals`. Manual testing is JOINT with S12 (one
+> session, two walkthrough scripts) per Harshit's 2026-09-15 call.
+>
+> **Follow-up (backlog):** the web judge panel collects provider+model
+> only — add base_url + credential-ref inputs so judge models pointing
+> at custom endpoints are creatable from the UI (backend fully
+> supports them; uncollected fields are preserved on save since
+> `ca4b4a5`).
 
 **Goal:** score agent versions against test sets, using the data Phase 1
 already persists — no new instrumentation needed.
@@ -474,12 +484,15 @@ version comparison).
 
 ## S12 — Richer memory
 
-> **Planned 2026-09-14** (planning session; no S12 code exists yet —
-> this record pins the verified design before the build). Design pinned
-> in `docs/adr/0016-richer-memory.md` (D45–D47 in decisions.md), commit
-> sequence in `docs/implementation-plan-s12.md`. Key deltas from the
-> sketch below, all verified against code before writing: the rolling
-> summary is conversation STATE, not a new message role (`summary` +
+> **Shipped 2026-09-15** (commits `7f7bf39..ede998a` + test `5599346`;
+> the joint S12+S11 manual session ran all sections green — one demo
+> find, not a bug: cross-run scratchpad recall requires the runs to
+> agree on the key, live notes in `docs/walkthrough-s12.md` §8). As
+> planned: design pinned in `docs/adr/0016-richer-memory.md` (D45–D47
+> in decisions.md), commit sequence in
+> `docs/implementation-plan-s12.md`. Key deltas from the sketch below,
+> all verified against code before writing: the rolling summary is
+> conversation STATE, not a new message role (`summary` +
 > `summarized_count` columns — the `message_role` enum stays frozen);
 > compaction is ONE `generate()` through the agent's already-resolved
 > client at the D28 site, usage counted, and a summarizer ModelError
