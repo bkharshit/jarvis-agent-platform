@@ -43,8 +43,9 @@ from jarvis.api.schemas import (
     VersionSummary,
 )
 from jarvis.api.sse import SSE_HEADERS, parse_last_event_id
-from jarvis.domain.agent import AgentDefinition, AgentVersion
+from jarvis.domain.agent import AgentDefinition, AgentVersion, ToolBinding
 from jarvis.domain.execution import RunResult
+from jarvis.tools.subagents.provider import is_family_binding
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -73,7 +74,136 @@ async def _detail(auth: AuthContext, definition: AgentDefinition) -> AgentDetail
             VersionSummary(version=v.version, id=v.id, label=v.label, created_at=v.created_at)
             for v in versions
         ],
+        lints=await _lints(auth, definition),
     )
+
+
+# --- sub-agent publish pinning (S14, ADR 0018 §1, the D42 pattern) --------------
+
+
+def _family_bindings(definition: AgentDefinition) -> list[ToolBinding]:
+    return [b for b in definition.tools if is_family_binding(b.name)]
+
+
+async def _pin_family_bindings(
+    auth: AuthContext, agent_id: str, definition: AgentDefinition
+) -> AgentDefinition:
+    """D51: freeze every `sub__`/`handoff__` binding's `agent_version_id` to
+    the target's LATEST published version at publish time — the snapshot's
+    meaning never changes under it (the `_pin_agent_versions` pattern, D42
+    transposed to agents). The client NEVER supplies a pin: the route
+    overwrites `config.agent_version_id` on every publish, never trusts it.
+    A target with no published version — or invisible to this tenant (D29:
+    the same read) — is a 422, not a lint: publishing an unrunnable snapshot
+    would fail honestly at run time instead."""
+    bindings = definition.tools
+    if not any(is_family_binding(b.name) for b in bindings):
+        return definition
+    pinned: list[ToolBinding] = []
+    for binding in bindings:
+        config = binding.config
+        if not is_family_binding(binding.name):
+            pinned.append(binding)
+            continue
+        target_id = config.get("agent_id")
+        if not isinstance(target_id, str) or not target_id:
+            raise ApiError(
+                422,
+                "validation",
+                f"tool {binding.name!r} carries no agent_id in its config — "
+                "the sub-agent identity is the config's agent_id, never the name",
+            )
+        if target_id == agent_id:
+            raise ApiError(
+                422,
+                "validation",
+                f"tool {binding.name!r} binds agent {agent_id!r} to itself",
+            )
+        version = await auth.agents.latest_version(target_id)
+        if version is None:
+            raise ApiError(
+                422,
+                "validation",
+                f"tool {binding.name!r} pins agent {target_id!r}, which has no "
+                "published version (or is invisible to this tenant)",
+            )
+        pinned.append(
+            binding.model_copy(update={"config": {**config, "agent_version_id": version.id}})
+        )
+    # model_copy skips re-validation — rebuild so the snapshot holds typed
+    # bindings, not raw dicts (the workflow pinning's rebuild discipline).
+    return AgentDefinition.model_validate(
+        {**definition.model_dump(), "tools": [b.model_dump() for b in pinned]}
+    )
+
+
+async def _ensure_acyclic(auth: AuthContext, definition: AgentDefinition) -> None:
+    """D51 defense-in-depth: walk the pinned sub-graph over immutable
+    snapshots and 422 on a cycle. With pins always latest-at-publish and
+    versions immutable the graph is acyclic by construction — this walk
+    survives any future relaxation of the overwrite rule; the runtime depth
+    cap (D55) is the second belt."""
+    state: dict[str, int] = {}  # 1 = visiting, 2 = done
+
+    async def visit(agent_id: str, bindings: list[ToolBinding]) -> None:
+        if state.get(agent_id) == 1:
+            raise ApiError(422, "validation", f"sub-agent cycle through {agent_id!r}")
+        if state.get(agent_id) == 2:
+            return
+        state[agent_id] = 1
+        for binding in bindings:
+            if not is_family_binding(binding.name):
+                continue
+            target_id = binding.config.get("agent_id")
+            if not isinstance(target_id, str) or not target_id:
+                continue  # the pinning step 422s this before the walk
+            pin = binding.config.get("agent_version_id")
+            if isinstance(pin, str) and pin:
+                version = await auth.agents.get_version_by_id(pin)
+            else:
+                version = await auth.agents.latest_version(target_id)
+            if version is None:
+                continue  # the pinned graph ends here
+            await visit(target_id, version.snapshot.tools)
+        state[agent_id] = 2
+
+    await visit(definition.id, definition.tools)
+
+
+async def _lints(auth: AuthContext, definition: AgentDefinition) -> list[str]:
+    """Publish lints (ADR 0018 §5) — stale sub-agent pins (a newer version
+    exists, or the pinned target has no published version at all) and
+    memory-enabled children (children run memory-less — session_id=None).
+    Warnings, never failures: versions are immutable, a stale pin still
+    replays exactly what it pinned (D1)."""
+    lints: list[str] = []
+    for binding in _family_bindings(definition):
+        name = binding.name
+        target_id = binding.config.get("agent_id")
+        if not isinstance(target_id, str) or not target_id:
+            lints.append(f"tool {name!r} carries no agent_id in its config")
+            continue
+        latest = await auth.agents.latest_version(target_id)
+        if latest is None:
+            lints.append(
+                f"tool {name!r} pins agent {target_id!r}, which has no published "
+                "version (or is invisible to this tenant)"
+            )
+            continue
+        pin = binding.config.get("agent_version_id")
+        if not isinstance(pin, str) or pin != latest.id:
+            lints.append(
+                f"tool {name!r} pins a stale version of agent {target_id!r} — "
+                "republish to pin the latest"
+            )
+            continue
+        pinned = await auth.agents.get_version_by_id(pin)
+        if pinned is not None and pinned.snapshot.memory.enabled:
+            lints.append(
+                f"tool {name!r} pins memory-enabled agent {target_id!r} — children "
+                "run memory-less (no shared session)"
+            )
+    return lints
 
 
 def _definition_from_create(req: AgentUpsertRequest, agent_id: str) -> AgentDefinition:
@@ -131,6 +261,8 @@ async def create_agent(
 ) -> AgentDetail:
     definition = _definition_from_create(req, agent_id=str(uuid4()))
     _validate_strategy_type(container, definition.strategy.type)
+    definition = await _pin_family_bindings(auth, definition.id, definition)
+    await _ensure_acyclic(auth, definition)
     try:
         await auth.agents.create(definition)
     except IntegrityError:
@@ -179,6 +311,8 @@ async def update_agent(
     updated = AgentDefinition.model_validate(
         {**definition.model_dump(), **payload, "updated_at": datetime.now(UTC)}
     )
+    updated = await _pin_family_bindings(auth, updated.id, updated)
+    await _ensure_acyclic(auth, updated)
     try:
         version = await auth.agents.update_and_publish(updated)
     except IntegrityError:

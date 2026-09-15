@@ -106,6 +106,11 @@ class TenantScopedAgents:
     async def get_version(self, agent_id: str, version: int) -> AgentVersion | None:
         return await self._inner.get_version(agent_id, version, tenant_id=self._tenant_id)
 
+    async def get_version_by_id(self, version_id: str) -> AgentVersion | None:
+        # Unscoped by design: the id is an unguessable immutable snapshot —
+        # the publish-pin loader (D51), same as the worker's version loader.
+        return await self._inner.get_version_by_id(version_id)
+
     async def latest_version(self, agent_id: str) -> AgentVersion | None:
         return await self._inner.latest_version(agent_id, tenant_id=self._tenant_id)
 

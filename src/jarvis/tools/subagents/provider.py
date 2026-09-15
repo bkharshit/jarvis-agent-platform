@@ -31,6 +31,14 @@ from jarvis.tools.mcp.errors import SubAgentResolutionError
 logger = logging.getLogger("jarvis.tools.subagents")
 
 SUB_PREFIX = "sub__"
+HANDOFF_PREFIX = "handoff__"
+FAMILY_PREFIXES = (SUB_PREFIX, HANDOFF_PREFIX)
+
+
+def is_family_binding(name: str) -> bool:
+    """True for any `sub__`/`handoff__` binding — the publish pinning,
+    lint, and cycle walks key off this, never off the suffix text."""
+    return name.startswith(FAMILY_PREFIXES)
 
 
 class SubAgentError(Exception):
@@ -48,11 +56,15 @@ class _ChildCancelled(ExecutionCancelled):
 
 class SubAgentRepo(Protocol):
     """Structural view of the agent repo: tenant-scoped latest published
-    version (D29 — a foreign sub-agent reads as absent)."""
+    version (D29 — a foreign sub-agent reads as absent) plus the frozen
+    snapshot loader the server-stamped pin resolves through (D51 — the
+    worker's AgentVersionLoader pattern)."""
 
     async def latest_version(
         self, agent_id: str, *, tenant_id: str | None = None
     ) -> AgentVersion | None: ...
+
+    async def get_version_by_id(self, version_id: str) -> AgentVersion | None: ...
 
 
 class ChildRunQueue(Protocol):
@@ -261,9 +273,30 @@ class SubAgentToolProvider:
                     binding.name,
                     "binding config carries no agent_id (the pin is stamped by PATCH /v1/agents)",
                 )
-            # D29: the tenant-scoped read — a foreign agent reads as absent,
-            # exactly like a missing one.
-            version = await self._agents.latest_version(agent_id, tenant_id=ctx.tenant_id)
+            # D51: the server-stamped pin resolves the frozen snapshot the
+            # parent pinned at publish (D1 replay fidelity). The client never
+            # supplies a pin (the route overwrites config), so trusting it
+            # here IS trusting the server. A pin-less config (legacy/manual)
+            # falls back to the tenant-scoped latest published version.
+            pin = binding.config.get("agent_version_id")
+            if isinstance(pin, str) and pin:
+                version = await self._agents.get_version_by_id(pin)
+                if version is None:
+                    raise SubAgentResolutionError(
+                        binding.name,
+                        f"pinned version {pin!r} of agent {agent_id!r} not found — "
+                        "republish the parent agent to re-stamp its pins",
+                    )
+                if version.agent_id != agent_id:
+                    raise SubAgentResolutionError(
+                        binding.name,
+                        f"pinned version {pin!r} belongs to agent {version.agent_id!r}, "
+                        f"not {agent_id!r}",
+                    )
+            else:
+                # D29: the tenant-scoped read — a foreign agent reads as
+                # absent, exactly like a missing one.
+                version = await self._agents.latest_version(agent_id, tenant_id=ctx.tenant_id)
             if version is None:
                 raise SubAgentResolutionError(
                     binding.name,
@@ -316,7 +349,10 @@ class SubAgentToolProvider:
 
 
 __all__ = [
+    "FAMILY_PREFIXES",
+    "HANDOFF_PREFIX",
     "SUB_PREFIX",
+    "is_family_binding",
     "ChildEventStream",
     "ChildRunQueue",
     "SubAgentError",

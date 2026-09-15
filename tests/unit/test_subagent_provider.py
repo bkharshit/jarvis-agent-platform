@@ -34,10 +34,18 @@ class FakeAgents:
     def __init__(self, versions: dict[str, AgentVersion]):
         self._versions = versions
         self.lookups: list[tuple[str, str | None]] = []
+        self.pinned_lookups: list[str] = []
 
     async def latest_version(self, agent_id: str, *, tenant_id: str | None = None):
         self.lookups.append((agent_id, tenant_id))
         return self._versions.get(agent_id)
+
+    async def get_version_by_id(self, version_id: str):
+        self.pinned_lookups.append(version_id)
+        for version in self._versions.values():
+            if version.id == version_id:
+                return version
+        return None
 
 
 class FakeExecutions:
@@ -178,6 +186,65 @@ class TestProviderResolution:
             [_BINDING], _parent_ctx(metadata={"sub_agent": {"depth": 1}})
         )
         assert tooling.tools[0]._parent_depth == 1
+
+    async def test_server_stamped_pin_resolves_the_frozen_snapshot(self):
+        """D51: a config pin resolves via get_version_by_id — replay
+        fidelity (D1), never a latest-version drift."""
+        version = _target_version()
+        agents = FakeAgents({"worker": version})
+        tooling = await _provider(agents).resolve(
+            [
+                ToolBinding(
+                    name="sub__worker",
+                    config={"agent_id": "worker", "agent_version_id": version.id},
+                )
+            ],
+            _parent_ctx(),
+        )
+        assert agents.pinned_lookups == [version.id]
+        assert agents.lookups == []  # the pin short-circuits the latest read
+        assert tooling.tools[0]._version_id == version.id
+
+    async def test_pin_for_a_missing_version_is_an_honest_resolution_error(self):
+        with pytest.raises(SubAgentResolutionError, match="pinned version"):
+            await _provider().resolve(
+                [
+                    ToolBinding(
+                        name="sub__worker",
+                        config={"agent_id": "worker", "agent_version_id": "gone"},
+                    )
+                ],
+                _parent_ctx(),
+            )
+
+    async def test_pin_belonging_to_another_agent_is_an_honest_resolution_error(self):
+        foreign = AgentVersion(
+            id="ver-other", agent_id="other", version=1, snapshot=_target_version().snapshot
+        )
+        with pytest.raises(SubAgentResolutionError, match="belongs to agent"):
+            await _provider(FakeAgents({"worker": foreign})).resolve(
+                [
+                    ToolBinding(
+                        name="sub__worker",
+                        config={"agent_id": "worker", "agent_version_id": "ver-other"},
+                    )
+                ],
+                _parent_ctx(),
+            )
+
+    async def test_pinless_config_falls_back_to_the_tenant_scoped_latest(self):
+        version = _target_version()
+        agents = FakeAgents({"worker": version})
+        await _provider(agents).resolve([_BINDING], _parent_ctx())
+        assert agents.lookups == [("worker", "t1")]
+        assert agents.pinned_lookups == []
+
+    async def test_is_family_binding_covers_both_prefixes(self):
+        from jarvis.tools.subagents.provider import HANDOFF_PREFIX, is_family_binding
+
+        assert is_family_binding("sub__worker")
+        assert is_family_binding(f"{HANDOFF_PREFIX}worker")
+        assert not is_family_binding("calculator")
 
 
 # --- the tool call --------------------------------------------------------------

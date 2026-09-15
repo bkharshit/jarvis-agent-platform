@@ -79,6 +79,7 @@ class VersionSummary(_Model):
 class AgentDetail(_Model):
     definition: AgentDefinition
     versions: list[VersionSummary]
+    lints: list[str] = Field(default_factory=list)
 
 
 class AgentList(_Model):

@@ -110,3 +110,121 @@ async def test_delete_without_executions(client):
     resp = await client.delete(f"/v1/agents/{agent_id}")
     assert resp.status_code == 204
     assert (await client.get(f"/v1/agents/{agent_id}")).status_code == 404
+
+
+# --- S14 (ADR 0018 §1): sub-agent publish pinning -------------------------------
+
+
+async def _create_worker(client, **overrides) -> tuple[str, str]:
+    body = {
+        "name": f"worker-{overrides.get('name', 'a')}",
+        "model": {"provider": "mock", "model": "mock-model"},
+        "strategy": {"type": "function_calling"},
+        **overrides,
+    }
+    resp = await client.post("/v1/agents", json=body)
+    assert resp.status_code == 201
+    detail = resp.json()
+    return detail["definition"]["id"], detail["versions"][0]["id"]
+
+
+def _supervisor_body(worker_id: str, pin: str | None = "client-garbage") -> dict:
+    config = {"agent_id": worker_id}
+    if pin is not None:
+        config["agent_version_id"] = pin
+    return {
+        "name": "supervisor",
+        "model": {"provider": "mock", "model": "mock-model"},
+        "strategy": {"type": "function_calling"},
+        "tools": [{"name": "sub__worker", "config": config}],
+    }
+
+
+@pytest.mark.db
+async def test_publish_overwrites_client_pins_with_server_stamps(client):
+    worker_id, worker_version = await _create_worker(client)
+    resp = await client.post("/v1/agents", json=_supervisor_body(worker_id))
+    assert resp.status_code == 201
+    binding = resp.json()["definition"]["tools"][0]
+    # D51: the client's garbage pin was overwritten, never trusted
+    assert binding["config"]["agent_version_id"] == worker_version
+    assert binding["config"]["agent_id"] == worker_id
+
+
+@pytest.mark.db
+async def test_binding_without_agent_id_422s(client):
+    resp = await client.post("/v1/agents", json=_supervisor_body("whatever", pin=None))
+    assert resp.status_code == 422
+    assert "sub__worker" in resp.json()["error"]["message"]
+
+
+@pytest.mark.db
+async def test_binding_to_unpublished_or_foreign_agent_422s(client):
+    resp = await client.post("/v1/agents", json=_supervisor_body("no-such-agent"))
+    assert resp.status_code == 422
+    assert "no-such-agent" in resp.json()["error"]["message"]
+
+
+@pytest.mark.db
+async def test_self_binding_422s(client):
+    # a create-time binding cannot know the server-generated id — the
+    # direct self-binding is a PATCH: agent X binds agent X
+    agent_id = (await client.post("/v1/agents", json=CREATE_BODY)).json()["definition"]["id"]
+    resp = await client.patch(
+        f"/v1/agents/{agent_id}",
+        json={"tools": [{"name": "sub__crud-agent", "config": {"agent_id": agent_id}}]},
+    )
+    assert resp.status_code == 422
+    assert "itself" in resp.json()["error"]["message"]
+
+
+@pytest.mark.db
+async def test_cycle_422s_at_publish(client):
+    # A publishes binding B; then A republishes binding B while B binds back
+    # to A — the A→B→A cycle is refused at A's republish
+    agent_a, _ = await _create_worker(client, name="cycle-a")
+    body_b = {
+        "name": "cycle-b",
+        "model": {"provider": "mock", "model": "mock-model"},
+        "strategy": {"type": "function_calling"},
+        "tools": [{"name": "sub__worker-cycle-a", "config": {"agent_id": agent_a}}],
+    }
+    resp = await client.post("/v1/agents", json=body_b)
+    assert resp.status_code == 201
+    agent_b = resp.json()["definition"]["id"]
+    cycle_body = {
+        "name": "cycle-a",
+        "model": {"provider": "mock", "model": "mock-model"},
+        "strategy": {"type": "function_calling"},
+        "tools": [{"name": "sub__cycle-b", "config": {"agent_id": agent_b}}],
+    }
+    resp = await client.patch(f"/v1/agents/{agent_a}", json=cycle_body)
+    assert resp.status_code == 422
+    assert "cycle" in resp.json()["error"]["message"]
+
+
+@pytest.mark.db
+async def test_stale_pin_lint_after_target_republish(client):
+    worker_id, _ = await _create_worker(client)
+    sup_id = (await client.post("/v1/agents", json=_supervisor_body(worker_id))).json()[
+        "definition"
+    ]["id"]
+    detail = (await client.get(f"/v1/agents/{sup_id}")).json()
+    assert detail["lints"] == []
+    # republish the worker — the supervisor's pin is now stale (a warning,
+    # never a failure)
+    await client.patch(f"/v1/agents/{worker_id}", json={"description": "v2"})
+    detail = (await client.get(f"/v1/agents/{sup_id}")).json()
+    assert len(detail["lints"]) == 1
+    assert "stale" in detail["lints"][0]
+
+
+@pytest.mark.db
+async def test_memory_on_child_lint(client):
+    worker_id, worker_version = await _create_worker(client, memory={"enabled": True})
+    sup_id = (await client.post("/v1/agents", json=_supervisor_body(worker_id))).json()[
+        "definition"
+    ]["id"]
+    detail = (await client.get(f"/v1/agents/{sup_id}")).json()
+    assert len(detail["lints"]) == 1
+    assert "memory" in detail["lints"][0]
