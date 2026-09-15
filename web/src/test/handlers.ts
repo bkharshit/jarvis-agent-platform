@@ -194,6 +194,60 @@ export const mcpProbeFixture = {
   ],
 };
 
+// --- evaluations (S11, ADR 0017) ------------------------------------------
+
+/** A dataset snapshot as the API returns it (D48 — cases live in JSONB). */
+export const evalDatasetFixture = {
+  id: "ds-1",
+  name: "smoke-dataset",
+  description: "",
+  cases: [{ id: "c-1", input: "say hi", expected: "hi" }],
+  scorers: [{ name: "exact" as const }],
+  judge_model: null,
+  created_at: "2026-09-14T12:00:00Z",
+  updated_at: "2026-09-14T12:00:00Z",
+};
+
+export const evalRunSummaryFixture = {
+  id: "evalrun-1",
+  dataset_id: evalDatasetFixture.id,
+  agent_id: agentFixture.id,
+  agent_version_id: versionSummaryFixture.id,
+  status: "completed" as const,
+  created_at: "2026-09-14T13:00:00Z",
+};
+
+export const evalResultFixture = {
+  id: "res-1",
+  eval_run_id: evalRunSummaryFixture.id,
+  case_id: "c-1",
+  run_id: runFixture.run_id,
+  scores: [{ scorer: "exact", passed: true, score: 1, detail: "matched" }],
+  error: null,
+  scored_at: "2026-09-14T13:00:05Z",
+};
+
+export const evalRunDetailFixture = {
+  ...evalRunSummaryFixture,
+  dataset: evalDatasetFixture,
+  results: [evalResultFixture],
+};
+
+export const evalCompareFixture = {
+  agent_id: agentFixture.id,
+  versions: [
+    {
+      agent_version_id: versionSummaryFixture.id,
+      runs: 1,
+      cases: 1,
+      scored: 1,
+      passed: 1,
+      pass_rate: 1,
+      scorers: [{ scorer: "exact", scored: 1, passed: 1, mean: 1 }],
+    },
+  ],
+};
+
 export const handlers = [
   http.get("/v1/agents", () => HttpResponse.json({ items: agentsFixture })),
   http.post("/v1/agents", () => HttpResponse.json({ definition: agentFixture, versions: [] }, { status: 201 })),
@@ -355,7 +409,7 @@ export const handlers = [
           summary: "DAG runs reusing the same event model",
         },
         knowledge: { enabled: false, stage: "S8", summary: "Datasets and retrieval" },
-        evaluations: { enabled: false, stage: "S11", summary: "Datasets, runs, and scores" },
+        evaluations: { enabled: true, summary: "Datasets, runs, and scores" },
         observability: { enabled: false, stage: "S7", summary: "Traces and spans" },
         plugins: { enabled: false, stage: "S3", summary: "Strategy plugins" },
         triggers: { enabled: false, stage: "S13", summary: "Cron, webhook, and event rules" },
@@ -366,6 +420,59 @@ export const handlers = [
         },
       },
     });
+  }),
+  // --- evaluations (S11, ADR 0017) ------------------------------------------
+  http.get("/v1/evaluations/datasets", () =>
+    HttpResponse.json({ items: [evalDatasetFixture] }),
+  ),
+  http.post("/v1/evaluations/datasets", async ({ request }) => {
+    const body = (await request.json()) as Partial<typeof evalDatasetFixture>;
+    return HttpResponse.json(
+      { ...evalDatasetFixture, ...body, id: "ds-2" },
+      { status: 201 },
+    );
+  }),
+  http.get("/v1/evaluations/datasets/:dataset_id", ({ params }) => {
+    const { dataset_id } = params as { dataset_id: string };
+    if (dataset_id === evalDatasetFixture.id) {
+      return HttpResponse.json(evalDatasetFixture);
+    }
+    return HttpResponse.json(
+      { error: { kind: "not_found", message: `dataset ${dataset_id} not found` } },
+      { status: 404 },
+    );
+  }),
+  http.patch("/v1/evaluations/datasets/:dataset_id", async ({ request }) =>
+    HttpResponse.json(await request.json()),
+  ),
+  http.delete("/v1/evaluations/datasets/:dataset_id", () =>
+    new HttpResponse(null, { status: 204 }),
+  ),
+  http.post("/v1/evaluations/datasets/:dataset_id/runs", () =>
+    HttpResponse.json(evalRunSummaryFixture, { status: 202 }),
+  ),
+  http.get("/v1/evaluations/runs", () =>
+    HttpResponse.json({ items: [evalRunSummaryFixture] }),
+  ),
+  http.get("/v1/evaluations/runs/:run_id", ({ params }) => {
+    const { run_id } = params as { run_id: string };
+    if (run_id === evalRunSummaryFixture.id) {
+      return HttpResponse.json(evalRunDetailFixture);
+    }
+    return HttpResponse.json(
+      { error: { kind: "not_found", message: `eval run ${run_id} not found` } },
+      { status: 404 },
+    );
+  }),
+  http.get("/v1/evaluations/compare", ({ request }) => {
+    const url = new URL(request.url);
+    if (url.searchParams.get("agent_id") === agentFixture.id) {
+      return HttpResponse.json(evalCompareFixture);
+    }
+    return HttpResponse.json(
+      { error: { kind: "validation", message: "agent_id required" } },
+      { status: 422 },
+    );
   }),
   // --- auth (S2) ----------------------------------------------------------
   http.get("/v1/auth/whoami", () => HttpResponse.json(whoamiFixture)),

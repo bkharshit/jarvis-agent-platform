@@ -15,6 +15,10 @@ import { SettingsPage } from "@/sections/settings/SettingsPage";
 import { WorkflowsList } from "@/sections/workflows/WorkflowsList";
 import { WorkflowEditorPage } from "@/sections/workflows/WorkflowEditor";
 import { WorkflowRunConsole } from "@/sections/workflows/WorkflowRunConsole";
+import { EvalCompare } from "@/sections/evaluations/EvalCompare";
+import { EvalDatasetDetail } from "@/sections/evaluations/EvalDatasetDetail";
+import { EvalRunDetail } from "@/sections/evaluations/EvalRunDetail";
+import { EvaluationsList } from "@/sections/evaluations/EvaluationsList";
 
 import { SectionGate } from "@/capabilities/SectionGate";
 import type { SectionKey } from "@/capabilities/sectionRegistry";
@@ -65,7 +69,13 @@ export function sectionRoutes() {
     { path: "/workflows/:workflowId/run", element: gated("workflows", <WorkflowRunConsole />) },
     { path: "/workflows/:workflowId", element: gated("workflows", <WorkflowEditorPage />) },
     { path: "/knowledge", element: gated("knowledge") },
-    { path: "/evaluations", element: gated("evaluations") },
+    { path: "/evaluations", element: gated("evaluations", <EvaluationsList />) },
+    { path: "/evaluations/compare", element: gated("evaluations", <EvalCompare />) },
+    {
+      path: "/evaluations/datasets/:datasetId",
+      element: gated("evaluations", <EvalDatasetDetail />),
+    },
+    { path: "/evaluations/runs/:runId", element: gated("evaluations", <EvalRunDetail />) },
     { path: "/observability", element: gated("observability") },
     { path: "/plugins", element: gated("plugins", <PluginsPage />) },
     { path: "/triggers", element: gated("triggers") },

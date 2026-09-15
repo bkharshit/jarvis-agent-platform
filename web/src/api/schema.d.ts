@@ -175,6 +175,111 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/evaluations/datasets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Datasets */
+        get: operations["list_datasets_v1_evaluations_datasets_get"];
+        put?: never;
+        /** Create Dataset */
+        post: operations["create_dataset_v1_evaluations_datasets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/evaluations/datasets/{dataset_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Dataset */
+        get: operations["get_dataset_v1_evaluations_datasets__dataset_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Dataset */
+        delete: operations["delete_dataset_v1_evaluations_datasets__dataset_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Dataset */
+        patch: operations["update_dataset_v1_evaluations_datasets__dataset_id__patch"];
+        trace?: never;
+    };
+    "/v1/evaluations/datasets/{dataset_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Run */
+        post: operations["create_run_v1_evaluations_datasets__dataset_id__runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/evaluations/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Runs */
+        get: operations["list_runs_v1_evaluations_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/evaluations/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run */
+        get: operations["get_run_v1_evaluations_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/evaluations/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Compare */
+        get: operations["compare_v1_evaluations_compare_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/executions": {
         parameters: {
             query?: never;
@@ -928,6 +1033,209 @@ export interface components {
             type: "env";
             /** Env Var */
             env_var: string;
+        };
+        /**
+         * EvalCase
+         * @description One test input. `id` is a stable uuid the results reference —
+         *     cases live inside the dataset's JSONB snapshot (D48), so this id is
+         *     the join key, not a foreign key into a cases table.
+         */
+        EvalCase: {
+            /** Id */
+            id: string;
+            /** Input */
+            input: string;
+            /** Expected */
+            expected?: string | null;
+            /** Variables */
+            variables?: {
+                [key: string]: string;
+            };
+        };
+        /**
+         * EvalCompareResponse
+         * @description GET /evaluations/compare?agent_id= — version comparison is a query,
+         *     not a feature: runs + results aggregated per agent_version_id.
+         */
+        EvalCompareResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Versions */
+            versions: components["schemas"]["EvalVersionCompare"][];
+        };
+        /**
+         * EvalDataset
+         * @description A named set of cases + scorers (+ optional judge model).
+         */
+        EvalDataset: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Cases */
+            cases: components["schemas"]["EvalCase"][];
+            /** Scorers */
+            scorers: components["schemas"]["ScorerConfig"][];
+            judge_model?: components["schemas"]["ModelRef"] | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at?: string;
+        };
+        /**
+         * EvalDatasetList
+         * @description GET /evaluations/datasets — responses reuse the domain model.
+         */
+        EvalDatasetList: {
+            /** Items */
+            items: components["schemas"]["EvalDataset"][];
+        };
+        /**
+         * EvalDatasetUpsert
+         * @description POST/PATCH /evaluations/datasets — the mutable fields wholesale
+         *     (the PATCH discipline). D50: scorers including `llm_judge` without a
+         *     dataset-level `judge_model` is a 422 at this boundary, checked by the
+         *     route against the assembled domain dataset.
+         */
+        EvalDatasetUpsert: {
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Cases */
+            cases: components["schemas"]["EvalCase"][];
+            /** Scorers */
+            scorers: components["schemas"]["ScorerConfig"][];
+            judge_model?: components["schemas"]["ModelRef"] | null;
+        };
+        /**
+         * EvalResult
+         * @description One persisted child-run score line: the case, the ordinary run it
+         *     produced, and the scores (NULL until lazy scoring persisted them —
+         *     D49). `error` carries a scorer-level failure detail.
+         */
+        EvalResult: {
+            /** Id */
+            id: string;
+            /** Eval Run Id */
+            eval_run_id: string;
+            /** Case Id */
+            case_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Scores */
+            scores?: components["schemas"]["Score"][] | null;
+            /** Error */
+            error?: string | null;
+            /** Scored At */
+            scored_at?: string | null;
+        };
+        /**
+         * EvalRunCreate
+         * @description POST /evaluations/datasets/{id}/runs — which agent to evaluate;
+         *     its latest published version is pinned onto every child run.
+         */
+        EvalRunCreate: {
+            /** Agent Id */
+            agent_id: string;
+        };
+        /**
+         * EvalRunDetail
+         * @description GET /evaluations/runs/{id} — the dataset snapshot rides the run (D1:
+         *     the exact inputs the scoring saw); results carry the lazily-persisted
+         *     scores (D49).
+         */
+        EvalRunDetail: {
+            /** Id */
+            id: string;
+            /** Dataset Id */
+            dataset_id: string;
+            /** Agent Id */
+            agent_id: string;
+            /** Agent Version Id */
+            agent_version_id: string;
+            /** Status */
+            status: string;
+            /** Created At */
+            created_at?: string | null;
+            dataset: components["schemas"]["EvalDataset"];
+            /** Results */
+            results: components["schemas"]["EvalResult"][];
+        };
+        /**
+         * EvalRunList
+         * @description GET /evaluations/runs — summaries with derived status (D49).
+         */
+        EvalRunList: {
+            /** Items */
+            items: components["schemas"]["EvalRunSummary"][];
+        };
+        /**
+         * EvalRunSummary
+         * @description One eval run in a listing — `status` is DERIVED at read time from
+         *     the child rows (D49): any non-terminal child means `running`.
+         */
+        EvalRunSummary: {
+            /** Id */
+            id: string;
+            /** Dataset Id */
+            dataset_id: string;
+            /** Agent Id */
+            agent_id: string;
+            /** Agent Version Id */
+            agent_version_id: string;
+            /** Status */
+            status: string;
+            /** Created At */
+            created_at?: string | null;
+        };
+        /**
+         * EvalScorerStats
+         * @description Per-scorer aggregation over one agent version's scored results.
+         */
+        EvalScorerStats: {
+            /** Scorer */
+            scorer: string;
+            /** Scored */
+            scored: number;
+            /** Passed */
+            passed: number;
+            /** Mean */
+            mean?: number | null;
+        };
+        /**
+         * EvalVersionCompare
+         * @description One agent version side of GET /evaluations/compare.
+         */
+        EvalVersionCompare: {
+            /** Agent Version Id */
+            agent_version_id: string;
+            /** Runs */
+            runs: number;
+            /** Cases */
+            cases: number;
+            /** Scored */
+            scored: number;
+            /** Passed */
+            passed: number;
+            /** Pass Rate */
+            pass_rate?: number | null;
+            /** Scorers */
+            scorers: components["schemas"]["EvalScorerStats"][];
         };
         /** EventList */
         EventList: {
@@ -1698,6 +2006,39 @@ export interface components {
              * @default
              */
             input: string;
+        };
+        /**
+         * Score
+         * @description One scorer's verdict on one result. `passed=None` means the scorer
+         *     could not produce a verdict (judge failure — persisted honestly,
+         *     D50); `detail` carries the human explanation either way.
+         */
+        Score: {
+            /** Scorer */
+            scorer: string;
+            /** Passed */
+            passed?: boolean | null;
+            /** Score */
+            score?: number | null;
+            /** Detail */
+            detail?: string | null;
+        };
+        /**
+         * ScorerConfig
+         * @description A scorer by name + params, listed on the dataset (D50). `llm_judge`
+         *     additionally requires a dataset-level `judge_model` — validated at the
+         *     create/update boundary (422), never at run time.
+         */
+        ScorerConfig: {
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "exact" | "contains" | "regex" | "json_schema" | "tool_sequence" | "llm_judge";
+            /** Params */
+            params?: {
+                [key: string]: unknown;
+            };
         };
         /**
          * SectionCapability
@@ -2553,6 +2894,283 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CapabilitiesResponse"];
+                };
+            };
+        };
+    };
+    list_datasets_v1_evaluations_datasets_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalDatasetList"];
+                };
+            };
+        };
+    };
+    create_dataset_v1_evaluations_datasets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvalDatasetUpsert"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalDataset"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_dataset_v1_evaluations_datasets__dataset_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalDataset"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_dataset_v1_evaluations_datasets__dataset_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_dataset_v1_evaluations_datasets__dataset_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvalDatasetUpsert"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalDataset"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_run_v1_evaluations_datasets__dataset_id__runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvalRunCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRunSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_runs_v1_evaluations_runs_get: {
+        parameters: {
+            query?: {
+                agent_id?: string | null;
+                dataset_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRunList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_v1_evaluations_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRunDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compare_v1_evaluations_compare_get: {
+        parameters: {
+            query: {
+                agent_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalCompareResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

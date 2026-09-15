@@ -62,7 +62,7 @@ export const TEST_CAPABILITIES: Capabilities = {
       summary: "DAG runs reusing the same event model",
     },
     knowledge: { enabled: false, stage: "S8", summary: "Datasets and retrieval" },
-    evaluations: { enabled: false, stage: "S11", summary: "Datasets, runs, and scores" },
+    evaluations: { enabled: true, summary: "Datasets, runs, and scores" },
     observability: { enabled: false, stage: "S7", summary: "Traces and spans" },
     plugins: {
       enabled: true,

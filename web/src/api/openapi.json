@@ -474,6 +474,392 @@
         }
       }
     },
+    "/v1/evaluations/datasets": {
+      "get": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "List Datasets",
+        "operationId": "list_datasets_v1_evaluations_datasets_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalDatasetList"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "Create Dataset",
+        "operationId": "create_dataset_v1_evaluations_datasets_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalDatasetUpsert"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalDataset"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/evaluations/datasets/{dataset_id}": {
+      "get": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "Get Dataset",
+        "operationId": "get_dataset_v1_evaluations_datasets__dataset_id__get",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalDataset"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "Update Dataset",
+        "operationId": "update_dataset_v1_evaluations_datasets__dataset_id__patch",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalDatasetUpsert"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalDataset"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "Delete Dataset",
+        "operationId": "delete_dataset_v1_evaluations_datasets__dataset_id__delete",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/evaluations/datasets/{dataset_id}/runs": {
+      "post": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "Create Run",
+        "operationId": "create_run_v1_evaluations_datasets__dataset_id__runs_post",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalRunCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRunSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/evaluations/runs": {
+      "get": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "List Runs",
+        "operationId": "list_runs_v1_evaluations_runs_get",
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent Id"
+            }
+          },
+          {
+            "name": "dataset_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRunList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/evaluations/runs/{run_id}": {
+      "get": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "Get Run",
+        "operationId": "get_run_v1_evaluations_runs__run_id__get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRunDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/evaluations/compare": {
+      "get": {
+        "tags": [
+          "evaluations"
+        ],
+        "summary": "Compare",
+        "operationId": "compare_v1_evaluations_compare_get",
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCompareResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/executions": {
       "get": {
         "tags": [
@@ -2848,6 +3234,495 @@
         "title": "EnvCredentialRef",
         "description": "Credential reference: the *name* of an environment variable \u2014 the\nsecret itself never enters the domain (D18, ADR 0005)."
       },
+      "EvalCase": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "input": {
+            "type": "string",
+            "title": "Input"
+          },
+          "expected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected"
+          },
+          "variables": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Variables"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "input"
+        ],
+        "title": "EvalCase",
+        "description": "One test input. `id` is a stable uuid the results reference \u2014\ncases live inside the dataset's JSONB snapshot (D48), so this id is\nthe join key, not a foreign key into a cases table."
+      },
+      "EvalCompareResponse": {
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "title": "Agent Id"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/EvalVersionCompare"
+            },
+            "type": "array",
+            "title": "Versions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "agent_id",
+          "versions"
+        ],
+        "title": "EvalCompareResponse",
+        "description": "GET /evaluations/compare?agent_id= \u2014 version comparison is a query,\nnot a feature: runs + results aggregated per agent_version_id."
+      },
+      "EvalDataset": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/EvalCase"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Cases"
+          },
+          "scorers": {
+            "items": {
+              "$ref": "#/components/schemas/ScorerConfig"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Scorers"
+          },
+          "judge_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "cases",
+          "scorers"
+        ],
+        "title": "EvalDataset",
+        "description": "A named set of cases + scorers (+ optional judge model)."
+      },
+      "EvalDatasetList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EvalDataset"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "EvalDatasetList",
+        "description": "GET /evaluations/datasets \u2014 responses reuse the domain model."
+      },
+      "EvalDatasetUpsert": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/EvalCase"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Cases"
+          },
+          "scorers": {
+            "items": {
+              "$ref": "#/components/schemas/ScorerConfig"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Scorers"
+          },
+          "judge_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "cases",
+          "scorers"
+        ],
+        "title": "EvalDatasetUpsert",
+        "description": "POST/PATCH /evaluations/datasets \u2014 the mutable fields wholesale\n(the PATCH discipline). D50: scorers including `llm_judge` without a\ndataset-level `judge_model` is a 422 at this boundary, checked by the\nroute against the assembled domain dataset."
+      },
+      "EvalResult": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "eval_run_id": {
+            "type": "string",
+            "title": "Eval Run Id"
+          },
+          "case_id": {
+            "type": "string",
+            "title": "Case Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "scores": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Score"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scores"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "scored_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scored At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "eval_run_id",
+          "case_id",
+          "run_id"
+        ],
+        "title": "EvalResult",
+        "description": "One persisted child-run score line: the case, the ordinary run it\nproduced, and the scores (NULL until lazy scoring persisted them \u2014\nD49). `error` carries a scorer-level failure detail."
+      },
+      "EvalRunCreate": {
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Agent Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "agent_id"
+        ],
+        "title": "EvalRunCreate",
+        "description": "POST /evaluations/datasets/{id}/runs \u2014 which agent to evaluate;\nits latest published version is pinned onto every child run."
+      },
+      "EvalRunDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "dataset_id": {
+            "type": "string",
+            "title": "Dataset Id"
+          },
+          "agent_id": {
+            "type": "string",
+            "title": "Agent Id"
+          },
+          "agent_version_id": {
+            "type": "string",
+            "title": "Agent Version Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "dataset": {
+            "$ref": "#/components/schemas/EvalDataset"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/EvalResult"
+            },
+            "type": "array",
+            "title": "Results"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "dataset_id",
+          "agent_id",
+          "agent_version_id",
+          "status",
+          "dataset",
+          "results"
+        ],
+        "title": "EvalRunDetail",
+        "description": "GET /evaluations/runs/{id} \u2014 the dataset snapshot rides the run (D1:\nthe exact inputs the scoring saw); results carry the lazily-persisted\nscores (D49)."
+      },
+      "EvalRunList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EvalRunSummary"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "EvalRunList",
+        "description": "GET /evaluations/runs \u2014 summaries with derived status (D49)."
+      },
+      "EvalRunSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "dataset_id": {
+            "type": "string",
+            "title": "Dataset Id"
+          },
+          "agent_id": {
+            "type": "string",
+            "title": "Agent Id"
+          },
+          "agent_version_id": {
+            "type": "string",
+            "title": "Agent Version Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "dataset_id",
+          "agent_id",
+          "agent_version_id",
+          "status"
+        ],
+        "title": "EvalRunSummary",
+        "description": "One eval run in a listing \u2014 `status` is DERIVED at read time from\nthe child rows (D49): any non-terminal child means `running`."
+      },
+      "EvalScorerStats": {
+        "properties": {
+          "scorer": {
+            "type": "string",
+            "title": "Scorer"
+          },
+          "scored": {
+            "type": "integer",
+            "title": "Scored"
+          },
+          "passed": {
+            "type": "integer",
+            "title": "Passed"
+          },
+          "mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "scorer",
+          "scored",
+          "passed"
+        ],
+        "title": "EvalScorerStats",
+        "description": "Per-scorer aggregation over one agent version's scored results."
+      },
+      "EvalVersionCompare": {
+        "properties": {
+          "agent_version_id": {
+            "type": "string",
+            "title": "Agent Version Id"
+          },
+          "runs": {
+            "type": "integer",
+            "title": "Runs"
+          },
+          "cases": {
+            "type": "integer",
+            "title": "Cases"
+          },
+          "scored": {
+            "type": "integer",
+            "title": "Scored"
+          },
+          "passed": {
+            "type": "integer",
+            "title": "Passed"
+          },
+          "pass_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pass Rate"
+          },
+          "scorers": {
+            "items": {
+              "$ref": "#/components/schemas/EvalScorerStats"
+            },
+            "type": "array",
+            "title": "Scorers"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "agent_version_id",
+          "runs",
+          "cases",
+          "scored",
+          "passed",
+          "scorers"
+        ],
+        "title": "EvalVersionCompare",
+        "description": "One agent version side of GET /evaluations/compare."
+      },
       "EventList": {
         "properties": {
           "run_id": {
@@ -4702,6 +5577,82 @@
           "agent_version_id"
         ],
         "title": "RunStarted"
+      },
+      "Score": {
+        "properties": {
+          "scorer": {
+            "type": "string",
+            "title": "Scorer"
+          },
+          "passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passed"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "scorer"
+        ],
+        "title": "Score",
+        "description": "One scorer's verdict on one result. `passed=None` means the scorer\ncould not produce a verdict (judge failure \u2014 persisted honestly,\nD50); `detail` carries the human explanation either way."
+      },
+      "ScorerConfig": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "contains",
+              "regex",
+              "json_schema",
+              "tool_sequence",
+              "llm_judge"
+            ],
+            "title": "Name"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "ScorerConfig",
+        "description": "A scorer by name + params, listed on the dataset (D50). `llm_judge`\nadditionally requires a dataset-level `judge_model` \u2014 validated at the\ncreate/update boundary (422), never at run time."
       },
       "SectionCapability": {
         "properties": {
