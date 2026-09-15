@@ -213,10 +213,40 @@ class TestSubAgentToolCall:
         assert message.trace_id == "trace-1"
         assert message.tenant_id == "t1"
         assert message.session_id is None
-        assert message.metadata == {"sub_agent": {"depth": 1}}
+        assert message.metadata == {
+            "sub_agent": {"depth": 1},
+            "auto_decline_approvals": True,
+        }
         assert message.agent_version_id == version.id
         assert stream.subscribed == [message.run_id]
         assert queue.cancels == []
+
+    async def test_completed_child_reports_usage_through_the_context(self):
+        """D54: the child's terminal-event usage rides ToolContext.
+        result_metadata — the ToolRuntime merges it into ToolResult.metadata
+        and the parent's loop folds it into ctx.usage."""
+        version = _target_version()
+        stream = FakeStream(
+            [
+                _event(
+                    RunCompleted,
+                    "child-1",
+                    final_message="done!",
+                    total_usage=Usage(input_tokens=120, output_tokens=80),
+                    iterations=2,
+                )
+            ]
+        )
+        tooling = await _provider(FakeAgents({"worker": version}), stream=stream).resolve(
+            [_BINDING], _parent_ctx()
+        )
+        ctx = _tool_context()
+        await tooling.tools[0].execute({"task": "go"}, ctx)
+        assert ctx.result_metadata["usage"] == {
+            "input_tokens": 120,
+            "output_tokens": 80,
+            "extra": {},
+        }
 
     async def test_failed_child_is_an_honest_error(self):
         version = _target_version()
@@ -343,7 +373,10 @@ class TestSubAgentToolCall:
         ).resolve([_BINDING], _parent_ctx())
         output = await tooling.tools[0].execute({"task": "go"}, _tool_context())
         assert output == "ok"
-        assert executions.written[0][1].metadata == {"sub_agent": {"depth": 1}}
+        assert executions.written[0][1].metadata == {
+            "sub_agent": {"depth": 1},
+            "auto_decline_approvals": True,
+        }
 
 
 def _tool_context(cancel=None):

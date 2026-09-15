@@ -19,6 +19,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 import jsonschema
+from pydantic import ValidationError
 
 from jarvis.domain.agent import AgentDefinition, AgentVersion, ToolBinding
 from jarvis.domain.events import (
@@ -37,8 +38,8 @@ from jarvis.domain.events import (
     ToolCallStarted,
 )
 from jarvis.domain.execution import ExecutionCancelled, ExecutionContext, RunResult
-from jarvis.domain.message import Message, ToolCall
-from jarvis.domain.tools import ToolContext, ToolDescriptor
+from jarvis.domain.message import Message, ToolCall, Usage
+from jarvis.domain.tools import ToolContext, ToolDescriptor, ToolResult
 from jarvis.events.bus import InProcessEventBus, InProcessEventSink
 from jarvis.models.errors import ModelAbortedError, ModelError
 from jarvis.ports.model import ModelClient, ModelProviderFactory
@@ -65,6 +66,20 @@ from jarvis.tools.subagents.provider import SUB_PREFIX, SubAgentToolProvider
 ErrorKind = Literal["max_iterations", "timeout", "model", "tool", "output_schema", "strategy"]
 
 DEFAULT_AWAITING_INPUT_TIMEOUT_SECONDS = 86_400.0
+
+# S14 (D55): children never pause. The two refusal copies are parameterized
+# by who declined: the human on the approval path (byte-identical copy), and
+# the child's own non-interactivity (auto-decline, same shape).
+_USER_DECLINE_COPY = (
+    "The user declined this tool call, so it did not run. "
+    "Do not call this tool again for this request — "
+    "continue without it and answer from what you know."
+)
+_AUTO_DECLINE_COPY = (
+    "No human approver is available in this run, so this call was not "
+    "executed. Continue without it and answer from what you know."
+)
+_AUTO_ANSWER = "No human is available in this run — proceed from what you know."
 
 
 @dataclass
@@ -423,6 +438,7 @@ class AgentRuntime:
                     )
 
             batch_refusals: set[str] | None = None
+            auto_refusals: set[str] | None = None  # S14 (D55): child non-interactivity
             if entry == "batch":
                 # S10 (ADR 0010 §4): the approved (or refused) batch executes
                 # inside the paused iteration — its IterationStarted is already
@@ -506,6 +522,20 @@ class AgentRuntime:
                     )
 
                 if isinstance(step, AskHumanStep):
+                    if _auto_decline(ctx):
+                        # S14 (D55): a child never pauses — the ask
+                        # auto-answers, the loop continues; re-asks are
+                        # capped by the iteration limits at the loop top.
+                        answer = Message(role="user", content=_AUTO_ANSWER)
+                        messages.append(answer)
+                        await self._save_message(ctx, answer)
+                        if conversation_id and self._conversations is not None:
+                            await self._conversations.append_message(
+                                conversation_id, answer, ctx.run_id
+                            )
+                        await self._iteration_done(sink, ctx, iteration)
+                        iteration += 1
+                        continue
                     # S10 (ADR 0010 §3.2): the strategy wants a human answer. The
                     # assistant message is already persisted; pause the run.
                     return await self._pause(
@@ -536,23 +566,37 @@ class AgentRuntime:
                     for call in step.tool_calls
                     if self._approval_required(bindings, descriptors, call.name)
                 ]
+                auto_refusals = None
                 if gated:
-                    return await self._pause(
-                        sink,
-                        ctx,
-                        PauseOutcome(reason="tool_approval", pending_calls=gated),
-                        iteration,
-                    )
+                    if _auto_decline(ctx):
+                        # S14 (D55): a child never pauses — the gated subset
+                        # takes the decline branch with the auto-decline copy;
+                        # the ungated remainder still executes.
+                        auto_refusals = {call.id for call in gated}
+                    else:
+                        return await self._pause(
+                            sink,
+                            ctx,
+                            PauseOutcome(reason="tool_approval", pending_calls=gated),
+                            iteration,
+                        )
                 calls = step.tool_calls
                 batch_refusals = None
 
             for call in calls:
+                refusal_copy: str | None = None
                 if batch_refusals and call.id in batch_refusals:
                     # S10/ADR 0011 §3: the human declined this call — the
                     # declined event records the *decision* (no
                     # started/completed; it never ran), the refusal tool
                     # message closes it in the model's context. Ungated
                     # calls in the batch still execute.
+                    refusal_copy = _USER_DECLINE_COPY
+                elif auto_refusals and call.id in auto_refusals:
+                    # S14 (D55): the child's non-interactivity declined it —
+                    # same decision event, the child's refusal copy.
+                    refusal_copy = _AUTO_DECLINE_COPY
+                if refusal_copy is not None:
                     await sink.append(
                         ToolCallDeclined(
                             event_id=_uuid(),
@@ -564,11 +608,7 @@ class AgentRuntime:
                     )
                     tool_message = Message(
                         role="tool",
-                        content=(
-                            "The user declined this tool call, so it did not run. "
-                            "Do not call this tool again for this request — "
-                            "continue without it and answer from what you know."
-                        ),
+                        content=refusal_copy,
                         tool_call_id=call.id,
                         name=call.name,
                     )
@@ -602,6 +642,7 @@ class AgentRuntime:
                         tenant_id=ctx.tenant_id,
                     ),
                 )
+                _fold_usage(ctx, result)
                 tool_message = Message(
                     role="tool",
                     content=result.output,
@@ -1195,6 +1236,28 @@ class AgentRuntime:
         return McpTooling(
             registry=self._tools, tool_runtime=self._tool_runtime, aclose=_no_op_close
         )
+
+
+def _auto_decline(ctx: ExecutionContext) -> bool:
+    """S14 (D55): a sub-agent child never pauses — its queue message rides
+    `auto_decline_approvals: true` in metadata, and the worker threads
+    message.metadata into ctx.metadata."""
+    return bool(ctx.metadata.get("auto_decline_approvals"))
+
+
+def _fold_usage(ctx: ExecutionContext, result: ToolResult) -> None:
+    """S14 (D54): a tool-reported usage (the sub-agent family reports the
+    child's RunCompleted.total_usage in metadata['usage']) folds into the
+    run's total — `RunLimits.exceeded` at the next iteration top clamps the
+    whole tree. A malformed report is advisory — it never fails the call."""
+    report = result.metadata.get("usage")
+    if not isinstance(report, dict):
+        return
+    try:
+        reported = Usage.model_validate(report)
+    except ValidationError:
+        return
+    ctx.usage = ctx.usage.plus(reported)
 
 
 def _validate_structured(text: str, schema: dict[str, Any]) -> tuple[bool, str]:

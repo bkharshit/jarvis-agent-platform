@@ -50,6 +50,7 @@ class ToolContext:
         variables: dict[str, Any] | None = None,
         config: dict[str, Any] | None = None,
         cancel: CancellationToken | None = None,
+        result_metadata: dict[str, Any] | None = None,
     ) -> None:
         self.run_id = run_id
         self.agent_id = agent_id
@@ -62,6 +63,11 @@ class ToolContext:
         self.variables = variables or {}
         self.config = config or {}
         self.cancel = cancel or CancellationToken()
+        # S14 (D54): the tool → runtime reporting channel — a tool writes
+        # structured facts here during _execute and the ToolRuntime merges
+        # them into the successful ToolResult.metadata (persisted in
+        # tool_executions; the orchestrator folds `usage` into ctx.usage).
+        self.result_metadata: dict[str, Any] = result_metadata or {}
 
     def raise_if_cancelled(self) -> None:
         self.cancel.raise_if_triggered()

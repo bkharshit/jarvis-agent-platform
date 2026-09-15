@@ -23,7 +23,7 @@ from typing import Any, Protocol
 from jarvis.domain.agent import AgentVersion, ToolBinding
 from jarvis.domain.events import ExecutionEvent, RunCancelled, RunCompleted, RunFailed
 from jarvis.domain.execution import ExecutionCancelled, ExecutionContext
-from jarvis.domain.tools import ToolDescriptor
+from jarvis.domain.tools import ToolContext, ToolDescriptor
 from jarvis.runtime.child_runs import QueuedRunWriter, child_message, enqueue_child_run
 from jarvis.tools.base import BaseTool
 from jarvis.tools.mcp.errors import SubAgentResolutionError
@@ -117,7 +117,7 @@ class SubAgentTool(BaseTool):
         self._max_depth = max_depth
         self._parent_depth = parent_depth
 
-    async def _execute(self, arguments: dict[str, Any], context: Any) -> str:
+    async def _execute(self, arguments: dict[str, Any], context: ToolContext) -> str:
         task = str(arguments.get("task") or "")
         child_depth = self._parent_depth + 1
         if child_depth > self._max_depth:
@@ -140,7 +140,12 @@ class SubAgentTool(BaseTool):
             trace_id=self._parent_ctx.trace_id,
             deadline=self._parent_ctx.deadline,
             parent_run_id=self._parent_ctx.run_id,
-            metadata={"sub_agent": {"depth": child_depth}},
+            metadata={
+                "sub_agent": {"depth": child_depth},
+                # D55: children never pause — approvals auto-decline, asks
+                # auto-answer, and the runtime's branches key off this flag.
+                "auto_decline_approvals": True,
+            },
         )
         child_run_id = await enqueue_child_run(executions=self._executions, message=message)
         # The parent's remaining budget bounds the whole wait (D52: REQUIRED
@@ -164,7 +169,7 @@ class SubAgentTool(BaseTool):
         # ExecutionCancelled (cancel observed / child cancelled) propagates
         # as-is — _await_child has already requested the child's cancel.
 
-    async def _await_child(self, child_run_id: str, context: Any) -> str:
+    async def _await_child(self, child_run_id: str, context: ToolContext) -> str:
         """Block on the child's event stream to exactly one terminal.
         Cancellation is observed between batches via the parent's token
         (ToolContext carries it directly) — up to one fallback poll late."""
@@ -175,6 +180,12 @@ class SubAgentTool(BaseTool):
                     context.raise_if_cancelled()
                     self._parent_ctx.check_limits()
                     if isinstance(event, RunCompleted):
+                        # D54: the child's usage rides the terminal event
+                        # (never the row) — reported to the parent's runtime
+                        # through the ToolContext channel, which the
+                        # ToolRuntime merges into ToolResult.metadata and the
+                        # loop folds into ctx.usage.
+                        context.result_metadata["usage"] = event.total_usage.model_dump()
                         return event.final_message
                     if isinstance(event, RunFailed):
                         raise SubAgentError(f"child run {child_run_id} failed: {event.error}")

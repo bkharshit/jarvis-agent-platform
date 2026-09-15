@@ -74,11 +74,15 @@ class ToolRuntime:
                 output[: self.max_output_chars]
                 + f"\n... [truncated at {self.max_output_chars} chars]"
             )
+        # S14 (D54): merge whatever the tool wrote into context.result_metadata
+        # (the sub-agent family reports the child's usage there). Empty for
+        # every pre-S14 tool — the shape is byte-identical.
         return ToolResult(
             tool_call_id=call.id,
             tool_name=call.name,
             output=output,
             latency_ms=int((time.monotonic() - started) * 1000),
+            metadata=dict(context.result_metadata or {}),
         )
 
     def _validate(self, call: ToolCall, tool: Tool, context: ToolContext) -> tuple[str, str | None]:
