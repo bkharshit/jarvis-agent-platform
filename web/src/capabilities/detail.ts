@@ -22,6 +22,13 @@ export function strategyNames(capabilities: Capabilities | undefined): string[] 
   return detail ? stringList(detail.strategies) : [];
 }
 
+/** S14 (ADR 0018 §7): sub-agents and handoffs are live on the backend —
+ * the agent editor's delegation picker reads this flag. */
+export function subAgentsEnabled(capabilities: Capabilities | undefined): boolean {
+  const detail = asRecord(capabilities?.sections.agents?.detail);
+  return detail?.sub_agents === true;
+}
+
 export function builtinTools(capabilities: Capabilities | undefined): BuiltinTool[] {
   const detail = asRecord(capabilities?.sections.tools?.detail);
   if (!detail || !Array.isArray(detail.builtins)) return [];

@@ -277,3 +277,64 @@ describe("replay ≡ live (decision 4)", () => {
     expect(runFixture.final_message).toBe("It is 4.");
   });
 });
+describe("sub-agent children (S14, ADR 0018)", () => {
+  it("lists child runs as labeled links (delegation vs handoff)", async () => {
+    renderDetail();
+    expect(await screen.findByTestId("children")).toBeInTheDocument();
+    expect(screen.getByText("Sub-agent runs")).toBeInTheDocument();
+    expect(screen.getByText("delegation · Worker agent")).toBeInTheDocument();
+    expect(screen.getByText("research the delegation topic")).toBeInTheDocument();
+    // the child row links to the child's own detail page
+    expect(
+      screen.getByRole("link", { name: "run-child-9" }).getAttribute("href"),
+    ).toBe("/executions/run-child-9");
+  });
+
+  it("labels a handoff successor by its handoff metadata", async () => {
+    server.use(
+      http.get("/v1/executions/run-abc-123", () =>
+        HttpResponse.json({
+          run: runFixture,
+          messages: [],
+          tool_executions: [],
+          names: { "agent-worker-1": "Worker agent" },
+          children: [
+            {
+              run_id: "run-successor-1",
+              agent_id: "agent-worker-1",
+              input: "take over the relay",
+              session_id: "sess-1",
+              trace_id: "trace-1",
+              status: "succeeded",
+              parent_run_id: "run-abc-123",
+              metadata: { handoff: { note: "take over" } },
+            },
+          ],
+        }),
+      ),
+    );
+    renderDetail();
+    expect(await screen.findByText("handoff · Worker agent")).toBeInTheDocument();
+  });
+
+  it("links back to the parent when the run is a child itself", async () => {
+    server.use(
+      http.get("/v1/executions/run-child-9", () =>
+        HttpResponse.json({
+          run: { ...runFixture, run_id: "run-child-9", parent_run_id: "run-parent-1" },
+          messages: [],
+          tool_executions: [],
+          children: [],
+        }),
+      ),
+    );
+    renderWithProviders(<ExecutionDetailPage />, {
+      initialEntries: ["/executions/run-child-9"],
+      path: "/executions/:runId",
+    });
+    const link = await screen.findByRole("link", { name: "run-parent-1" });
+    expect(link.getAttribute("href")).toBe("/executions/run-parent-1");
+    // no children section on a childless run
+    expect(screen.queryByTestId("children")).not.toBeInTheDocument();
+  });
+});

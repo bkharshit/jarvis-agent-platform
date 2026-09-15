@@ -783,6 +783,8 @@ export interface components {
             definition: components["schemas"]["AgentDefinition"];
             /** Versions */
             versions: components["schemas"]["VersionSummary"][];
+            /** Lints */
+            lints?: string[];
         };
         /** AgentList */
         AgentList: {
@@ -1039,6 +1041,11 @@ export interface components {
          * @description One test input. `id` is a stable uuid the results reference —
          *     cases live inside the dataset's JSONB snapshot (D48), so this id is
          *     the join key, not a foreign key into a cases table.
+         *
+         *     `input` is min_length=1 because it becomes RunRequest.input at run
+         *     creation (min_length=1 there too) — an empty-input case must be
+         *     rejected at the dataset boundary (422), never as a run-time 500
+         *     (found live in the S11 joint session).
          */
         EvalCase: {
             /** Id */
@@ -1257,6 +1264,8 @@ export interface components {
             names?: {
                 [key: string]: string;
             };
+            /** Children */
+            children?: components["schemas"]["RunResult"][];
         };
         /** ExecutionList */
         ExecutionList: {
@@ -1301,6 +1310,8 @@ export interface components {
             created_at?: string;
             /** Node Id */
             node_id?: string | null;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1325,6 +1336,8 @@ export interface components {
             created_at?: string;
             /** Node Id */
             node_id?: string | null;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1617,6 +1630,8 @@ export interface components {
             created_at?: string;
             /** Node Id */
             node_id?: string | null;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1643,6 +1658,8 @@ export interface components {
             created_at?: string;
             /** Node Id */
             node_id?: string | null;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1702,6 +1719,8 @@ export interface components {
             created_at?: string;
             /** Node Id */
             node_id: string;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1744,6 +1763,8 @@ export interface components {
             created_at?: string;
             /** Node Id */
             node_id: string;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1794,6 +1815,8 @@ export interface components {
             created_at?: string;
             /** Node Id */
             node_id?: string | null;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1832,6 +1855,8 @@ export interface components {
             created_at?: string;
             /** Node Id */
             node_id?: string | null;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1856,6 +1881,8 @@ export interface components {
             created_at?: string;
             /** Node Id */
             node_id?: string | null;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1882,6 +1909,8 @@ export interface components {
             created_at?: string;
             /** Node Id */
             node_id?: string | null;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1949,6 +1978,8 @@ export interface components {
              * @default
              */
             trace_id: string;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
             /** Final Message */
             final_message?: string | null;
             total_usage?: components["schemas"]["Usage"];
@@ -1990,6 +2021,8 @@ export interface components {
             created_at?: string;
             /** Node Id */
             node_id?: string | null;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -2098,6 +2131,8 @@ export interface components {
             created_at?: string;
             /** Node Id */
             node_id?: string | null;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -2157,6 +2192,8 @@ export interface components {
             created_at?: string;
             /** Node Id */
             node_id?: string | null;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -2203,6 +2240,8 @@ export interface components {
             created_at?: string;
             /** Node Id */
             node_id?: string | null;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -2228,6 +2267,8 @@ export interface components {
             created_at?: string;
             /** Node Id */
             node_id?: string | null;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -2261,6 +2302,8 @@ export interface components {
             created_at?: string;
             /** Node Id */
             node_id?: string | null;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -2290,6 +2333,8 @@ export interface components {
             created_at?: string;
             /** Node Id */
             node_id?: string | null;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -3181,6 +3226,7 @@ export interface operations {
                 agent_id?: string | null;
                 status?: ("queued" | "running" | "awaiting_input" | "succeeded" | "failed" | "cancelled" | "timed_out") | null;
                 session_id?: string | null;
+                parent_run_id?: string | null;
                 limit?: number;
                 offset?: number;
             };

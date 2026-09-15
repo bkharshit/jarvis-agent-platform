@@ -926,6 +926,22 @@
             }
           },
           {
+            "name": "parent_run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Parent Run Id"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -2484,6 +2500,13 @@
             },
             "type": "array",
             "title": "Versions"
+          },
+          "lints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Lints"
           }
         },
         "additionalProperties": false,
@@ -3242,6 +3265,7 @@
           },
           "input": {
             "type": "string",
+            "minLength": 1,
             "title": "Input"
           },
           "expected": {
@@ -3270,7 +3294,7 @@
           "input"
         ],
         "title": "EvalCase",
-        "description": "One test input. `id` is a stable uuid the results reference \u2014\ncases live inside the dataset's JSONB snapshot (D48), so this id is\nthe join key, not a foreign key into a cases table."
+        "description": "One test input. `id` is a stable uuid the results reference \u2014\ncases live inside the dataset's JSONB snapshot (D48), so this id is\nthe join key, not a foreign key into a cases table.\n\n`input` is min_length=1 because it becomes RunRequest.input at run\ncreation (min_length=1 there too) \u2014 an empty-input case must be\nrejected at the dataset boundary (422), never as a run-time 500\n(found live in the S11 joint session)."
       },
       "EvalCompareResponse": {
         "properties": {
@@ -3781,6 +3805,13 @@
             },
             "type": "object",
             "title": "Names"
+          },
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/RunResult"
+            },
+            "type": "array",
+            "title": "Children"
           }
         },
         "additionalProperties": false,
@@ -3887,6 +3918,17 @@
             ],
             "title": "Node Id"
           },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
+          },
           "type": {
             "type": "string",
             "const": "iteration.completed",
@@ -3947,6 +3989,17 @@
               }
             ],
             "title": "Node Id"
+          },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
           },
           "type": {
             "type": "string",
@@ -4672,6 +4725,17 @@
             ],
             "title": "Node Id"
           },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
+          },
           "type": {
             "type": "string",
             "const": "model.invocation.completed",
@@ -4737,6 +4801,17 @@
               }
             ],
             "title": "Node Id"
+          },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
           },
           "type": {
             "type": "string",
@@ -4878,6 +4953,17 @@
             "type": "string",
             "title": "Node Id"
           },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
+          },
           "type": {
             "type": "string",
             "const": "node.completed",
@@ -4944,6 +5030,17 @@
           "node_id": {
             "type": "string",
             "title": "Node Id"
+          },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
           },
           "type": {
             "type": "string",
@@ -5053,6 +5150,17 @@
             ],
             "title": "Node Id"
           },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
+          },
           "type": {
             "type": "string",
             "const": "run.awaiting_input",
@@ -5133,6 +5241,17 @@
             ],
             "title": "Node Id"
           },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
+          },
           "type": {
             "type": "string",
             "const": "run.cancelled",
@@ -5193,6 +5312,17 @@
               }
             ],
             "title": "Node Id"
+          },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
           },
           "type": {
             "type": "string",
@@ -5259,6 +5389,17 @@
               }
             ],
             "title": "Node Id"
+          },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
           },
           "type": {
             "type": "string",
@@ -5416,6 +5557,17 @@
             "title": "Trace Id",
             "default": ""
           },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
+          },
           "final_message": {
             "anyOf": [
               {
@@ -5536,6 +5688,17 @@
               }
             ],
             "title": "Node Id"
+          },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
           },
           "type": {
             "type": "string",
@@ -5792,6 +5955,17 @@
             ],
             "title": "Node Id"
           },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
+          },
           "type": {
             "type": "string",
             "const": "text.delta",
@@ -5917,6 +6091,17 @@
             ],
             "title": "Node Id"
           },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
+          },
           "type": {
             "type": "string",
             "const": "tool.call.completed",
@@ -5994,6 +6179,17 @@
             ],
             "title": "Node Id"
           },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
+          },
           "type": {
             "type": "string",
             "const": "tool.call.declined",
@@ -6056,6 +6252,17 @@
               }
             ],
             "title": "Node Id"
+          },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
           },
           "type": {
             "type": "string",
@@ -6134,6 +6341,17 @@
             ],
             "title": "Node Id"
           },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
+          },
           "type": {
             "type": "string",
             "const": "tool.call.requested",
@@ -6200,6 +6418,17 @@
               }
             ],
             "title": "Node Id"
+          },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
           },
           "type": {
             "type": "string",

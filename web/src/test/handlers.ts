@@ -37,6 +37,7 @@ export const runFixture = {
   agent_version_id: "ver-1",
   session_id: "session-7",
   trace_id: "",
+  parent_run_id: null,
   final_message: "It is 4.",
   total_usage: { input_tokens: 12, output_tokens: 4, extra: {} },
   iterations: 1,
@@ -45,6 +46,20 @@ export const runFixture = {
   started_at: "2026-09-04T13:00:00Z",
   finished_at: "2026-09-04T13:00:02Z",
   event_cursor: 6,
+  metadata: {},
+};
+
+/** S14 (ADR 0018 §7): a sub-agent child of runFixture — an ordinary row
+ * linked by parent_run_id, carrying the delegation metadata. */
+export const subAgentRunFixture = {
+  ...runFixture,
+  run_id: "run-child-9",
+  agent_id: "agent-worker-1",
+  input: "research the delegation topic",
+  session_id: null,
+  trace_id: runFixture.trace_id,
+  parent_run_id: runFixture.run_id,
+  metadata: { sub_agent: { depth: 1 } },
 };
 
 export const executionDetailFixture = {
@@ -68,6 +83,8 @@ export const executionDetailFixture = {
       latency_ms: 3,
     },
   ],
+  names: { "agent-worker-1": "Worker agent" },
+  children: [subAgentRunFixture],
 };
 
 /** Cursor-tagged event log matching runFixture (replay fixture). */
@@ -287,12 +304,15 @@ export const handlers = [
     const url = new URL(request.url);
     const agent = url.searchParams.get("agent_id");
     const status = url.searchParams.get("status");
-    const items = [runFixture].filter(
+    const parent = url.searchParams.get("parent_run_id");
+    const all = [runFixture, subAgentRunFixture];
+    const items = all.filter(
       (r) =>
         (agent === null || r.agent_id === agent) &&
-        (status === null || r.status === status),
+        (status === null || r.status === status) &&
+        (parent === null || r.parent_run_id === parent),
     );
-    return HttpResponse.json({ items });
+    return HttpResponse.json({ items, names: { "agent-worker-1": "Worker agent" } });
   }),
   http.get("/v1/executions/:run_id", ({ params }) => {
     const { run_id } = params as { run_id: string };
@@ -351,8 +371,16 @@ export const handlers = [
   http.get("/v1/capabilities", () => {
     return HttpResponse.json({
       sections: {
-        agents: { enabled: true, summary: "Create, version, and run agents", detail: { strategies: ["react", "function_calling"] } },
-        executions: { enabled: true, summary: "Browse runs", detail: { human_in_the_loop: true } },
+        agents: {
+          enabled: true,
+          summary: "Create, version, and run agents",
+          detail: { strategies: ["react", "function_calling"], sub_agents: true },
+        },
+        executions: {
+          enabled: true,
+          summary: "Browse runs",
+          detail: { human_in_the_loop: true, sub_agents: true },
+        },
         conversations: { enabled: true, summary: "Per-session history" },
         tools: {
           enabled: true,

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
 import { ApiError, fieldErrors } from "@/api/errors";
-import { useAgent, useCreateAgent, useUpdateAgent } from "@/api/queries/agents";
+import { useAgent, useAgents, useCreateAgent, useUpdateAgent } from "@/api/queries/agents";
 import { useModelList } from "@/api/queries/models";
 import { useCredentials } from "@/api/queries/settings";
 import {
@@ -12,6 +12,7 @@ import {
   modelProviders,
   providerNames,
   strategyNames,
+  subAgentsEnabled,
 } from "@/capabilities/detail";
 import { useProbeMcpServer } from "@/api/queries/mcp";
 import { useCapabilities } from "@/capabilities/useCapabilities";
@@ -123,6 +124,26 @@ function AgentEditorForm() {
   const serverList = mcpServers(capabilities.data);
   const [mcpServerId, setMcpServerId] = useState("");
   const mcpProbe = useProbeMcpServer(mcpServerId);
+
+  // S14 (ADR 0018 §2): the sub-agent family picker — a tenant agent bound as
+  // `sub__<name>` (delegation) or `handoff__<name>` (successor). The config
+  // carries only `agent_id`: the version pin is SERVER-STAMPED at save
+  // (never trusted from the client), so nothing else is sent.
+  const agentList = useAgents();
+
+  function bindFamilyBinding(prefix: "sub__" | "handoff__", targetId: string) {
+    if (targetId === "") return;
+    const target = (agentList.data ?? []).find((a) => a.id === targetId);
+    if (!target) return;
+    const bindingName = `${prefix}${target.name}`;
+    if (draft!.tools.some((t) => t.name === bindingName)) return;
+    update({
+      tools: [
+        ...draft!.tools,
+        { name: bindingName, enabled: true, config: JSON.stringify({ agent_id: targetId }) },
+      ],
+    });
+  }
 
   if (agentId !== undefined && isPending) {
     return <p className="px-6 py-10 text-sm text-neutral-400">Loading agent…</p>;
@@ -565,6 +586,59 @@ function AgentEditorForm() {
                     ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {subAgentsEnabled(capabilities.data) && (agentList.data ?? []).length > 0 && (
+            <div className="mt-3 grid grid-cols-2 gap-4" data-testid="sub-agent-pickers">
+              <div>
+                <label htmlFor="add-sub-agent" className={labelClass}>
+                  Delegate to sub-agent
+                </label>
+                <select
+                  id="add-sub-agent"
+                  className={`${inputClass} mt-1`}
+                  value=""
+                  onChange={(e) => bindFamilyBinding("sub__", e.target.value)}
+                >
+                  <option value="">Add sub-agent…</option>
+                  {(agentList.data ?? [])
+                    .filter((a) => a.id !== agentId) // self-binding is a 422
+                    .filter((a) => !draft.tools.some((t) => t.name === `sub__${a.name}`))
+                    .map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                        {a.memory?.enabled ? " (memory-enabled)" : ""}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="add-handoff" className={labelClass}>
+                  Hand off to agent
+                </label>
+                <select
+                  id="add-handoff"
+                  className={`${inputClass} mt-1`}
+                  value=""
+                  onChange={(e) => bindFamilyBinding("handoff__", e.target.value)}
+                >
+                  <option value="">Add handoff target…</option>
+                  {(agentList.data ?? [])
+                    .filter((a) => a.id !== agentId) // self-binding is a 422
+                    .filter((a) => !draft.tools.some((t) => t.name === `handoff__${a.name}`))
+                    .map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <p className="col-span-2 text-xs text-neutral-500">
+                Delegation blocks this agent until the sub-agent finishes; a handoff
+                transfers the transcript and ends this run. The version pin is stamped
+                on the server at save.
+              </p>
             </div>
           )}
         </fieldset>

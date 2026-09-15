@@ -131,6 +131,9 @@ function ExecutionDetailInner() {
   // (metadata.kind === "workflow" marks the sibling executor's rows).
   const resourceName = detail.names?.[run.agent_id] ?? run.agent_id;
   const isWorkflow = run.metadata?.["kind"] === "workflow";
+  // S14 (ADR 0018 §7): this run's children — sub-agent delegations and
+  // handoff successors — with the parent link when the run is one itself.
+  const children = detail.children ?? [];
 
   async function resume(body: { content?: string; decisions?: Record<string, boolean> }) {
     setActing(true);
@@ -189,6 +192,17 @@ function ExecutionDetailInner() {
         <SummaryRow label="Status" value={run.status} />
         <SummaryRow label={isWorkflow ? "Workflow" : "Agent"} value={resourceName} />
         <SummaryRow label="Session" value={run.session_id ?? "—"} />
+        {run.parent_run_id !== null && run.parent_run_id !== undefined && (
+          <div className="flex gap-2 text-sm">
+            <span className="w-32 shrink-0 text-neutral-400">Parent run</span>
+            <Link
+              to={`/executions/${run.parent_run_id}`}
+              className="min-w-0 break-words font-mono text-neutral-200 underline"
+            >
+              {run.parent_run_id}
+            </Link>
+          </div>
+        )}
         <SummaryRow label="Input" value={run.input} />
         {run.final_message !== null && run.final_message !== undefined && (
           <SummaryRow label="Final message" value={run.final_message} />
@@ -290,6 +304,39 @@ function ExecutionDetailInner() {
       </section>
 
       <LlmTraceSection runId={runId} status={run.status} />
+
+      {children.length > 0 && (
+        <section className="mt-8" data-testid="children">
+          <h2 className="text-sm font-medium text-neutral-300">Sub-agent runs</h2>
+          <ul className="mt-2 flex flex-col gap-2">
+            {children.map((child) => {
+              const childName = detail.names?.[child.agent_id] ?? child.agent_id;
+              const kind =
+                child.metadata?.["handoff"] !== undefined ? "handoff" : "delegation";
+              return (
+                <li
+                  key={child.run_id}
+                  className="rounded border border-neutral-800 bg-neutral-900 p-3 text-sm"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <Link
+                      to={`/executions/${child.run_id}`}
+                      className="min-w-0 truncate font-mono text-xs text-neutral-100 underline"
+                    >
+                      {child.run_id}
+                    </Link>
+                    <span className="shrink-0 text-xs text-neutral-400">{child.status}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-neutral-400">
+                    {kind} · {childName}
+                  </p>
+                  <p className="mt-1 break-words text-xs text-neutral-500">{child.input}</p>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
 
       <Link to="/executions" className="mt-8 inline-block text-sm text-neutral-400 underline">
         ← All executions

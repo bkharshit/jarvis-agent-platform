@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { agentFixture, credentialFixture, envelope } from "@/test/handlers";
 import { server } from "@/test/msw";
-import { renderWithProviders } from "@/test/render";
+import { renderWithProviders, TEST_CAPABILITIES } from "@/test/render";
 
 import { AgentEditor } from "./AgentEditor";
 
@@ -245,5 +245,79 @@ describe("<AgentEditor/> MCP tool picker (S4)", () => {
 
     await user.selectOptions(await screen.findByLabelText("Add MCP tool"), "mcp-1");
     expect(await screen.findByRole("alert")).toHaveTextContent("connection refused");
+  });
+});
+
+describe("<AgentEditor/> sub-agent picker (S14, ADR 0018)", () => {
+  it("binds a picked agent as a sub__ row carrying only the agent_id", async () => {
+    const user = userEvent.setup();
+    const posted = capturePost();
+    posted.capture();
+
+    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    await user.type(await screen.findByLabelText("Name"), "Supervisor");
+    await screen.findByLabelText("Model");
+
+    await user.selectOptions(await screen.findByLabelText("Delegate to sub-agent"), "agent-1");
+    // the binding row is an ordinary ToolBinding; NO pin — the server stamps
+    // agent_version_id at save (never trusted from the client)
+    expect(
+      screen.getByLabelText("sub__Research agent config (JSON)"),
+    ).toHaveValue('{"agent_id":"agent-1"}');
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(posted.state.body).not.toBeNull());
+    const raw = JSON.parse(JSON.stringify(posted.state.body));
+    expect(raw.tools).toEqual([
+      { name: "sub__Research agent", enabled: true, config: { agent_id: "agent-1" } },
+    ]);
+  });
+
+  it("binds a handoff target as a handoff__ row", async () => {
+    const user = userEvent.setup();
+    const posted = capturePost();
+    posted.capture();
+
+    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    await user.type(await screen.findByLabelText("Name"), "Relay");
+    await screen.findByLabelText("Model");
+
+    await user.selectOptions(await screen.findByLabelText("Hand off to agent"), "agent-1");
+    expect(
+      screen.getByLabelText("handoff__Research agent config (JSON)"),
+    ).toHaveValue('{"agent_id":"agent-1"}');
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(posted.state.body).not.toBeNull());
+    const raw = JSON.parse(JSON.stringify(posted.state.body));
+    expect(raw.tools).toEqual([
+      { name: "handoff__Research agent", enabled: true, config: { agent_id: "agent-1" } },
+    ]);
+  });
+
+  it("excludes the agent being edited (self-binding is a 422)", async () => {
+    renderWithProviders(<AgentEditor />, {
+      initialEntries: ["/agents/agent-1/edit"],
+      path: "/agents/:agentId/edit",
+    });
+    const picker = await screen.findByLabelText("Delegate to sub-agent");
+    // the only tenant agent IS the edited one — placeholder option only
+    expect(within(picker).getAllByRole("option")).toHaveLength(1);
+    expect(screen.queryByText("Research agent")).not.toBeInTheDocument();
+  });
+
+  it("is hidden when the sub_agents capability flag is off", async () => {
+    renderWithProviders(<AgentEditor />, {
+      initialEntries: ["/agents/new"],
+      capabilities: {
+        ...TEST_CAPABILITIES,
+        sections: {
+          ...TEST_CAPABILITIES.sections,
+          agents: { enabled: true, summary: "Create, version, and run agents" },
+        },
+      },
+    });
+    await screen.findByLabelText("Model");
+    expect(screen.queryByLabelText("Delegate to sub-agent")).not.toBeInTheDocument();
   });
 });

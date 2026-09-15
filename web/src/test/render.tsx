@@ -9,7 +9,11 @@ import { capabilitiesQueryKey } from "@/capabilities/useCapabilities";
 
 export const TEST_CAPABILITIES: Capabilities = {
   sections: {
-    agents: { enabled: true, summary: "Create, version, and run agents" },
+    agents: {
+      enabled: true,
+      summary: "Create, version, and run agents",
+      detail: { strategies: ["react", "function_calling"], sub_agents: true },
+    },
     executions: { enabled: true, summary: "Browse runs" },
     conversations: { enabled: true, summary: "Per-session history" },
     tools: {
