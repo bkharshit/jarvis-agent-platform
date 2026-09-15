@@ -225,6 +225,97 @@ async def test_create_queued_run_writes_row_and_message_atomically(container, ag
 
 
 @pytest.mark.db
+async def test_parent_run_id_roundtrip_and_filter(container, agent):
+    """S14 (ADR 0018 §3, D53): the parent linkage survives the enqueue hop
+    and is filterable — children by parent, tenant-scoped."""
+
+    from jarvis.domain.execution import RunResult
+
+    parent_id = "q-parent"
+    await container.executions.create_queued_run(
+        RunResult(
+            run_id=parent_id,
+            agent_id=agent.id,
+            status="queued",
+            input="supervise",
+            agent_version_id="v1",
+        ),
+        _message(parent_id, agent.id),
+    )
+
+    child_ids = ["q-child-a", "q-child-b"]
+    for run_id in child_ids:
+        message = RunQueueMessage(
+            run_id=run_id,
+            agent_id=agent.id,
+            agent_version_id="v1",
+            input="hi",
+            parent_run_id=parent_id,
+        )
+        await container.executions.create_queued_run(
+            RunResult(
+                run_id=run_id,
+                agent_id=agent.id,
+                status="queued",
+                input="hi",
+                agent_version_id="v1",
+                parent_run_id=parent_id,
+            ),
+            message,
+        )
+
+    child = await container.executions.get("q-child-a")
+    assert child is not None and child.parent_run_id == parent_id
+
+    children = await container.executions.list_runs(parent_run_id=parent_id)
+    assert sorted(run.run_id for run in children) == child_ids
+
+    # None means "no filter" (the session_id precedent), not "root rows" —
+    # every row still comes back.
+    unfiltered = await container.executions.list_runs()
+    assert {run.run_id for run in unfiltered} >= {parent_id, *child_ids}
+
+
+@pytest.mark.db
+async def test_children_of_a_foreign_tenant_are_invisible(container, agent):
+    """D29 transposed to the linkage: a child row is tenant-scoped — a
+    scoped view for another tenant sees nothing through the parent filter."""
+    from uuid import uuid4
+
+    from jarvis.domain.execution import RunResult
+    from jarvis.persistence.scoped import TenantScopedExecutions
+
+    other_tenant = str(uuid4())
+    parent_id = "q-foreign-parent"
+    child_id = "q-foreign-child"
+    for run_id in (parent_id, child_id):
+        await container.executions.create_queued_run(
+            RunResult(
+                run_id=run_id,
+                agent_id=agent.id,
+                status="queued",
+                input="hi",
+                agent_version_id="v1",
+                parent_run_id=parent_id if run_id == child_id else None,
+            ),
+            RunQueueMessage(
+                run_id=run_id,
+                agent_id=agent.id,
+                agent_version_id="v1",
+                input="hi",
+                parent_run_id=parent_id if run_id == child_id else None,
+            ),
+        )
+
+    scoped = TenantScopedExecutions(container.executions, other_tenant)
+    assert await scoped.list_runs(parent_run_id=parent_id) == []
+    # The owning tenant still sees the chain.
+    mine = TenantScopedExecutions(container.executions, "default")
+    runs = await mine.list_runs(parent_run_id=parent_id)
+    assert [run.run_id for run in runs] == [child_id]
+
+
+@pytest.mark.db
 async def test_mark_running_flips_queued_row(container, agent):
     from datetime import UTC, datetime
 

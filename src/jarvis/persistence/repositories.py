@@ -871,8 +871,6 @@ class SqlExecutionRepo:
         tenant_id: str | None = None,
         parent_run_id: str | None = None,
     ) -> list[RunResult]:
-        # `parent_run_id` filter (S14, ADR 0018 §3) lands with migration 0012.
-        del parent_run_id
         query = select(AgentExecutionRow)
         if tenant_id is not None:
             query = query.where(AgentExecutionRow.tenant_id == tenant_id)
@@ -882,6 +880,9 @@ class SqlExecutionRepo:
             query = query.where(AgentExecutionRow.status == status)
         if session_id is not None:
             query = query.where(AgentExecutionRow.session_id == session_id)
+        if parent_run_id is not None:
+            # S14 (ADR 0018 §3): equality over the nullable parent column.
+            query = query.where(AgentExecutionRow.parent_run_id == parent_run_id)
         query = query.order_by(AgentExecutionRow.created_at.desc()).limit(limit).offset(offset)
         async with self._sessionmaker() as session:
             rows = (await session.execute(query)).scalars()
@@ -1022,6 +1023,7 @@ class SqlExecutionRepo:
             tenant_id=result.tenant_id or DEFAULT_TENANT,
             session_id=result.session_id,
             trace_id=result.trace_id,
+            parent_run_id=result.parent_run_id,
             status=result.status,
             input=result.input,
             output=result.final_message,
@@ -1046,6 +1048,7 @@ class SqlExecutionRepo:
             tenant_id=row.tenant_id,
             session_id=row.session_id,
             trace_id=row.trace_id,
+            parent_run_id=row.parent_run_id,
             final_message=row.output,
             total_usage=Usage.model_validate(row.total_usage),
             iterations=row.iterations,

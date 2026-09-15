@@ -156,6 +156,7 @@ class AgentExecutionRow(Base):
     __table_args__ = (
         Index("ix_agent_executions_agent_created", "agent_id", "created_at"),
         Index("ix_agent_executions_session", "session_id"),
+        Index("ix_agent_executions_parent_run_id", "parent_run_id"),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -172,6 +173,10 @@ class AgentExecutionRow(Base):
     session_id: Mapped[str | None] = mapped_column(String, nullable=True)
     user_id: Mapped[str | None] = mapped_column(String, nullable=True)
     trace_id: Mapped[str] = mapped_column(String, nullable=False, default="")
+    # The sub-agent/handoff parent (S14, ADR 0018 §3): NULL for root runs,
+    # set from the queue message at enqueue — a real column, not metadata
+    # JSONB, so cancel fan-out and list filters can query it.
+    parent_run_id: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(
         Enum(*EXECUTION_STATUSES, name="execution_status", native_enum=True),
         nullable=False,
