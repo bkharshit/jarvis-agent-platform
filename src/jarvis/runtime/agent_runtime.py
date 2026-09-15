@@ -61,7 +61,7 @@ from jarvis.tools.mcp.errors import SubAgentResolutionError, ToolResolutionError
 from jarvis.tools.mcp.provider import McpTooling, McpToolProvider
 from jarvis.tools.registry import InMemoryToolRegistry
 from jarvis.tools.runtime import ToolRuntime
-from jarvis.tools.subagents.provider import SUB_PREFIX, SubAgentToolProvider
+from jarvis.tools.subagents.provider import FAMILY_PREFIXES, SubAgentToolProvider
 
 ErrorKind = Literal["max_iterations", "timeout", "model", "tool", "output_schema", "strategy"]
 
@@ -1231,12 +1231,13 @@ class AgentRuntime:
         """S4 (D38): eager per-segment MCP resolution. No MCP configured or
         no `mcp__*` bindings → the builtin registry, byte-identical to
         today; any resolution failure raises ToolResolutionError (caught in
-        run()/resume()'s try — D28 pattern). S14 (ADR 0018 §2): `sub__*`
-        bindings resolve through the sub-agent provider and merge into ONE
-        registry view — one ToolRuntime, one aclose for mcp__ + sub__
-        together; no sub__ bindings leaves the MCP path byte-identical."""
+        run()/resume()'s try — D28 pattern). S14 (ADR 0018 §2): the sub-agent
+        family (`sub__*` AND `handoff__*`) resolves through the sub-agent
+        provider and merges into ONE registry view — one ToolRuntime, one
+        aclose for mcp__ + family together; no family bindings leaves the
+        MCP path byte-identical."""
         bindings = agent.enabled_tools()
-        sub_bindings = [b for b in bindings if b.enabled and b.name.startswith(SUB_PREFIX)]
+        sub_bindings = [b for b in bindings if b.enabled and b.name.startswith(FAMILY_PREFIXES)]
         if not sub_bindings:
             if self._mcp is None:
                 return self._default_tooling()

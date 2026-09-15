@@ -130,6 +130,9 @@ class ExecutionDetail(_Model):
     # agent_id -> display name, resolved from the agents AND workflows repos
     # (S6, D41: a workflow run's agent_id is the workflow id).
     names: dict[str, str] = Field(default_factory=dict)
+    # S14 (ADR 0018 §7): this run's children — sub-agent delegations and
+    # handoff successors — derived from the parent_run_id column.
+    children: list[RunResult] = Field(default_factory=list)
 
 
 class ExecutionList(_Model):

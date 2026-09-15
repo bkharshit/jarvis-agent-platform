@@ -148,7 +148,10 @@ async def build_capabilities(
     for key, flags in _SECTION_FLAGS.items():
         detail: dict[str, Any] | None = None
         if key == "agents":
-            detail = {"strategies": container.strategies.names()}
+            # S14 (ADR 0018 §7): sub-agents/handoffs are live — publish
+            # pinning, cycle 422s, and the detail lints are real (the S4
+            # derived-facts pattern).
+            detail = {"strategies": container.strategies.names(), "sub_agents": True}
         elif key == "tools":
             detail = {
                 "builtins": [d.model_dump() for d in container.tools.descriptors()],
@@ -158,7 +161,13 @@ async def build_capabilities(
             # S10: human-in-the-loop is live — pause frames, the resume
             # route, and the awaiting_input inbox are real (UI enablement).
             # ADR 0014: the debug LLM trace view rides the settings flag.
-            detail = {"human_in_the_loop": True, "llm_trace": container.settings.llm_trace}
+            # S14: parent/child run links (parent_run_id filter + children)
+            # are real.
+            detail = {
+                "human_in_the_loop": True,
+                "llm_trace": container.settings.llm_trace,
+                "sub_agents": True,
+            }
         elif key == "workflows":
             detail = await _workflows_detail(container)
         elif key == "evaluations":

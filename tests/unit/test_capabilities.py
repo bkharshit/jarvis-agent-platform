@@ -125,12 +125,13 @@ async def test_mcp_detail_lists_servers_from_the_repo() -> None:
 async def test_executions_detail_exposes_the_llm_trace_flag() -> None:
     response = await build_capabilities(_stub_container(strategies=[], builtins=[], llm_trace=True))
     detail = response.sections["executions"].detail
-    assert detail == {"human_in_the_loop": True, "llm_trace": True}
+    assert detail == {"human_in_the_loop": True, "llm_trace": True, "sub_agents": True}
 
     off = await build_capabilities(_stub_container(strategies=[], builtins=[]))
     assert off.sections["executions"].detail == {
         "human_in_the_loop": True,
         "llm_trace": False,
+        "sub_agents": True,
     }
 
 

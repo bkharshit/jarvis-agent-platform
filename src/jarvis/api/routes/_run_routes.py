@@ -16,7 +16,7 @@ from fastapi import Depends
 from jarvis.api.deps import AppContainer, get_container
 from jarvis.api.errors import ApiError
 from jarvis.api.schemas import RunRequest
-from jarvis.api.sse import frame
+from jarvis.api.sse import PING, frame
 from jarvis.config import Settings
 from jarvis.domain.auth import Principal
 from jarvis.domain.events import ExecutionEvent, is_pause, is_terminal
@@ -34,6 +34,9 @@ ContainerDep = Depends(get_container)
 # resumes with POST /executions/{id}/resume.
 TERMINAL_SET: set[str] = set(TERMINAL_STATUSES)
 SEGMENT_END_STATUSES: set[str] = TERMINAL_SET | {"awaiting_input"}
+
+# SSE keep-alive cadence (S14): below the common 30–60s proxy idle timeouts.
+PING_AFTER_SECONDS = 15.0
 
 
 def queue_message(
@@ -131,6 +134,39 @@ async def await_row_status(
     return None
 
 
+async def _with_pings(
+    events: AsyncIterator[tuple[int, ExecutionEvent]],
+) -> AsyncIterator[tuple[int, ExecutionEvent] | str]:
+    """Merge an SSE keep-alive through quiet periods: an SSE stream that
+    carries no events for minutes (a sub-agent parent blocked on its child,
+    S14) would otherwise look dead to idle-timeout proxies. A ticker races
+    each `__anext__`; a heartbeat that wins first yields the PING comment
+    (ignored by every SSE client) and re-arms. Cancellation-safe: the
+    finally cancels the pending pair — the subscribe generator's own
+    finally removes its subscriber queue."""
+    next_event = asyncio.ensure_future(events.__anext__())
+    heartbeat = asyncio.ensure_future(asyncio.sleep(PING_AFTER_SECONDS))
+    try:
+        while True:
+            done, _ = await asyncio.wait(
+                {heartbeat, next_event}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if heartbeat in done:
+                yield PING
+                heartbeat = asyncio.ensure_future(asyncio.sleep(PING_AFTER_SECONDS))
+            if next_event in done:
+                try:
+                    pair = next_event.result()
+                except StopAsyncIteration:
+                    return
+                yield pair
+                next_event = asyncio.ensure_future(events.__anext__())
+    finally:
+        heartbeat.cancel()
+        if not next_event.done():
+            next_event.cancel()
+
+
 async def queue_stream(
     container: AppContainer,
     executions: TenantScopedExecutions,
@@ -140,9 +176,14 @@ async def queue_stream(
     """Frame every event; hold the segment-end frame (terminal or pause,
     S10) back until the run row carries that state, so a stream that ends
     carries the run's final state (the web UI fetches the detail or fires
-    the resume immediately after the stream closes)."""
+    the resume immediately after the stream closes). Quiet periods emit the
+    PING keep-alive comment so idle-timeout proxies leave the stream alone."""
     last_frame: str | None = None
-    async for cursor, event in container.streams.subscribe(run_id, last_cursor):
+    async for chunk in _with_pings(container.streams.subscribe(run_id, last_cursor)):
+        if isinstance(chunk, str):
+            yield chunk  # the keep-alive comment
+            continue
+        cursor, event = chunk
         if is_terminal(event) or is_pause(event):
             last_frame = frame(cursor, event)  # subscribe returns right after
         else:

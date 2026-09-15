@@ -238,7 +238,11 @@ class _ScriptedHandoffTool(BaseTool):
     def __init__(self, executions: FakeExecutions, agent_name: str = "Worker"):
         super().__init__(
             ToolDescriptor(
-                name="handoff__worker",
+                # a NEUTRAL name: the runtime detects the handoff outcome from
+                # result metadata (`kind: "handoff"`), never the name — a
+                # real `handoff__*` binding would demand the sub-agent
+                # provider this scripted stand-in deliberately omits
+                name="relay__worker",
                 description="hand off",
                 parameters={"type": "object", "properties": {}},
                 annotations={"requires_approval": False},
@@ -310,13 +314,13 @@ class TestRuntimeHandoffOutcome:
         executions = FakeExecutions()
         provider = MockModelProvider(
             [
-                turn(tool_calls=[ToolCall(id="c1", name="handoff__worker", arguments={})]),
+                turn(tool_calls=[ToolCall(id="c1", name="relay__worker", arguments={})]),
                 turn("never reached"),
             ]
         )
         runtime = _runtime(provider, [_ScriptedHandoffTool(executions)], repo)
         result = await runtime.run(
-            _version(_agent(tools=[ToolBinding(name="handoff__worker")])),
+            _version(_agent(tools=[ToolBinding(name="relay__worker")])),
             "go",
             _ctx("run-h"),
         )
@@ -337,7 +341,7 @@ class TestRuntimeHandoffOutcome:
                 turn(
                     tool_calls=[
                         ToolCall(id="c1", name="calculator", arguments={"expression": "2+2"}),
-                        ToolCall(id="c2", name="handoff__worker", arguments={}),
+                        ToolCall(id="c2", name="relay__worker", arguments={}),
                     ]
                 ),
                 turn("never reached"),
@@ -346,7 +350,7 @@ class TestRuntimeHandoffOutcome:
         runtime = _runtime(provider, [CalculatorTool(), _ScriptedHandoffTool(executions)], repo)
         result = await runtime.run(
             _version(
-                _agent(tools=[ToolBinding(name="calculator"), ToolBinding(name="handoff__worker")])
+                _agent(tools=[ToolBinding(name="calculator"), ToolBinding(name="relay__worker")])
             ),
             "go",
             _ctx("run-h2"),

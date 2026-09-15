@@ -16,14 +16,13 @@ from jarvis.api.auth import AuthContext, AuthDep
 from jarvis.api.deps import AppContainer
 from jarvis.api.errors import ApiError
 from jarvis.api.routes._run_routes import (
-    SEGMENT_END_STATUSES,
     ContainerDep,
 )
 from jarvis.api.routes._run_routes import (
-    await_row_status as _await_row_status,
+    await_segment as _await_segment,
 )
 from jarvis.api.routes._run_routes import (
-    await_segment as _await_segment,
+    queue_stream as _queue_stream,
 )
 from jarvis.api.schemas import (
     CancelResult,
@@ -35,8 +34,7 @@ from jarvis.api.schemas import (
     LlmTraceResponse,
     ResumeBody,
 )
-from jarvis.api.sse import SSE_HEADERS, frame
-from jarvis.domain.events import is_pause, is_terminal
+from jarvis.api.sse import SSE_HEADERS
 from jarvis.domain.execution import TERMINAL_STATUSES, ExecutionStatus, RunResult
 from jarvis.persistence.scoped import TenantScopedExecutions
 from jarvis.runtime.worker import finish_paused_run, worker_persist
@@ -74,6 +72,7 @@ async def list_executions(
     agent_id: str | None = None,
     status: ExecutionStatus | None = None,
     session_id: str | None = None,
+    parent_run_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
     auth: AuthContext = AuthDep,
@@ -85,6 +84,7 @@ async def list_executions(
         session_id=session_id,
         limit=limit,
         offset=offset,
+        parent_run_id=parent_run_id,
     )
     names = await _names(container, [run.agent_id for run in items])
     return ExecutionList(items=items, names=names)
@@ -99,8 +99,17 @@ async def get_execution(
     run = await _require_run(auth.executions, run_id)
     messages = await auth.executions.list_messages(run_id)
     tool_executions = await auth.executions.list_tool_executions(run_id)
-    names = await _names(container, [run.agent_id])
-    return ExecutionDetail(run=run, messages=messages, tool_executions=tool_executions, names=names)
+    # S14 (ADR 0018 §7): the run's children — sub-agent delegations and
+    # handoff successors — ride the parent_run_id column (index-backed).
+    children = await auth.executions.list_runs(parent_run_id=run_id, limit=100)
+    names = await _names(container, [run.agent_id] + [child.agent_id for child in children])
+    return ExecutionDetail(
+        run=run,
+        messages=messages,
+        tool_executions=tool_executions,
+        names=names,
+        children=children,
+    )
 
 
 @router.get("/{run_id}/llm-trace", response_model=LlmTraceResponse)
@@ -216,20 +225,12 @@ async def _live_replay(
     run_id: str,
     after: int | None,
 ) -> AsyncIterator[str]:
-    """Replay from `after`, then live-tail until the run's segment ends
-    (a finished run's stream is a pure replay — the terminal ends it; a
-    paused run's stream ends at the pause frame, S10). The segment-end frame
-    is held back until the run row carries that state, mirroring the stream
-    route, so stream end carries the run's final state."""
-    last_frame: str | None = None
-    async for cursor, event in container.streams.subscribe(run_id, after):
-        if is_terminal(event) or is_pause(event):
-            last_frame = frame(cursor, event)  # subscribe returns right after
-        else:
-            yield frame(cursor, event)
-    await _await_row_status(executions, run_id, SEGMENT_END_STATUSES)
-    if last_frame is not None:
-        yield last_frame
+    """Replay from `after`, then live-tail until the run's segment ends —
+    exactly the stream route's generator (same cursor space, same hold-back
+    of the segment-end frame, and the same PING keep-alive), shared through
+    `_run_routes.queue_stream`."""
+    async for chunk in _queue_stream(container, executions, run_id, after):
+        yield chunk
 
 
 __all__ = ["router"]
