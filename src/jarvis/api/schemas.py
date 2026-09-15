@@ -19,6 +19,7 @@ from jarvis.domain.agent import (
     StrategyConfig,
     ToolBinding,
 )
+from jarvis.domain.evaluation import EvalCase, EvalDataset, EvalResult, ScorerConfig
 from jarvis.domain.events import ExecutionEvent
 from jarvis.domain.execution import RunResult
 from jarvis.domain.mcp import MCP_NAME_SLUG, McpServer, McpServerConfig
@@ -364,6 +365,88 @@ class McpProbeResponse(_Model):
     tools: list[ToolDescriptor]
 
 
+class EvalDatasetUpsert(_Model):
+    """POST/PATCH /evaluations/datasets — the mutable fields wholesale
+    (the PATCH discipline). D50: scorers including `llm_judge` without a
+    dataset-level `judge_model` is a 422 at this boundary, checked by the
+    route against the assembled domain dataset."""
+
+    name: str = Field(min_length=1)
+    description: str = ""
+    cases: list[EvalCase] = Field(min_length=1)
+    scorers: list[ScorerConfig] = Field(min_length=1)
+    judge_model: ModelRef | None = None
+
+
+class EvalDatasetList(_Model):
+    """GET /evaluations/datasets — responses reuse the domain model."""
+
+    items: list[EvalDataset]
+
+
+class EvalRunCreate(_Model):
+    """POST /evaluations/datasets/{id}/runs — which agent to evaluate;
+    its latest published version is pinned onto every child run."""
+
+    agent_id: str = Field(min_length=1)
+
+
+class EvalRunList(_Model):
+    """GET /evaluations/runs — summaries with derived status (D49)."""
+
+    items: list[EvalRunSummary]
+
+
+class EvalRunSummary(_Model):
+    """One eval run in a listing — `status` is DERIVED at read time from
+    the child rows (D49): any non-terminal child means `running`."""
+
+    id: str
+    dataset_id: str
+    agent_id: str
+    agent_version_id: str
+    status: str
+    created_at: datetime | None = None
+
+
+class EvalRunDetail(EvalRunSummary):
+    """GET /evaluations/runs/{id} — the dataset snapshot rides the run (D1:
+    the exact inputs the scoring saw); results carry the lazily-persisted
+    scores (D49)."""
+
+    dataset: EvalDataset
+    results: list[EvalResult]
+
+
+class EvalScorerStats(_Model):
+    """Per-scorer aggregation over one agent version's scored results."""
+
+    scorer: str
+    scored: int  # verdicts produced (passed is not None)
+    passed: int
+    mean: float | None = None  # mean of non-null score values
+
+
+class EvalVersionCompare(_Model):
+    """One agent version side of GET /evaluations/compare."""
+
+    agent_version_id: str
+    runs: int
+    cases: int
+    scored: int  # cases where every scorer produced a verdict
+    passed: int  # scored cases where every verdict is PASS
+    pass_rate: float | None = None
+    scorers: list[EvalScorerStats]
+
+
+class EvalCompareResponse(_Model):
+    """GET /evaluations/compare?agent_id= — version comparison is a query,
+    not a feature: runs + results aggregated per agent_version_id."""
+
+    agent_id: str
+    versions: list[EvalVersionCompare]
+
+
 class SectionCapability(_Model):
     """One IA section's enablement fact (F1). Disabled sections always carry
     the `stage` that will enable them; `detail` carries derived facts
@@ -396,6 +479,15 @@ __all__ = [
     "CancelResult",
     "CapabilitiesResponse",
     "CursorEvent",
+    "EvalCompareResponse",
+    "EvalDatasetList",
+    "EvalDatasetUpsert",
+    "EvalRunCreate",
+    "EvalRunDetail",
+    "EvalRunList",
+    "EvalRunSummary",
+    "EvalScorerStats",
+    "EvalVersionCompare",
     "EventList",
     "ExecutionDetail",
     "ExecutionList",

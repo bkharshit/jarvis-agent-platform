@@ -1491,7 +1491,9 @@ class SqlEvalRepo:
             select(EvalResultRow)
             .join(EvalRunRow, EvalRunRow.id == EvalResultRow.eval_run_id)
             .where(EvalResultRow.eval_run_id == eval_run_id)
-            .order_by(EvalResultRow.id)
+            # Deterministic order — result ids are random uuid4s, never
+            # order by them (this was a live flake: heap order drifted).
+            .order_by(EvalResultRow.case_id, EvalResultRow.id)
         )
         if tenant_id is not None:
             query = query.where(EvalRunRow.tenant_id == tenant_id)
@@ -1506,6 +1508,7 @@ class SqlEvalRepo:
         scores: list[Score],
         error: str | None,
         *,
+        scored_at: datetime | None = None,
         tenant_id: str | None = None,
     ) -> None:
         """Persist-once (D49): the `scores IS NULL` guard means a later
@@ -1522,7 +1525,7 @@ class SqlEvalRepo:
             .values(
                 scores=[score.model_dump(mode="json") for score in scores],
                 error=error,
-                scored_at=datetime.now(UTC),
+                scored_at=scored_at or datetime.now(UTC),
             )
         )
         if tenant_id is not None:
@@ -1549,7 +1552,7 @@ class SqlEvalRepo:
                     await session.execute(
                         select(EvalResultRow)
                         .where(EvalResultRow.eval_run_id.in_([row.id for row in run_rows]))
-                        .order_by(EvalResultRow.id)
+                        .order_by(EvalResultRow.eval_run_id, EvalResultRow.case_id)
                     )
                 )
                 .scalars()

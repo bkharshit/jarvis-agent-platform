@@ -47,7 +47,7 @@ _SECTION_FLAGS: dict[str, dict[str, Any]] = {
         "summary": "DAG runs reusing the same event model",
     },
     "knowledge": {"enabled": False, "stage": "S8", "summary": "Datasets and retrieval"},
-    "evaluations": {"enabled": False, "stage": "S11", "summary": "Datasets, runs, and scores"},
+    "evaluations": {"enabled": True, "summary": "Datasets, runs, and scores"},
     "observability": {"enabled": False, "stage": "S7", "summary": "Traces and spans"},
     "plugins": {"enabled": True, "summary": "Strategy plugins and discovery"},
     "triggers": {"enabled": False, "stage": "S13", "summary": "Cron, webhook, and event rules"},
@@ -121,6 +121,16 @@ async def _mcp_detail(container: AppContainer, *, tenant_id: str | None) -> dict
     }
 
 
+async def _evaluations_detail(container: AppContainer, *, tenant_id: str | None) -> dict[str, Any]:
+    """S11 (ADR 0017 §6): the Evaluations section is live — the derived fact
+    is the tenant's dataset and eval-run counts, read from the repo at
+    request time (the S4 derived-facts pattern)."""
+    return {
+        "datasets": len(await container.evaluations.list_datasets(tenant_id=tenant_id)),
+        "runs": len(await container.evaluations.list_runs(tenant_id=tenant_id)),
+    }
+
+
 async def _workflows_detail(container: AppContainer) -> dict[str, Any]:
     """S6 (ADR 0015 §6): the Workflows section is live — the derived fact is
     the repo's workflow count plus the backend's node-type set (v1)."""
@@ -151,6 +161,8 @@ async def build_capabilities(
             detail = {"human_in_the_loop": True, "llm_trace": container.settings.llm_trace}
         elif key == "workflows":
             detail = await _workflows_detail(container)
+        elif key == "evaluations":
+            detail = await _evaluations_detail(container, tenant_id=tenant_id)
         elif key == "models":
             detail = await _model_providers_detail(container)
         elif key == "plugins":

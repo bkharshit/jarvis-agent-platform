@@ -50,6 +50,12 @@ def _stub_container(
     async def _list_workflows(*, limit: int = 50, offset: int = 0) -> list:
         return workflows or []
 
+    async def _list_eval_datasets(*, tenant_id: str | None = None) -> list:
+        return []
+
+    async def _list_eval_runs(*, tenant_id: str | None = None) -> list:
+        return []
+
     return SimpleNamespace(
         settings=Settings(
             _env_file=None, strategy_plugin_allowlist=allowlist or [], llm_trace=llm_trace
@@ -60,6 +66,7 @@ def _stub_container(
         models=_StubFactory(),
         mcp_servers=SimpleNamespace(list_servers=_list_servers),
         workflows=SimpleNamespace(list_workflows=_list_workflows),
+        evaluations=SimpleNamespace(list_datasets=_list_eval_datasets, list_runs=_list_eval_runs),
     )
 
 
