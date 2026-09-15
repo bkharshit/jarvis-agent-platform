@@ -49,9 +49,17 @@ class ToolRuntime:
         timeout = float(tool_timeout)
         try:
             context.raise_if_cancelled()
-            output = await asyncio.wait_for(
-                tool.execute(dict(call.arguments), context), timeout=timeout
-            )
+            if timeout <= 0:
+                # S14 (ADR 0018 §5): a non-positive timeout is the UNBOUNDED
+                # sentinel — wait_for is skipped entirely. The sub-agent
+                # family mints `timeout: -1` because a delegation may block
+                # for minutes. NOTE the trap this closes: `None` does NOT
+                # disable the timeout (it falls through to the default above).
+                output = await tool.execute(dict(call.arguments), context)
+            else:
+                output = await asyncio.wait_for(
+                    tool.execute(dict(call.arguments), context), timeout=timeout
+                )
         except TimeoutError:
             return self._error_result(call, "timeout", f"tool timed out after {timeout}s", started)
         except ExecutionCancelled:

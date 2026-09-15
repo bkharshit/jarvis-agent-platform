@@ -92,6 +92,9 @@ class ExecutionContext:
     session_id: str | None = None
     user_id: str | None = None
     trace_id: str = ""
+    # S14 (ADR 0018 §3): set on sub-agent/handoff children — the run is an
+    # ordinary queue run linked back to its parent.
+    parent_run_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     cancel: CancellationToken = field(default_factory=CancellationToken)
     deadline: datetime | None = None
@@ -122,6 +125,9 @@ class RunResult(_Model):
     tenant_id: str | None = None
     session_id: str | None = None
     trace_id: str = ""
+    # S14 (ADR 0018 §3): the run's parent (sub-agent child / handoff
+    # successor), None for root runs — queried for parent/child links.
+    parent_run_id: str | None = None
     final_message: str | None = None
     total_usage: Usage = Field(default_factory=Usage)
     iterations: int = 0

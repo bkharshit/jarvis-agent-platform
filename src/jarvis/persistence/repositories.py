@@ -869,7 +869,10 @@ class SqlExecutionRepo:
         offset: int = 0,
         *,
         tenant_id: str | None = None,
+        parent_run_id: str | None = None,
     ) -> list[RunResult]:
+        # `parent_run_id` filter (S14, ADR 0018 §3) lands with migration 0012.
+        del parent_run_id
         query = select(AgentExecutionRow)
         if tenant_id is not None:
             query = query.where(AgentExecutionRow.tenant_id == tenant_id)

@@ -138,7 +138,13 @@ class ExecutionRepo(Protocol):
         session_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> list[RunResult]: ...
+        *,
+        parent_run_id: str | None = None,
+    ) -> list[RunResult]:
+        """`parent_run_id` (S14, ADR 0018 §3): equality filter over the
+        nullable parent column — a run's children, or None-filtered for
+        root runs when the API needs it."""
+        ...
 
     async def save_message(self, run_id: str, message: Message) -> None: ...
 

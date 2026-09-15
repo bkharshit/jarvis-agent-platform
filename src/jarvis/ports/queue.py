@@ -68,6 +68,9 @@ class RunQueueMessage(BaseModel):
     session_id: str | None = None
     user_id: str | None = None
     trace_id: str = ""
+    # S14 (ADR 0018 §3): the parent run for sub-agent/handoff children —
+    # additive-optional (extra="forbid" still parses pre-S14 payloads).
+    parent_run_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     variables: dict[str, Any] = Field(default_factory=dict)
     deadline: datetime | None = None

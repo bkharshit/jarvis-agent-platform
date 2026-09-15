@@ -43,6 +43,7 @@ VOLATILE = {
     "awaiting_until",
     "agent_version_id",
     "node_id",  # asserted None in _canonical — plain runs are never node-scoped
+    "parent_run_id",  # S14 (D53) — asserted None in _canonical: plain runs are never children
 }
 
 
@@ -50,8 +51,10 @@ def _canonical(events) -> list[dict]:
     out = []
     for event in events:
         # S6 (D43): a plain agent run is never node-scoped — every event the
-        # loop emits carries the envelope's default node_id=None.
+        # loop emits carries the envelope's default node_id=None. Same shape
+        # of assertion for the S14 parent field (D53): plain runs are root.
         assert event.node_id is None
+        assert event.parent_run_id is None
         data = event.model_dump(mode="json")
         for key in VOLATILE:
             data.pop(key, None)

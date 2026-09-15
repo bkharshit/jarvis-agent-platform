@@ -35,8 +35,12 @@ class _BoomTool(BaseTool):
 
 
 class _SlowTool(BaseTool):
-    def __init__(self, seconds=5.0):
-        super().__init__(ToolDescriptor(name="slow", description="sleep", parameters={}))
+    def __init__(self, seconds=5.0, annotations=None):
+        super().__init__(
+            ToolDescriptor(
+                name="slow", description="sleep", parameters={}, annotations=annotations or {}
+            )
+        )
         self.seconds = seconds
 
     async def _execute(self, arguments, context):
@@ -128,6 +132,54 @@ class TestTimeout:
             _context(config={"timeout": 0.05}),
         )
         assert result.metadata["kind"] == "timeout"
+
+
+class TestUnboundedSentinel:
+    """S14 (ADR 0018 §5): `timeout <= 0` disables the wait entirely — the
+    sub-agent family mints `timeout: -1` because a delegation may block for
+    minutes. The trap this pins: `None` does NOT disable the timeout (it
+    falls through to the default)."""
+
+    async def test_negative_annotation_is_unbounded(self):
+        runtime = _runtime([_SlowTool(seconds=0.3)], default_timeout=0.05)
+        result = await runtime.execute(
+            ToolCall(id="c1", name="slow", arguments={}),
+            _context(),
+        )
+        assert result.is_error and result.metadata["kind"] == "timeout"
+
+        unbounded = _runtime(
+            [_SlowTool(seconds=0.3, annotations={"timeout": -1})], default_timeout=0.05
+        )
+        result = await unbounded.execute(
+            ToolCall(id="c1", name="slow", arguments={}),
+            _context(),
+        )
+        assert result.output == "done" and not result.is_error
+
+    async def test_zero_annotation_is_unbounded(self):
+        runtime = _runtime(
+            [_SlowTool(seconds=0.05, annotations={"timeout": 0})], default_timeout=0.01
+        )
+        result = await runtime.execute(ToolCall(id="c1", name="slow", arguments={}), _context())
+        assert result.output == "done"
+
+    async def test_timeout_none_annotation_falls_to_default(self):
+        """The verified trap (ADR 0018 §5): annotations={"timeout": None} does
+        NOT disable the timeout — it behaves as unset."""
+        runtime = _runtime(
+            [_SlowTool(seconds=5, annotations={"timeout": None})], default_timeout=0.05
+        )
+        result = await runtime.execute(ToolCall(id="c1", name="slow", arguments={}), _context())
+        assert result.is_error and result.metadata["kind"] == "timeout"
+
+    async def test_negative_config_timeout_is_unbounded(self):
+        runtime = _runtime([_SlowTool(seconds=0.1)], default_timeout=0.01)
+        result = await runtime.execute(
+            ToolCall(id="c1", name="slow", arguments={}),
+            _context(config={"timeout": -1}),
+        )
+        assert result.output == "done"
 
 
 class TestCancellation:

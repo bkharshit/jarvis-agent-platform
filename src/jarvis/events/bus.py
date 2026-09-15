@@ -32,14 +32,24 @@ class InProcessEventSink:
     segment (S10, ADR 0010 §1): `append_event` trusts the sink-assigned
     sequence, so a fresh sink for an existing log must continue at
     `next_event_sequence`, not restart at 0.
+
+    `parent_run_id` (S14, ADR 0018 §3): stamps every event's envelope
+    parent field in `_append` — there is no event factory (events are
+    constructed inline), so the sink is the ONE stamping choke point.
+    None for root runs.
     """
 
     def __init__(
-        self, run_id: str, persist: PersistFn | None = None, sequence_offset: int = 0
+        self,
+        run_id: str,
+        persist: PersistFn | None = None,
+        sequence_offset: int = 0,
+        parent_run_id: str | None = None,
     ) -> None:
         self.run_id = run_id
         self._persist = persist
         self._sequence_offset = sequence_offset
+        self._parent_run_id = parent_run_id
         self._events: list[ExecutionEvent] = []
         self._cursors: list[int] = []
         self._subscribers: list[asyncio.Queue[tuple[int, ExecutionEvent]]] = []
@@ -93,6 +103,7 @@ class InProcessEventSink:
             raise EventSequenceError(
                 f"event run_id {event.run_id!r} does not match sink run {self.run_id!r}"
             )
+        event.parent_run_id = self._parent_run_id
         if event.sequence is not None and event.sequence != sequence:
             raise EventSequenceError(
                 f"event arrives with sequence {event.sequence}, expected {sequence}"

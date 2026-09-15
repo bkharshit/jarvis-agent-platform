@@ -23,7 +23,12 @@ class _Event(BaseModel):
     `node_id` (S6, ADR 0015 §3, D43): the workflow node that emitted the
     event, stamped by the node's sink wrapper. None for plain agent-run
     events and old persisted rows — backward compatible in both
-    directions."""
+    directions.
+
+    `parent_run_id` (S14, ADR 0018 §3): the sub-agent/handoff parent run,
+    stamped by the sink (the one choke point — no event factory exists).
+    None for root runs and old persisted rows — backward compatible in
+    both directions (ADR 0003 amendment pre-declared in ADR 0018)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -32,6 +37,7 @@ class _Event(BaseModel):
     sequence: int | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     node_id: str | None = None
+    parent_run_id: str | None = None
 
 
 # --- lifecycle -----------------------------------------------------------

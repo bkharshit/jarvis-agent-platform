@@ -178,7 +178,9 @@ class Worker:
 
     async def _execute_claimed(self, message: RunQueueMessage) -> None:
         try:
-            sink = InProcessEventSink(message.run_id, persist=self._persist)
+            sink = InProcessEventSink(
+                message.run_id, persist=self._persist, parent_run_id=message.parent_run_id
+            )
             # A cancel that arrived while the run was queued: fail fast,
             # emitting the terminal event without touching the runtime.
             reason = await self._queue.pending_cancel(message.run_id)
@@ -302,7 +304,12 @@ class Worker:
         # The segment continues the run's gapless sequence: seed the sink at
         # the durable log's next sequence, not at 0.
         offset = await self._executions.next_event_sequence(message.run_id)
-        sink = InProcessEventSink(message.run_id, persist=self._persist, sequence_offset=offset)
+        sink = InProcessEventSink(
+            message.run_id,
+            persist=self._persist,
+            sequence_offset=offset,
+            parent_run_id=message.parent_run_id,
+        )
         started_at = datetime.now(UTC)
         await self._executions.mark_running(message.run_id, started_at)
         ctx = self._context(message)
@@ -334,7 +341,12 @@ class Worker:
             )
             return
         offset = await self._executions.next_event_sequence(message.run_id)
-        sink = InProcessEventSink(message.run_id, persist=self._persist, sequence_offset=offset)
+        sink = InProcessEventSink(
+            message.run_id,
+            persist=self._persist,
+            sequence_offset=offset,
+            parent_run_id=message.parent_run_id,
+        )
         started_at = datetime.now(UTC)
         await self._executions.mark_running(message.run_id, started_at)
         ctx = self._context(message)
@@ -359,6 +371,7 @@ class Worker:
             session_id=message.session_id,
             user_id=message.user_id,
             trace_id=message.trace_id,
+            parent_run_id=message.parent_run_id,
             metadata=dict(message.metadata),
             variables=dict(message.variables),
             deadline=message.deadline,
