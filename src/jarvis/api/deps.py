@@ -138,7 +138,9 @@ class AppContainer:
             executions,
             queue,
             streams,
+            transcripts=executions,  # the handoff transfer renders list_messages
             max_depth=settings.sub_agent_max_depth,
+            max_transcript_chars=settings.handoff_max_transcript_chars,
         )
 
         limits = RunLimits(

@@ -27,6 +27,11 @@ from jarvis.domain.tools import ToolContext, ToolDescriptor
 from jarvis.runtime.child_runs import QueuedRunWriter, child_message, enqueue_child_run
 from jarvis.tools.base import BaseTool
 from jarvis.tools.mcp.errors import SubAgentResolutionError
+from jarvis.tools.subagents.handoff import (
+    HandoffTool,
+    TranscriptReader,
+    mint_handoff_descriptor,
+)
 
 logger = logging.getLogger("jarvis.tools.subagents")
 
@@ -248,24 +253,29 @@ class SubAgentToolProvider:
         queue: ChildRunQueue,
         stream: ChildEventStream,
         *,
+        transcripts: TranscriptReader | None = None,
         max_depth: int = 2,
+        max_transcript_chars: int = 20_000,
     ) -> None:
         self._agents = agents
         self._executions = executions
+        self._transcripts = transcripts
         self._queue = queue
         self._stream = stream
         self._max_depth = max_depth
+        self._max_transcript_chars = max_transcript_chars
 
     async def resolve(self, bindings: list[ToolBinding], ctx: ExecutionContext) -> SubAgentTooling:
-        """Mint one SubAgentTool per enabled `sub__*` binding. No such
-        bindings → an empty toolset (the runtime keeps its byte-identical
-        path). Resolution failures raise SubAgentResolutionError naming the
-        binding — the runtime converts them into the persisted terminal."""
+        """Mint one SubAgentTool / HandoffTool per enabled `sub__*` /
+        `handoff__*` binding. No such bindings → an empty toolset (the
+        runtime keeps its byte-identical path). Resolution failures raise
+        SubAgentResolutionError naming the binding — the runtime converts
+        them into the persisted terminal."""
         metadata = ctx.metadata.get("sub_agent")
         parent_depth = int(metadata.get("depth", 0)) if isinstance(metadata, dict) else 0
         tools: list[BaseTool] = []
         for binding in bindings:
-            if not binding.enabled or not binding.name.startswith(SUB_PREFIX):
+            if not binding.enabled or not is_family_binding(binding.name):
                 continue
             agent_id = binding.config.get("agent_id")
             if not isinstance(agent_id, str) or not agent_id:
@@ -303,19 +313,40 @@ class SubAgentToolProvider:
                     f"agent {agent_id!r} not found (or invisible to this tenant) "
                     "with no published version",
                 )
-            tools.append(
-                SubAgentTool(
-                    self._mint_descriptor(binding.name, version),
-                    agent_id=agent_id,
-                    version_id=version.id,
-                    parent_ctx=ctx,
-                    executions=self._executions,
-                    queue=self._queue,
-                    stream=self._stream,
-                    max_depth=self._max_depth,
-                    parent_depth=parent_depth,
+            if binding.name.startswith(SUB_PREFIX):
+                tools.append(
+                    SubAgentTool(
+                        self._mint_descriptor(binding.name, version),
+                        agent_id=agent_id,
+                        version_id=version.id,
+                        parent_ctx=ctx,
+                        executions=self._executions,
+                        queue=self._queue,
+                        stream=self._stream,
+                        max_depth=self._max_depth,
+                        parent_depth=parent_depth,
+                    )
                 )
-            )
+            else:
+                if self._transcripts is None:
+                    raise SubAgentResolutionError(
+                        binding.name,
+                        "the runtime was built without a transcript reader — "
+                        "handoff transfers are unavailable",
+                    )
+                tools.append(
+                    HandoffTool(
+                        mint_handoff_descriptor(binding.name, version),
+                        agent_id=agent_id,
+                        agent_name=version.snapshot.name,
+                        version_id=version.id,
+                        parent_ctx=ctx,
+                        executions=self._executions,
+                        transcripts=self._transcripts,
+                        max_transcript_chars=self._max_transcript_chars,
+                        parent_depth=parent_depth,
+                    )
+                )
         return SubAgentTooling(tools=tools, aclose=_no_op_close)
 
     @staticmethod
@@ -352,7 +383,6 @@ __all__ = [
     "FAMILY_PREFIXES",
     "HANDOFF_PREFIX",
     "SUB_PREFIX",
-    "is_family_binding",
     "ChildEventStream",
     "ChildRunQueue",
     "SubAgentError",
@@ -360,4 +390,5 @@ __all__ = [
     "SubAgentTool",
     "SubAgentToolProvider",
     "SubAgentTooling",
+    "is_family_binding",
 ]

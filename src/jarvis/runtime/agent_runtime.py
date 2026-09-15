@@ -95,13 +95,26 @@ class PauseOutcome:
 
 
 @dataclass
+class HandoffOutcome:
+    """What a handoff tool reported through the metadata channel (D56) —
+    the predecessor's terminal `run.completed` names the successor, and the
+    linkage itself lives on the successor's row (parent_run_id +
+    metadata.handoff)."""
+
+    successor_run_id: str
+    agent_id: str
+    agent_name: str
+
+
+@dataclass
 class LoopOutcome:
-    kind: str  # "completed" | "failed" | "paused"
+    kind: str  # "completed" | "failed" | "paused" | "handoff"
     final_message: str | None = None
     error: str | None = None
     error_kind: ErrorKind | None = None
     iterations: int = 0
     pause: PauseOutcome | None = None
+    handoff: HandoffOutcome | None = None
 
 
 class AgentRuntime:
@@ -360,7 +373,7 @@ class AgentRuntime:
                 event_cursor=pause.pause_cursor,
             )
 
-        if outcome.kind == "completed":
+        if outcome.kind in ("completed", "handoff"):
             cursor = await self._finalize(
                 sink,
                 RunCompleted(
@@ -439,6 +452,7 @@ class AgentRuntime:
 
             batch_refusals: set[str] | None = None
             auto_refusals: set[str] | None = None  # S14 (D55): child non-interactivity
+            handoff: HandoffOutcome | None = None  # S14 (D56): fires after the batch
             if entry == "batch":
                 # S10 (ADR 0010 §4): the approved (or refused) batch executes
                 # inside the paused iteration — its IterationStarted is already
@@ -643,6 +657,15 @@ class AgentRuntime:
                     ),
                 )
                 _fold_usage(ctx, result)
+                if result.metadata.get("kind") == "handoff" and not result.is_error:
+                    # S14 (D56): a handoff tool reported a successor. Other
+                    # calls in the batch still execute and persist first; the
+                    # run terminates AFTER the batch (the check below).
+                    handoff = HandoffOutcome(
+                        successor_run_id=str(result.metadata.get("successor_run_id") or ""),
+                        agent_id=str(result.metadata.get("agent_id") or ""),
+                        agent_name=str(result.metadata.get("agent_name") or ""),
+                    )
                 tool_message = Message(
                     role="tool",
                     content=result.output,
@@ -683,6 +706,19 @@ class AgentRuntime:
                 )
 
             await self._iteration_done(sink, ctx, iteration)
+            if handoff is not None:
+                # S14 (D56): the batch is fully persisted — the predecessor
+                # ends with the ORDINARY run.completed terminal, its
+                # final_message naming the target and the successor run. The
+                # successor runs independently on the shared trace.
+                return LoopOutcome(
+                    kind="handoff",
+                    final_message=(
+                        f"Handed off to {handoff.agent_name} (run {handoff.successor_run_id})"
+                    ),
+                    iterations=iteration + 1,
+                    handoff=handoff,
+                )
             iteration += 1
             if iteration >= agent.max_iterations:
                 return LoopOutcome(

@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     # root run is depth 0, its children depth 1, so the default allows
     # supervisor → worker → worker and refuses great-grandchildren.
     sub_agent_max_depth: int = 2
+    # S14 (ADR 0018 §6, D56): the handoff transfer renders the predecessor's
+    # transcript as text, truncated from the START to this many characters —
+    # the recent context is what a successor needs.
+    handoff_max_transcript_chars: int = 20_000
 
     # --- MCP tool providers (S4, ADR 0012) --------------------------------
     # Per-server connect + tools/list budget. Per-CALL timeouts ride binding
