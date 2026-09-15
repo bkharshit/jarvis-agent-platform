@@ -570,6 +570,55 @@ enable/disable, provenance shown on trigger-fired runs).
 
 ## S14 — Multi-agent
 
+> **Planned 2026-09-15** (planning session; no S14 code exists yet —
+> this record pins the verified design before the build). Design
+> pinned in docs/adr/0018-multi-agent.md (D51–D56 in decisions.md),
+> commit sequence in docs/implementation-plan-s14.md. Scope confirmed
+> by Harshit: handoffs are IN v1, not deferred. Key deltas from the
+> sketch below, all verified against code before writing:
+>
+> - **Children go through the queue, not in-process
+>   `AgentRuntime.run`.** The sketch's "_execute invokes
+>   `AgentRuntime.run`" is replaced by the eval-children composition:
+>   each child is an ordinary durable run (`queue_message` +
+>   `create_queued_run` one tx) claimed by the UNCHANGED worker, and
+>   the `sub__` tool blocks on the child's event stream (the parent
+>   worker's independent heartbeat keeps the lease alive). In-process
+>   children were REJECTED — a crashed parent would leave the child
+>   row stuck RUNNING with no sweeper story; queue-backed children
+>   survive process death literally per S1. The blocking wait is
+>   bounded three ways (cancel, no-terminal, parent deadline) because
+>   the sweeper never reaps pending queue rows (the one production
+>   failure mode the sketch left open).
+> - **The stale "ADR 0006" pointer corrected** — the envelope
+>   amendment (`parent_run_id`) rides ADR 0003 and is pre-declared in
+>   ADR 0018 §3, stamped at one choke point (`InProcessEventSink`,
+>   the node_id/D43 pattern) plus a real column + index (migration
+>   0012) for cancel fan-out and the executions filter.
+> - **The 30s-timeout trap closed**: `annotations={"timeout": None}`
+>   does NOT disable ToolRuntime's timeout (None falls through to the
+>   30s default — MCP calls run under it today); S14 adds a
+>   `timeout <= 0` unbounded sentinel, regression-gated byte-identical.
+> - **Children are non-interactive by construction**: approvals
+>   auto-decline and strategy asks auto-answer (both existing pause
+>   sites closed, honest parameterized copies) — a paused child would
+>   strand the parent's blocking wait; plus publish-time cycle
+>   detection over pinned versions + a runtime depth cap.
+> - **Budgets compose via ToolResult.metadata**: the tool reports the
+>   child's usage (read off the child's terminal event — race-free),
+>   the runtime folds it into ctx.usage, and the parent's checkpoint
+>   clamps the tree (ADR 0004 per level; the two-caps rule unchanged).
+> - **Handoffs transfer the transcript explicitly**: conversations are
+>   unique on `(agent_id, session_id)`, so session-sharing gives a
+>   different target agent NOTHING — the successor's input carries
+>   the predecessor's rendered transcript + note; the predecessor ends
+>   via the ordinary `run.completed` (no new event type/status).
+>
+> Deferred with rationale (ADR 0018 §8): parallel children,
+> child-progress relay, message-role-faithful transcript seeding,
+> sub-agent/HITL composition (paused-both-parent-and-child),
+> cross-tenant sub-agents.
+
 **Goal:** agents that delegate to agents — supervisor/handoff patterns.
 
 **Rides on:** the Tool family (an agent is "just another tool" — same

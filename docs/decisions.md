@@ -520,6 +520,134 @@ the code.
   `queue_message` + `create_queued_run` per case, pinned
   `agent_version_id`, resolved by the worker as-is).
 
+- **D51 (2026-09-15, S14 planning) — One `sub__`/`handoff__` dynamic
+  tool family; pins server-stamped at parent publish (ADR 0018 §1).**
+  Sub-agents and handoff targets are ordinary `ToolBinding`s with
+  names minted by a new `SubAgentToolProvider` (the McpToolProvider
+  pattern), identity from `config.agent_id` — never parsed from the
+  name. The version pin is stamped at the `PATCH /v1/agents/{id}` ROUTE
+  (the workflows `_pin_agent_versions` pattern, D42 transposed): the
+  route OVERWRITES `config.agent_version_id` (client pins are never
+  trusted), 422 when the target has no published version or is
+  foreign; stale pins are detail lints, never failures (D1 replay
+  fidelity one level up). Publish-time cycle walk over the pinned
+  immutable snapshots (Kahn's; direct self-binding 422) — acyclic by
+  construction with server-stamped pins, so the walk is
+  defense-in-depth; the runtime depth cap is the second belt. Provider
+  composition: one merged tooling (registry + ToolRuntime + aclose) for
+  mcp__ + sub__ + handoff__ bindings; resolution failures raise
+  `SubAgentResolutionError` under a new shared `ToolResolutionError`
+  base (McpResolutionError re-bases; the three catch sites —
+  AgentRuntime.run/resume, WorkflowRuntime.run — catch the base);
+  eager inside the segment try (D38, fifth application).
+
+- **D52 (2026-09-15, S14 planning) — Child runs are ordinary durable
+  queue runs; the sub-agent tool blocks, bounded (ADR 0018 §2).**
+  No in-process children (REJECTED: a child row stuck RUNNING with no
+  sweeper story). The tool enqueues each child through the eval-children
+  composition (`queue_message` + `create_queued_run` one tx, run_id
+  pre-generated, shared trace_id, the parent's ABSOLUTE deadline,
+  session_id=None, metadata depth stamp) and awaits
+  `PgEventStream.subscribe(child_run_id)` to the terminal event —
+  the parent worker's independent heartbeat keeps the lease alive.
+  Terminal mapping: completed → child final_message as tool output;
+  failed → honest `is_error` result; cancelled → re-raise so the
+  parent cancels too. All non-terminal endings are bounded — cancel
+  observed → `request_cancel(child)` + re-raise; stream ended without
+  a terminal → `request_cancel` + error result; parent deadline while
+  waiting → `request_cancel` + error result. The bound is REQUIRED:
+  the sweeper reaps expired leases only, never pending queue rows —
+  without it, an unclaimed child blocks the parent forever. Usage is
+  read off the child's TERMINAL EVENT (`RunCompleted.total_usage`),
+  race-free by construction, never the row (`finish_run` races).
+  Crash semantics recorded: the sweeper fails the parent; the child
+  (an independent claim) runs to completion — orphaned result, fully
+  visible and linked.
+
+- **D53 (2026-09-15, S14 planning) — `parent_run_id`: the additive
+  pre-declared set (ADR 0018 §3).** The frozen envelope `_Event` gains
+  optional `parent_run_id: str | None = None` (the D43 `node_id`
+  precedent; ADR-0003-amended here; old rows replay as None).
+  Stamping happens at ONE choke point — `InProcessEventSink._append`
+  (it already mutates `sequence`; there is no event factory, events
+  are constructed inline at ~25 sites) — constructed by
+  `worker._execute_claimed` from `message.parent_run_id`.
+  `RunQueueMessage.parent_run_id` and `ExecutionRepo.list_runs`'s new
+  `parent_run_id` filter keyword are the ports/ changes
+  (additive-optional; `extra="forbid"` payloads parse unchanged);
+  `ExecutionContext`/`RunResult` gain the field (constructed in
+  exactly `worker._context` + `cli/main.py` — threading closed). A
+  REAL column + index (migration 0012), not metadata JSONB: cancel
+  fan-out and the executions filter need a queryable index.
+
+- **D54 (2026-09-15, S14 planning) — Budgets compose at the parent;
+  cancellation fans out (ADR 0018 §4).** The tool reports child usage
+  in `ToolResult.metadata["usage"]` (persisted in tool_executions —
+  free auditability); the runtime folds tool-reported usage into
+  `ctx.usage` right after `execute` (`Usage.plus`). The orchestrator
+  owns limits (ADR 0004): the parent's `RunLimits.exceeded` at the
+  next iteration top fails the whole tree with `token_budget` —
+  verified no terminal bypasses the checkpoint, so nothing is needed
+  before finalize. The child is separately capped by the same
+  platform RunLimits on its own ctx; per-agent snapshot caps apply
+  per level (the two-caps rule unchanged). Parent cancel reaches the
+  blocked tool via the shared CancellationToken between stream batches
+  → cancel child + re-raise; cancelling the child directly propagates
+  honestly. A delegation is ONE parent iteration; child iterations
+  are the child's own.
+
+- **D55 (2026-09-15, S14 planning) — Children are non-interactive,
+  depth-bounded, honestly flagged (ADR 0018 §5).** A child must never
+  pause (the parent's blocking wait would strand on a pause frame):
+  queue-message metadata `auto_decline_approvals: true` → every
+  approval-gated call takes the EXISTING decline branch
+  (ToolCallDeclined + refusal message, copy parameterized — "no human
+  approver available … continue without it"), never `_pause`; a
+  strategy `AskHumanStep` auto-answers ("No human is available in
+  this run — proceed from what you know." appended; re-ask loops
+  capped by the ordinary iteration caps). Both `_pause` sites are
+  thereby closed for children. Depth rides
+  `metadata["sub_agent"]["depth"]`; `JARVIS_SUB_AGENT_MAX_DEPTH`
+  (default 2) — over-cap spawn is a recoverable error ToolResult,
+  never a terminal. Memory-on-child (session_id=None → memory
+  silently no-ops) is a publish-time lint on the parent (the
+  `memory_ignored` pattern). `ToolRuntime` gains an unbounded
+  sentinel: `timeout <= 0` (annotation or config) disables
+  `wait_for` — the verified correction that `annotations={"timeout":
+  None}` does NOT disable it (None falls through to the 30s default;
+  MCP calls run under the default today). Existing tools
+  byte-identical (no tool uses `<= 0`), regression-gated; sub/handoff
+  descriptors mint `timeout: -1`, `requires_approval: False`.
+
+- **D56 (2026-09-15, S14 planning) — Handoffs: the successor run
+  carries the rendered transcript (ADR 0018 §6, Harshit's scope call —
+  handoffs IN v1).** A handoff is the model's control-flow decision
+  expressed as a bound `handoff__<agent>` tool — strategy-agnostic,
+  no new strategy step, no new runtime paradigm. The tool enqueues a
+  successor (pinned target, shared trace_id + session_id, parent
+  deadline, `parent_run_id`, metadata `{"handoff": {"note": ...}}` +
+  depth) whose INPUT is the predecessor transcript rendered as
+  labeled text (`list_messages(parent_run_id)`, truncated from the
+  start to a Settings char cap) plus the note. EXPLICIT transfer, not
+  session-sharing — verified decisive: conversations are unique on
+  `(agent_id, session_id)`, so a different target agent sees none of
+  the predecessor's messages by session alone. Recorded limitations:
+  the successor's own memory/conversation starts fresh; a same-agent
+  handoff with memory enabled continues through the ordinary path.
+  The runtime ends the predecessor at the handoff: after the tool
+  batch, `LoopOutcome(kind="handoff", ...)` → `_after_loop` → the
+  ordinary `run.completed` terminal naming target + successor run
+  (status "succeeded" — no new event type, no new status, the
+  envelope stays closed); other calls in the batch persist first.
+  Linkage needs no event metadata: the successor row's `parent_run_id`
+  + `metadata.handoff` are queryable, and the executions detail
+  derives the links. Handoff bindings join the publish-time cycle
+  graph; handoff descriptors are never approval-gated. Deferred with
+  rationale (ADR 0018 §8): parallel children; child-progress relay
+  into the parent's log; message-role-faithful transcript seeding
+  (the rendered-transcript upgrade path); sub-agent/HITL composition;
+  cross-tenant sub-agents.
+
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 
 Redis/queues · plugins & marketplace · multi-tenancy/auth · RAG · workflow
