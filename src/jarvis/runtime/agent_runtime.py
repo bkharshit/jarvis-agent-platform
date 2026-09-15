@@ -12,6 +12,7 @@ task, so both modes produce identical event sequences."""
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -55,9 +56,11 @@ from jarvis.prompt.engine import PromptContext, PromptEngine
 from jarvis.runtime.limits import RunLimits
 from jarvis.runtime.llm_trace import LlmTraceBuffer, TracedModelClient
 from jarvis.runtime.memory import ConversationMemory, MemoryView
-from jarvis.tools.mcp.errors import McpResolutionError
+from jarvis.tools.mcp.errors import SubAgentResolutionError, ToolResolutionError
 from jarvis.tools.mcp.provider import McpTooling, McpToolProvider
+from jarvis.tools.registry import InMemoryToolRegistry
 from jarvis.tools.runtime import ToolRuntime
+from jarvis.tools.subagents.provider import SUB_PREFIX, SubAgentToolProvider
 
 ErrorKind = Literal["max_iterations", "timeout", "model", "tool", "output_schema", "strategy"]
 
@@ -100,6 +103,7 @@ class AgentRuntime:
         conversations: ConversationRepo | None = None,
         limits: RunLimits | None = None,
         mcp: McpToolProvider | None = None,
+        sub_agents: SubAgentToolProvider | None = None,
         trace_llm: bool = False,
         trace_buffer: LlmTraceBuffer | None = None,
     ) -> None:
@@ -113,6 +117,7 @@ class AgentRuntime:
         self._conversations = conversations
         self._limits = limits
         self._mcp = mcp
+        self._sub_agents = sub_agents
         self._trace_llm = trace_llm
         self.trace_buffer = trace_buffer
         self._live_tokens: dict[str, ExecutionContext] = {}
@@ -206,9 +211,10 @@ class AgentRuntime:
             )
         except ModelError as exc:
             result = await self._terminal_failed(ctx, sink, str(exc), "model", started_at, input)
-        except McpResolutionError as exc:
-            # S4 (D38): the boundary fails honestly — exactly one persisted
-            # terminal run.failed with error_kind="tool", the server named.
+        except ToolResolutionError as exc:
+            # S4 (D38) / S14 (ADR 0018): the boundary fails honestly — exactly
+            # one persisted terminal run.failed with error_kind="tool", the
+            # resource (MCP server / sub-agent) named.
             result = await self._terminal_failed(ctx, sink, str(exc), "tool", started_at, input)
         except Exception as exc:  # noqa: BLE001 — the run never crashes callers
             result = await self._terminal_failed(
@@ -750,9 +756,9 @@ class AgentRuntime:
             result = await self._terminal_failed(
                 ctx, sink, str(exc), "model", started_at, run_input
             )
-        except McpResolutionError as exc:
+        except ToolResolutionError as exc:
             # S4 (D38): same honest boundary as a fresh run — one persisted
-            # terminal `tool` failure, the server named.
+            # terminal `tool` failure, the resource named.
             result = await self._terminal_failed(ctx, sink, str(exc), "tool", started_at, run_input)
         except Exception as exc:  # noqa: BLE001 — the run never crashes callers
             result = await self._terminal_failed(
@@ -1147,12 +1153,42 @@ class AgentRuntime:
     async def _resolve_tooling(self, agent: AgentDefinition, ctx: ExecutionContext) -> McpTooling:
         """S4 (D38): eager per-segment MCP resolution. No MCP configured or
         no `mcp__*` bindings → the builtin registry, byte-identical to
-        today; any resolution failure raises McpResolutionError (caught in
-        run()/resume()'s try — D28 pattern)."""
-        if self._mcp is None:
-            return self._default_tooling()
-        return await self._mcp.resolve(
-            agent.enabled_tools(), tenant_id=ctx.tenant_id, principal=ctx.principal
+        today; any resolution failure raises ToolResolutionError (caught in
+        run()/resume()'s try — D28 pattern). S14 (ADR 0018 §2): `sub__*`
+        bindings resolve through the sub-agent provider and merge into ONE
+        registry view — one ToolRuntime, one aclose for mcp__ + sub__
+        together; no sub__ bindings leaves the MCP path byte-identical."""
+        bindings = agent.enabled_tools()
+        sub_bindings = [b for b in bindings if b.enabled and b.name.startswith(SUB_PREFIX)]
+        if not sub_bindings:
+            if self._mcp is None:
+                return self._default_tooling()
+            return await self._mcp.resolve(
+                bindings, tenant_id=ctx.tenant_id, principal=ctx.principal
+            )
+        if self._sub_agents is None:
+            raise SubAgentResolutionError(
+                sub_bindings[0].name, "no sub-agent provider is wired into this runtime"
+            )
+        mcp_tooling = (
+            await self._mcp.resolve(bindings, tenant_id=ctx.tenant_id, principal=ctx.principal)
+            if self._mcp is not None
+            else self._default_tooling()
+        )
+        try:
+            sub_tooling = await self._sub_agents.resolve(sub_bindings, ctx)
+        except Exception:
+            await mcp_tooling.aclose()
+            raise
+        view = InMemoryToolRegistry()
+        for descriptor in mcp_tooling.registry.descriptors():
+            view.register(mcp_tooling.registry.get(descriptor.name))
+        for tool in sub_tooling.tools:
+            view.register(tool)
+        return McpTooling(
+            registry=view,
+            tool_runtime=ToolRuntime(view),
+            aclose=_merged_close(mcp_tooling.aclose, sub_tooling.aclose),
         )
 
     def _default_tooling(self) -> McpTooling:
@@ -1185,6 +1221,25 @@ def _pause_batch(messages: list[Message]) -> list[ToolCall]:
 
 async def _no_op_close() -> None:
     """The default tooling's aclose — builtins hold no connections."""
+
+
+def _merged_close(
+    close_a: Callable[[], Awaitable[None]], close_b: Callable[[], Awaitable[None]]
+) -> Callable[[], Awaitable[None]]:
+    """The merged toolset's aclose: both segments' closes run exactly once,
+    first-error tolerant (the MCP _Close pattern, two families)."""
+
+    async def _close() -> None:
+        errors: list[Exception] = []
+        for close in (close_a, close_b):
+            try:
+                await close()
+            except Exception as exc:  # noqa: BLE001 — never block the other close
+                errors.append(exc)
+        if errors:
+            raise errors[0]
+
+    return _close
 
 
 def _uuid() -> str:

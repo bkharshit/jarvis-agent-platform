@@ -14,25 +14,15 @@ path, so an invalid dataset can never be snapshotted or executed.
 
 from __future__ import annotations
 
-from typing import Protocol
 from uuid import uuid4
 
 from jarvis.api.errors import ApiError
-from jarvis.api.routes._run_routes import queue_message, queued_result
-from jarvis.api.schemas import RunRequest
 from jarvis.config import Settings
 from jarvis.domain.auth import Principal
 from jarvis.domain.evaluation import EvalCase, EvalDataset, EvalRun
-from jarvis.domain.execution import RunResult
-from jarvis.ports.queue import RunQueueMessage
 from jarvis.ports.repository import AgentRepo, EvalRepo
-
-
-class _QueuedRunWriter(Protocol):
-    """The one call the service makes into the executions repo —
-    `TenantScopedExecutions` satisfies it structurally."""
-
-    async def create_queued_run(self, result: RunResult, message: RunQueueMessage) -> None: ...
+from jarvis.runtime.child_runs import QueuedRunWriter, child_message, enqueue_child_run
+from jarvis.runtime.limits import deadline_from_now
 
 
 def validate_dataset_scorers(dataset: EvalDataset) -> None:
@@ -60,7 +50,7 @@ async def create_eval_run(
     settings: Settings,
     agents: AgentRepo,
     evals: EvalRepo,
-    executions: _QueuedRunWriter,
+    executions: QueuedRunWriter,
     dataset: EvalDataset,
     agent_id: str,
     principal: Principal,
@@ -77,19 +67,21 @@ async def create_eval_run(
     eval_run_id = str(uuid4())
     children: list[tuple[EvalCase, str]] = []
     for case in dataset.cases:
-        message = queue_message(
-            settings,
-            "agent",
-            agent_id,
-            version.id,
-            RunRequest(
-                input=case.input,
-                variables=dict(case.variables),
-                metadata={"eval": {"eval_run_id": eval_run_id, "case_id": case.id}},
-            ),
-            principal,
+        # The shared child-run composition (S14 D52): a fresh trace + the
+        # platform deadline per case — byte-identical to the former
+        # queue_message composition here, no parent linkage.
+        message = child_message(
+            agent_id=agent_id,
+            agent_version_id=version.id,
+            input=case.input,
+            tenant_id=principal.tenant_id,
+            principal=principal,
+            trace_id=str(uuid4()),
+            deadline=deadline_from_now(settings.run_timeout_seconds),
+            metadata={"eval": {"eval_run_id": eval_run_id, "case_id": case.id}},
+            variables=dict(case.variables),
         )
-        await executions.create_queued_run(queued_result(message), message)
+        await enqueue_child_run(executions=executions, message=message)
         children.append((case, message.run_id))
     return await evals.create_run(
         dataset,

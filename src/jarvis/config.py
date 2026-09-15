@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # How long a paused (awaiting_input) run may sit before the sweeper's
     # pause-reaper cancels it (S10, ADR 0010 §6) — no run is ever stuck.
     awaiting_input_timeout_seconds: float = 86_400.0
+    # S14 (ADR 0018 §5, D55): how deep sub-agent delegation may nest — a
+    # root run is depth 0, its children depth 1, so the default allows
+    # supervisor → worker → worker and refuses great-grandchildren.
+    sub_agent_max_depth: int = 2
 
     # --- MCP tool providers (S4, ADR 0012) --------------------------------
     # Per-server connect + tools/list budget. Per-CALL timeouts ride binding

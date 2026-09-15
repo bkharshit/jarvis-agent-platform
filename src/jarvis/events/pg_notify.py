@@ -18,7 +18,7 @@ import asyncio
 import contextlib
 import json
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from typing import Any
 
 import asyncpg
@@ -144,7 +144,7 @@ class PgEventStream:
         last_cursor: int | None = None,
         *,
         end_on_pause_status: bool = True,
-    ) -> AsyncIterator[tuple[int, ExecutionEvent]]:
+    ) -> AsyncGenerator[tuple[int, ExecutionEvent], None]:
         """Yield the run's events from `last_cursor` until the segment ends.
 
         `end_on_pause_status=False` is for the resume route: it attaches

@@ -57,7 +57,7 @@ from jarvis.ports.queue import ResumeRequest
 from jarvis.ports.repository import ExecutionRepo
 from jarvis.runtime.agent_runtime import ErrorKind, LoopOutcome
 from jarvis.runtime.limits import RunLimits
-from jarvis.tools.mcp.errors import McpResolutionError
+from jarvis.tools.mcp.errors import ToolResolutionError
 from jarvis.tools.mcp.provider import McpTooling, McpToolProvider
 from jarvis.tools.runtime import ToolRuntime
 
@@ -217,9 +217,10 @@ class WorkflowRuntime:
             )
         except ModelError as exc:
             result = await self._terminal_failed(ctx, sink, str(exc), "model", started_at, input)
-        except McpResolutionError as exc:
+        except ToolResolutionError as exc:
             # D38, fourth application: eager tool-node resolution fails the
-            # run before any node runs — one persisted terminal, server named.
+            # run before any node runs — one persisted terminal, the
+            # resource (server/sub-agent) named.
             result = await self._terminal_failed(ctx, sink, str(exc), "tool", started_at, input)
         except EventSequenceError as exc:
             # A terminal from inside a node (a NodeSink refusal) is a bug —
@@ -294,7 +295,7 @@ class WorkflowRuntime:
             result = await self._terminal_failed(
                 ctx, sink, str(exc), "model", started_at, run_input
             )
-        except McpResolutionError as exc:
+        except ToolResolutionError as exc:
             result = await self._terminal_failed(ctx, sink, str(exc), "tool", started_at, run_input)
         except EventSequenceError as exc:
             result = await self._terminal_failed(

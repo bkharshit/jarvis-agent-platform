@@ -47,6 +47,7 @@ from jarvis.tools.builtin.memory import MemoryDeleteTool, MemoryGetTool, MemoryP
 from jarvis.tools.mcp.provider import McpToolProvider
 from jarvis.tools.registry import InMemoryToolRegistry
 from jarvis.tools.runtime import ToolRuntime
+from jarvis.tools.subagents.provider import SubAgentToolProvider
 
 
 @dataclass
@@ -67,6 +68,7 @@ class AppContainer:
     tools: InMemoryToolRegistry
     mcp_servers: SqlMcpServerRepo
     mcp: McpToolProvider
+    sub_agents: SubAgentToolProvider
     models: DefaultModelProviderFactory
     strategies: DefaultStrategyRegistry
     strategy_plugins: PluginLoadResult
@@ -127,6 +129,17 @@ class AppContainer:
         mcp = McpToolProvider(
             mcp_servers, registry, settings, credential_resolver=credential_resolver
         )
+        # S14 (ADR 0018 §2): the sub-agent family resolves per segment beside
+        # MCP — children are ordinary queue runs (D52), so the provider
+        # shares the executions repo, the queue (request_cancel) and the
+        # event stream (the blocking wait) with everything else.
+        sub_agents = SubAgentToolProvider(
+            agents,
+            executions,
+            queue,
+            streams,
+            max_depth=settings.sub_agent_max_depth,
+        )
 
         limits = RunLimits(
             max_iterations=settings.run_max_iterations,
@@ -157,6 +170,7 @@ class AppContainer:
             conversations=conversations,
             limits=limits,
             mcp=mcp,
+            sub_agents=sub_agents,
             trace_llm=settings.llm_trace,
             trace_buffer=LlmTraceBuffer(),
         )
@@ -200,6 +214,7 @@ class AppContainer:
             tools=registry,
             mcp_servers=mcp_servers,
             mcp=mcp,
+            sub_agents=sub_agents,
             models=models,
             strategies=strategies,
             strategy_plugins=strategy_plugins,
