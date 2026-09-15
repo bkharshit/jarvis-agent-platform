@@ -9,6 +9,7 @@ import {
   useEvalRuns,
   useUpdateEvalDataset,
   type EvalCase,
+  type ModelRef,
   type ScorerConfig,
 } from "@/api/queries/evaluations";
 import { toast } from "@/stores/toast";
@@ -19,6 +20,12 @@ import { toast } from "@/stores/toast";
 // banner relays verbatim. Eval runs list below derives status server-side
 // (D49); a run is created against the agent's LATEST PUBLISHED version —
 // pinning is a backend fact, reported in the run's summary after 202.
+//
+// The judge panel collects only provider + model; a judge_model can carry
+// more (base_url, credential_ref — curl-only creation for now). The
+// original ref is kept on the draft and rebuilt on save, so the wholesale
+// PATCH never silently drops the fields this panel doesn't collect (found
+// live in the S11 joint session); they render read-only below the inputs.
 
 const SCORER_NAMES = [
   "exact",
@@ -38,6 +45,9 @@ interface Draft {
   scorers: ScorerConfig[];
   judgeProvider: string;
   judgeModel: string;
+  /** the judge_model as the API returned it — the save rebuilds from this
+   * so fields the panel doesn't collect (base_url, credential_ref) survive */
+  judgeModelRef: ModelRef | null;
 }
 
 function ScorerParamsHint({ scorerName }: { scorerName: string }) {
@@ -74,6 +84,7 @@ export function EvalDatasetDetail() {
         scorers: dataset.scorers.map((scorer) => ({ ...scorer, params: { ...scorer.params } })),
         judgeProvider: dataset.judge_model?.provider ?? "",
         judgeModel: dataset.judge_model?.model ?? "",
+        judgeModelRef: dataset.judge_model ?? null,
       });
     }
   }, [dataset, draft]);
@@ -92,10 +103,19 @@ export function EvalDatasetDetail() {
     return <p className="px-6 py-10 text-sm text-neutral-400">Loading dataset…</p>;
   }
 
+  // rebuild from the original ref so uncollected fields (base_url,
+  // credential_ref) ride the PATCH — only provider/model are editable here
   const judgeModel =
     draft.judgeProvider.trim() && draft.judgeModel.trim()
-      ? { provider: draft.judgeProvider.trim(), model: draft.judgeModel.trim() }
+      ? {
+          ...draft.judgeModelRef,
+          provider: draft.judgeProvider.trim(),
+          model: draft.judgeModel.trim(),
+        }
       : null;
+  const judgePreserved = Object.entries(draft.judgeModelRef ?? {}).filter(
+    ([key]) => key !== "provider" && key !== "model",
+  );
 
   const save = () => {
     update.mutate(
@@ -311,6 +331,11 @@ export function EvalDatasetDetail() {
             </button>
           )}
         </div>
+        {judgePreserved.length > 0 && (
+          <p className="mt-1 font-mono text-xs text-neutral-500">
+            {judgePreserved.map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join(" · ")}
+          </p>
+        )}
 
         <button
           type="button"
