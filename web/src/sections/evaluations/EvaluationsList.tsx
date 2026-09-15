@@ -21,6 +21,7 @@ function CreateDatasetForm({
 }) {
   const create = useCreateEvalDataset();
   const [name, setName] = useState("");
+  const [firstInput, setFirstInput] = useState("");
 
   return (
     <form
@@ -31,7 +32,9 @@ function CreateDatasetForm({
           {
             name,
             description: "",
-            cases: [{ id: "c-1", input: "", expected: "" }],
+            // an empty case input is a 422 at the boundary (RunRequest.input
+            // is min_length=1) — the first case's input is collected here
+            cases: [{ id: "c-1", input: firstInput.trim(), expected: "" }],
             scorers: [{ name: "exact" }],
           },
           {
@@ -52,10 +55,21 @@ function CreateDatasetForm({
         placeholder="smoke-dataset"
         className="mt-1 w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-sm text-neutral-100"
       />
+      <label className="mt-3 block text-sm text-neutral-300" htmlFor="dataset-first-input">
+        First case input
+      </label>
+      <input
+        id="dataset-first-input"
+        required
+        value={firstInput}
+        onChange={(event) => setFirstInput(event.target.value)}
+        placeholder="what to ask the agent…"
+        className="mt-1 w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-sm text-neutral-100"
+      />
       <div className="mt-3 flex gap-2">
         <button
           type="submit"
-          disabled={create.isPending || !name.trim()}
+          disabled={create.isPending || !name.trim() || !firstInput.trim()}
           className="cursor-pointer rounded bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:opacity-50"
         >
           {create.isPending ? "Creating…" : "Create dataset"}

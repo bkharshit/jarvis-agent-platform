@@ -22,10 +22,15 @@ class _Model(BaseModel):
 class EvalCase(_Model):
     """One test input. `id` is a stable uuid the results reference —
     cases live inside the dataset's JSONB snapshot (D48), so this id is
-    the join key, not a foreign key into a cases table."""
+    the join key, not a foreign key into a cases table.
+
+    `input` is min_length=1 because it becomes RunRequest.input at run
+    creation (min_length=1 there too) — an empty-input case must be
+    rejected at the dataset boundary (422), never as a run-time 500
+    (found live in the S11 joint session)."""
 
     id: str
-    input: str
+    input: str = Field(min_length=1)
     expected: str | None = None
     variables: dict[str, str] = Field(default_factory=dict)
 

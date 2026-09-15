@@ -34,7 +34,7 @@ describe("<EvaluationsList/>", () => {
     expect(await screen.findByText("database unavailable")).toBeInTheDocument();
   });
 
-  it("creates a dataset with the starter case + exact scorer", async () => {
+  it("creates a dataset with the first case input + exact scorer", async () => {
     const user = userEvent.setup();
     const bodies: unknown[] = [];
     server.use(
@@ -47,15 +47,30 @@ describe("<EvaluationsList/>", () => {
     renderWithProviders(<EvaluationsList />);
     await user.click(await screen.findByRole("button", { name: "New dataset" }));
     await user.type(await screen.findByLabelText("Dataset name"), "regression set");
+    // an empty first-case input is a 422 at the backend boundary — the form
+    // collects it here and the submit stays disabled until it's non-empty
+    await user.type(await screen.findByLabelText("First case input"), "what is 2+2?");
     await user.click(screen.getByRole("button", { name: "Create dataset" }));
 
     await waitFor(() => expect(bodies).toHaveLength(1));
     expect(bodies[0]).toEqual({
       name: "regression set",
       description: "",
-      cases: [{ id: "c-1", input: "", expected: "" }],
+      cases: [{ id: "c-1", input: "what is 2+2?", expected: "" }],
       scorers: [{ name: "exact" }],
     });
+  });
+
+  it("keeps create disabled until the first case input is filled", async () => {
+    const user = userEvent.setup();
+    const createSpy = vi.fn(() => HttpResponse.json(evalDatasetFixture, { status: 201 }));
+    server.use(http.post("/v1/evaluations/datasets", () => createSpy()));
+
+    renderWithProviders(<EvaluationsList />);
+    await user.click(await screen.findByRole("button", { name: "New dataset" }));
+    await user.type(await screen.findByLabelText("Dataset name"), "no input yet");
+    expect(screen.getByRole("button", { name: "Create dataset" })).toBeDisabled();
+    expect(createSpy).not.toHaveBeenCalled();
   });
 
   it("cancels the create form without POSTing", async () => {

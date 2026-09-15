@@ -91,6 +91,35 @@ async def test_dataset_crud_roundtrip(client):
 
 
 @pytest.mark.db
+async def test_empty_case_input_422_at_the_boundary(client):
+    """A case with an empty input becomes RunRequest.input (min_length=1)
+    at run creation — found live in the S11 joint session: a web-created
+    starter case (`input: ""`) sailed through dataset create and 500'd
+    POST /runs. The dataset boundary must reject it (422) instead."""
+    resp = await client.post(
+        "/v1/evaluations/datasets",
+        json={
+            "name": "empty-input",
+            "cases": [{"id": "c-1", "input": "", "expected": "x"}],
+            "scorers": [{"name": "exact"}],
+        },
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["kind"] == "validation"
+
+    created = await _create_dataset(client, expected=DEFAULT_REPLY)
+    patched = await client.patch(
+        f"/v1/evaluations/datasets/{created['id']}",
+        json={
+            "name": "empty-input",
+            "cases": [{"id": "c-1", "input": "", "expected": "x"}],
+            "scorers": [{"name": "exact"}],
+        },
+    )
+    assert patched.status_code == 422
+
+
+@pytest.mark.db
 async def test_llm_judge_without_judge_model_422(client):
     resp = await client.post(
         "/v1/evaluations/datasets",
