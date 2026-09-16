@@ -73,6 +73,7 @@ async def list_executions(
     status: ExecutionStatus | None = None,
     session_id: str | None = None,
     parent_run_id: str | None = None,
+    trigger_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
     auth: AuthContext = AuthDep,
@@ -85,6 +86,7 @@ async def list_executions(
         limit=limit,
         offset=offset,
         parent_run_id=parent_run_id,
+        trigger_id=trigger_id,
     )
     names = await _names(container, [run.agent_id for run in items])
     return ExecutionList(items=items, names=names)

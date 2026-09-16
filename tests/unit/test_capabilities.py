@@ -37,6 +37,7 @@ def _stub_container(
     mcp_servers: list[dict] | None = None,
     llm_trace: bool = False,
     workflows: list = None,  # type: ignore[assignment]
+    triggers: list = None,  # type: ignore[assignment]
 ) -> SimpleNamespace:
     caps = capabilities or ModelCapabilities()
 
@@ -56,6 +57,9 @@ def _stub_container(
     async def _list_eval_runs(*, tenant_id: str | None = None) -> list:
         return []
 
+    async def _list_triggers(*, tenant_id: str | None = None) -> list:
+        return triggers or []
+
     return SimpleNamespace(
         settings=Settings(
             _env_file=None, strategy_plugin_allowlist=allowlist or [], llm_trace=llm_trace
@@ -67,6 +71,7 @@ def _stub_container(
         mcp_servers=SimpleNamespace(list_servers=_list_servers),
         workflows=SimpleNamespace(list_workflows=_list_workflows),
         evaluations=SimpleNamespace(list_datasets=_list_eval_datasets, list_runs=_list_eval_runs),
+        triggers=SimpleNamespace(list_triggers=_list_triggers),
     )
 
 

@@ -18,6 +18,7 @@ from jarvis.api.auth import AuthContext, AuthDep
 from jarvis.api.deps import AppContainer, get_container
 from jarvis.api.schemas import CapabilitiesResponse, SectionCapability
 from jarvis.domain.agent import ModelRef
+from jarvis.persistence.models import DEFAULT_TENANT
 
 router = APIRouter(tags=["capabilities"])
 
@@ -50,7 +51,7 @@ _SECTION_FLAGS: dict[str, dict[str, Any]] = {
     "evaluations": {"enabled": True, "summary": "Datasets, runs, and scores"},
     "observability": {"enabled": False, "stage": "S7", "summary": "Traces and spans"},
     "plugins": {"enabled": True, "summary": "Strategy plugins and discovery"},
-    "triggers": {"enabled": False, "stage": "S13", "summary": "Cron, webhook, and event rules"},
+    "triggers": {"enabled": True, "summary": "Cron, webhook, and event rules"},
     "settings": {"enabled": True, "summary": "Auth, tenants, API keys, BYOK credentials"},
 }
 
@@ -138,6 +139,23 @@ async def _workflows_detail(container: AppContainer) -> dict[str, Any]:
     return {"node_types": ["agent", "tool", "condition"], "count": len(workflows)}
 
 
+async def _triggers_detail(container: AppContainer, *, tenant_id: str | None) -> dict[str, Any]:
+    """S13 (ADR 0019 §6, D62): the Triggers section is live — the derived
+    fact is the tenant's trigger counts by kind, read from the repo at
+    request time (the S4 derived-facts pattern). Triggers have no shared
+    tier (strict tenancy) — the unit-stub None falls to the default tenant."""
+    triggers = await container.triggers.list_triggers(tenant_id=tenant_id or DEFAULT_TENANT)
+    by_kind: dict[str, int] = {"cron": 0, "webhook": 0, "event": 0}
+    for trigger in triggers:
+        by_kind[trigger.kind] += 1
+    return {
+        "total": len(triggers),
+        "cron": by_kind["cron"],
+        "webhook": by_kind["webhook"],
+        "event": by_kind["event"],
+    }
+
+
 async def build_capabilities(
     container: AppContainer, *, tenant_id: str | None = None
 ) -> CapabilitiesResponse:
@@ -172,6 +190,8 @@ async def build_capabilities(
             detail = await _workflows_detail(container)
         elif key == "evaluations":
             detail = await _evaluations_detail(container, tenant_id=tenant_id)
+        elif key == "triggers":
+            detail = await _triggers_detail(container, tenant_id=tenant_id)
         elif key == "models":
             detail = await _model_providers_detail(container)
         elif key == "plugins":

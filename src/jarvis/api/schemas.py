@@ -25,6 +25,7 @@ from jarvis.domain.execution import RunResult
 from jarvis.domain.mcp import MCP_NAME_SLUG, McpServer, McpServerConfig
 from jarvis.domain.message import Message
 from jarvis.domain.tools import ToolDescriptor, ToolResult
+from jarvis.domain.trigger import Trigger, TriggerConfig, TriggerKind, TriggerVersionPolicy
 from jarvis.domain.workflow import WorkflowDefinition, WorkflowEdge, WorkflowNode
 from jarvis.ports.queue import ResumeRequest
 
@@ -369,6 +370,96 @@ class McpProbeResponse(_Model):
     tools: list[ToolDescriptor]
 
 
+class TriggerCreate(_Model):
+    """POST /v1/triggers — kind and config must agree (the domain validator
+    maps to 422); a cron schedule is parse-validated via croniter; the
+    target must have a published version (a `pinned` policy stamps it —
+    D42/D51 transposed)."""
+
+    name: str = Field(min_length=1)
+    kind: TriggerKind
+    agent_id: str = Field(min_length=1)
+    version_policy: TriggerVersionPolicy = "latest"
+    input_template: str | None = None
+    enabled: bool = True
+    config: TriggerConfig
+
+
+class TriggerPatch(_Model):
+    """PATCH /v1/triggers/{id} — FULL document (the mcp/eval discipline).
+    The secret is never patchable (rotate-only); id/tenant/fire bookkeeping
+    are server-owned."""
+
+    name: str
+    kind: TriggerKind
+    agent_id: str
+    version_policy: TriggerVersionPolicy
+    input_template: str | None
+    enabled: bool
+    config: TriggerConfig
+
+
+class TriggerOut(_Model):
+    """A trigger as the API returns it — NO secret field ever (D29/D30):
+    the AES-GCM envelope lives on the row, the plaintext exists exactly
+    once (create / rotate responses)."""
+
+    id: str
+    tenant_id: str
+    name: str
+    kind: TriggerKind
+    agent_id: str
+    agent_version_id: str | None = None
+    version_policy: TriggerVersionPolicy = "latest"
+    input_template: str | None = None
+    enabled: bool = True
+    config: TriggerConfig
+    next_fire_at: datetime | None = None
+    last_fired_at: datetime | None = None
+    last_error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_domain(cls, trigger: Trigger) -> TriggerOut:
+        return cls(**trigger.model_dump(exclude={"secret"}))
+
+
+class TriggerList(_Model):
+    """GET /v1/triggers."""
+
+    items: list[TriggerOut]
+
+
+class TriggerDetail(_Model):
+    """GET /v1/triggers/{id} — the row plus the derived lints (the
+    workflow-detail shape): stale pin, memory-on-target."""
+
+    trigger: TriggerOut
+    lints: list[str]
+
+
+class TriggerCreated(_Model):
+    """POST /v1/triggers — the row, plus the webhook secret's plaintext
+    shown EXACTLY ONCE (webhook kind only; D29/D30)."""
+
+    trigger: TriggerOut
+    secret: str | None = None
+
+
+class TriggerSecretResponse(_Model):
+    """POST /v1/triggers/{id}/rotate-secret — the new plaintext, once."""
+
+    secret: str
+
+
+class TriggerFireResponse(_Model):
+    """POST /v1/triggers/{id}/fire — the pre-generated run_id of an
+    ordinary queue run."""
+
+    run_id: str
+
+
 class EvalDatasetUpsert(_Model):
     """POST/PATCH /evaluations/datasets — the mutable fields wholesale
     (the PATCH discipline). D50: scorers including `llm_judge` without a
@@ -500,5 +591,13 @@ __all__ = [
     "ResumeBody",
     "RunRequest",
     "SectionCapability",
+    "TriggerCreated",
+    "TriggerCreate",
+    "TriggerDetail",
+    "TriggerFireResponse",
+    "TriggerList",
+    "TriggerOut",
+    "TriggerPatch",
+    "TriggerSecretResponse",
     "VersionSummary",
 ]
