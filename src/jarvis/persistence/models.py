@@ -37,6 +37,7 @@ EXECUTION_STATUSES = (
     "cancelled",
     "timed_out",
 )
+TRIGGER_KINDS = ("cron", "webhook", "event")
 MESSAGE_ROLES = ("system", "developer", "user", "assistant", "tool")
 QUEUE_STATUSES = ("pending", "claimed", "done")
 USER_ROLES = ("owner", "admin", "member")
@@ -157,6 +158,7 @@ class AgentExecutionRow(Base):
         Index("ix_agent_executions_agent_created", "agent_id", "created_at"),
         Index("ix_agent_executions_session", "session_id"),
         Index("ix_agent_executions_parent_run_id", "parent_run_id"),
+        Index("ix_agent_executions_trigger_id", "trigger_id"),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -177,6 +179,11 @@ class AgentExecutionRow(Base):
     # set from the queue message at enqueue — a real column, not metadata
     # JSONB, so cancel fan-out and list filters can query it.
     parent_run_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # The trigger provenance (S13, ADR 0019 §6, D57): NULL for manually
+    # started runs — a real column + index (queryable filter), and NO FK so
+    # a deleted trigger's past runs keep their provenance (DELETE is always
+    # allowed; the eval 409-with-runs was rejected).
+    trigger_id: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(
         Enum(*EXECUTION_STATUSES, name="execution_status", native_enum=True),
         nullable=False,
@@ -488,6 +495,54 @@ class MemoryScratchRow(Base):
     )
 
 
+class TriggerRow(Base):
+    """One trigger rule (S13, ADR 0019 §1, D57) — strictly tenant-owned.
+    `agent_id` is a loose reference (no FK, the mcp-name precedent): firing
+    fails honestly with `last_error` when the target is gone. `config` is
+    the kind-typed JSONB union; `secret` is the webhook HMAC secret's
+    AES-GCM envelope (write-only, never in a GET)."""
+
+    __tablename__ = "triggers"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_triggers_tenant_name"),
+        # The scheduler's claim query (D59): due crons are
+        # kind='cron' AND enabled AND next_fire_at <= now.
+        Index("ix_triggers_due_crons", "kind", "enabled", "next_fire_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("tenants.id"),
+        nullable=False,
+        default=DEFAULT_TENANT,
+        server_default=DEFAULT_TENANT,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(
+        Enum(*TRIGGER_KINDS, name="trigger_kind", native_enum=True), nullable=False
+    )
+    agent_id: Mapped[str] = mapped_column(String, nullable=False)
+    # The `pinned` policy's stamped snapshot; NULL under `latest` (resolved
+    # at fire time — the explicit opt-in to drift).
+    agent_version_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    version_policy: Mapped[str] = mapped_column(String, nullable=False, default="latest")
+    input_template: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    secret: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    next_fire_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
+
+
 class EvalDatasetRow(Base):
     """One evaluation dataset (S11, ADR 0017 §2, D48). Cases and scorer
     configs live as JSONB — cases are only ever read as a whole dataset,
@@ -587,6 +642,8 @@ __all__ = [
     "SessionRow",
     "TenantRow",
     "ToolExecutionRow",
+    "TRIGGER_KINDS",
+    "TriggerRow",
     "USER_ROLES",
     "UserRow",
     "WorkflowRow",

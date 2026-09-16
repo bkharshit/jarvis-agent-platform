@@ -157,6 +157,7 @@ class TenantScopedExecutions:
         offset: int = 0,
         *,
         parent_run_id: str | None = None,
+        trigger_id: str | None = None,
     ) -> list[RunResult]:
         return await self._inner.list_runs(
             agent_id=agent_id,
@@ -166,6 +167,7 @@ class TenantScopedExecutions:
             offset=offset,
             tenant_id=self._tenant_id,
             parent_run_id=parent_run_id,
+            trigger_id=trigger_id,
         )
 
     # nested reads — authorized by the caller's scoped `get` above

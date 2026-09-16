@@ -49,7 +49,15 @@ from jarvis.domain.execution import ExecutionStatus, RunResult
 from jarvis.domain.mcp import McpServer, McpServerConfig
 from jarvis.domain.message import Message, Usage
 from jarvis.domain.tools import ToolResult
+from jarvis.domain.trigger import (
+    CronConfig,
+    Trigger,
+    TriggerConfig,
+    TriggerKind,
+    TriggerVersionPolicy,
+)
 from jarvis.domain.workflow import WorkflowDefinition, WorkflowVersion
+from jarvis.persistence.cron import next_cron_fire
 from jarvis.persistence.models import (
     DEFAULT_TENANT,
     AgentExecutionRow,
@@ -70,6 +78,7 @@ from jarvis.persistence.models import (
     SessionRow,
     TenantRow,
     ToolExecutionRow,
+    TriggerRow,
     UserRow,
     WorkflowRow,
     WorkflowVersionRow,
@@ -78,6 +87,7 @@ from jarvis.ports.queue import ResumeRequest, RunQueueMessage
 
 _EVENT_ADAPTER: TypeAdapter[ExecutionEvent] = TypeAdapter(ExecutionEvent)
 _MCP_CONFIG_ADAPTER: TypeAdapter[McpServerConfig] = TypeAdapter(McpServerConfig)
+_TRIGGER_CONFIG_ADAPTER: TypeAdapter[TriggerConfig] = TypeAdapter(TriggerConfig)
 
 
 def create_sessionmaker(database_url: str) -> async_sessionmaker[AsyncSession]:
@@ -816,6 +826,7 @@ class SqlExecutionRepo:
                     finished_at=row.finished_at,
                     event_cursor=row.event_cursor,
                     metadata_json=row.metadata_json,
+                    trigger_id=row.trigger_id,
                 )
                 .on_conflict_do_update(
                     index_elements=[AgentExecutionRow.id],
@@ -870,6 +881,7 @@ class SqlExecutionRepo:
         *,
         tenant_id: str | None = None,
         parent_run_id: str | None = None,
+        trigger_id: str | None = None,
     ) -> list[RunResult]:
         query = select(AgentExecutionRow)
         if tenant_id is not None:
@@ -883,6 +895,9 @@ class SqlExecutionRepo:
         if parent_run_id is not None:
             # S14 (ADR 0018 §3): equality over the nullable parent column.
             query = query.where(AgentExecutionRow.parent_run_id == parent_run_id)
+        if trigger_id is not None:
+            # S13 (ADR 0019 §6): equality over the nullable provenance column.
+            query = query.where(AgentExecutionRow.trigger_id == trigger_id)
         query = query.order_by(AgentExecutionRow.created_at.desc()).limit(limit).offset(offset)
         async with self._sessionmaker() as session:
             rows = (await session.execute(query)).scalars()
@@ -1014,6 +1029,13 @@ class SqlExecutionRepo:
 
     @staticmethod
     def _run_row(result: RunResult) -> AgentExecutionRow:
+        # The trigger provenance column rides the metadata namespace (D62) —
+        # the firing service stamps metadata["trigger"], this boundary lifts
+        # the id onto the real column for the queryable filter. No domain
+        # field: RunResult stays additive-clean (the S13 plan pre-declared
+        # only the TriggerRepo/list_runs ports changes).
+        trigger = result.metadata.get("trigger")
+        trigger_id = trigger.get("trigger_id") if isinstance(trigger, dict) else None
         return AgentExecutionRow(
             id=result.run_id,
             agent_id=result.agent_id,
@@ -1024,6 +1046,7 @@ class SqlExecutionRepo:
             session_id=result.session_id,
             trace_id=result.trace_id,
             parent_run_id=result.parent_run_id,
+            trigger_id=trigger_id if isinstance(trigger_id, str) else None,
             status=result.status,
             input=result.input,
             output=result.final_message,
@@ -1629,6 +1652,214 @@ class SqlEvalRepo:
         return (await session.execute(query)).scalar_one_or_none()
 
 
+class SqlTriggerRepo:
+    """Trigger rules (S13, ADR 0019 §1, D57) — strictly tenant-owned rows,
+    the McpServerRepo shape minus the shared tier: every call takes a
+    REQUIRED `tenant_id` kwarg and scopes its WHERE clause (D29: a foreign
+    id resolves to None/False, never leaked). Rows are mutable; the fired
+    runs + their pinned versions are the audit trail."""
+
+    def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
+        self._sessionmaker = sessionmaker
+
+    async def create(self, trigger: Trigger, *, tenant_id: str) -> Trigger:
+        row = self._row(trigger, tenant_id)
+        async with self._sessionmaker() as session:
+            session.add(row)
+            await session.commit()
+        return self._load(row)
+
+    async def get(self, trigger_id: str, *, tenant_id: str) -> Trigger | None:
+        async with self._sessionmaker() as session:
+            row = (
+                await session.execute(
+                    select(TriggerRow).where(
+                        TriggerRow.id == trigger_id, TriggerRow.tenant_id == tenant_id
+                    )
+                )
+            ).scalar_one_or_none()
+        return None if row is None else self._load(row)
+
+    async def list_triggers(self, *, tenant_id: str) -> list[Trigger]:
+        async with self._sessionmaker() as session:
+            rows = (
+                await session.execute(
+                    select(TriggerRow)
+                    .where(TriggerRow.tenant_id == tenant_id)
+                    .order_by(TriggerRow.created_at, TriggerRow.id)
+                )
+            ).scalars()
+            return [self._load(row) for row in rows]
+
+    async def update(self, trigger: Trigger, *, tenant_id: str) -> Trigger:
+        async with self._sessionmaker() as session:
+            row = (
+                await session.execute(
+                    select(TriggerRow).where(
+                        TriggerRow.id == trigger.id, TriggerRow.tenant_id == tenant_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                raise LookupError(f"trigger {trigger.id} not found")
+            self._apply(row, trigger)
+            await session.commit()
+            return self._load(row)
+
+    async def delete(self, trigger_id: str, *, tenant_id: str) -> bool:
+        async with self._sessionmaker() as session:
+            row = (
+                await session.execute(
+                    select(TriggerRow).where(
+                        TriggerRow.id == trigger_id, TriggerRow.tenant_id == tenant_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return False
+            await session.delete(row)
+            await session.commit()
+        return True
+
+    async def claim_due_crons(self, now: datetime, limit: int = 10) -> list[Trigger]:
+        """D59, the queue-claim idiom (SKIP LOCKED + guarded advance): one
+        transaction claims AND advances due crons — the enqueue happens
+        after this commit, so a crash in between is an honest miss, never a
+        duplicate run."""
+        async with self._sessionmaker() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(TriggerRow)
+                        .where(
+                            TriggerRow.kind == "cron",
+                            TriggerRow.enabled.is_(True),
+                            TriggerRow.next_fire_at.is_not(None),
+                            TriggerRow.next_fire_at <= now,
+                        )
+                        .order_by(TriggerRow.next_fire_at, TriggerRow.id)
+                        .limit(limit)
+                        .with_for_update(skip_locked=True)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            claimed: list[Trigger] = []
+            for row in rows:
+                schedule = self._cron_schedule(row)
+                if schedule is None:
+                    # An unfireable row is claimed-but-parked honestly, not
+                    # raised past the loop: it stays enabled with a
+                    # last_error and a far-future retry is avoided by
+                    # clearing next_fire_at (re-enabling re-stamps it).
+                    row.last_fired_at = now
+                    row.next_fire_at = None
+                    row.last_error = "stored schedule no longer parses — re-save to fix"
+                    continue
+                row.last_fired_at = now
+                row.next_fire_at = next_cron_fire(schedule, now)
+                row.last_error = None
+                claimed.append(self._load(row))
+            await session.commit()
+        return claimed
+
+    async def record_fire(
+        self, trigger_id: str, *, tenant_id: str, fired_at: datetime, error: str | None = None
+    ) -> None:
+        async with self._sessionmaker() as session:
+            await session.execute(
+                update(TriggerRow)
+                .where(TriggerRow.id == trigger_id, TriggerRow.tenant_id == tenant_id)
+                .values(last_fired_at=fired_at, last_error=error)
+            )
+            await session.commit()
+
+    async def enabled_event_triggers(self, tenant_id: str) -> list[Trigger]:
+        async with self._sessionmaker() as session:
+            rows = (
+                await session.execute(
+                    select(TriggerRow)
+                    .where(
+                        TriggerRow.kind == "event",
+                        TriggerRow.enabled.is_(True),
+                        TriggerRow.tenant_id == tenant_id,
+                    )
+                    .order_by(TriggerRow.created_at, TriggerRow.id)
+                )
+            ).scalars()
+            return [self._load(row) for row in rows]
+
+    # --- helpers -----------------------------------------------------------
+
+    @staticmethod
+    def _cron_schedule(row: TriggerRow) -> str | None:
+        """The row's cron schedule, re-validated at claim time — a row whose
+        stored config no longer parses must not advance into an unparsable
+        next_fire_at (the claim records the miss honestly instead)."""
+        try:
+            config = _TRIGGER_CONFIG_ADAPTER.validate_python(row.config)
+        except Exception:  # noqa: BLE001 — a poisoned row is a claimed miss
+            return None
+        if not isinstance(config, CronConfig):
+            return None
+        try:
+            next_cron_fire(config.schedule, datetime.now(UTC))
+        except (ValueError, TypeError):
+            return None
+        return config.schedule
+
+    @staticmethod
+    def _apply(row: TriggerRow, trigger: Trigger) -> None:
+        """Replace the mutable fields from the given (already validated)
+        domain object — the full-document PATCH discipline's repo side.
+        `secret` rides `update` only when the caller carries one (a rotate);
+        passing a Trigger without it keeps the row's envelope."""
+        row.name = trigger.name
+        row.kind = trigger.kind
+        row.agent_id = trigger.agent_id
+        row.agent_version_id = trigger.agent_version_id
+        row.version_policy = trigger.version_policy
+        row.input_template = trigger.input_template
+        row.enabled = trigger.enabled
+        row.config = trigger.config.model_dump(mode="json")
+        row.secret = trigger.secret if trigger.secret is not None else row.secret
+        row.next_fire_at = trigger.next_fire_at
+        row.last_error = trigger.last_error
+        row.updated_at = _now()
+
+    @classmethod
+    def _row(cls, trigger: Trigger, tenant_id: str) -> TriggerRow:
+        row = TriggerRow(
+            id=trigger.id,
+            tenant_id=tenant_id,
+            created_at=trigger.created_at,
+        )
+        cls._apply(row, trigger)
+        return row
+
+    @staticmethod
+    def _load(row: TriggerRow) -> Trigger:
+        return Trigger(
+            id=row.id,
+            tenant_id=row.tenant_id,
+            name=row.name,
+            kind=cast(TriggerKind, row.kind),
+            agent_id=row.agent_id,
+            agent_version_id=row.agent_version_id,
+            version_policy=cast(TriggerVersionPolicy, row.version_policy),
+            input_template=row.input_template,
+            enabled=row.enabled,
+            config=_TRIGGER_CONFIG_ADAPTER.validate_python(row.config),
+            secret=row.secret,
+            next_fire_at=row.next_fire_at,
+            last_fired_at=row.last_fired_at,
+            last_error=row.last_error,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+
 class SqlAuthRepo:
     """Users, sessions, API keys, and stored credentials (S2, ADR 0009 §3).
 
@@ -2186,6 +2417,7 @@ class SqlRunQueue:
 
 __all__ = [
     "SqlAgentRepo",
+    "SqlTriggerRepo",
     "SqlWorkflowRepo",
     "SqlAuthRepo",
     "SqlConversationRepo",

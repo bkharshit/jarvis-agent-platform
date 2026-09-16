@@ -29,6 +29,7 @@ from jarvis.domain.execution import ExecutionStatus, RunResult
 from jarvis.domain.mcp import McpServer
 from jarvis.domain.message import Message, Usage
 from jarvis.domain.tools import ToolResult
+from jarvis.domain.trigger import Trigger
 from jarvis.domain.workflow import WorkflowDefinition, WorkflowVersion
 
 
@@ -140,10 +141,13 @@ class ExecutionRepo(Protocol):
         offset: int = 0,
         *,
         parent_run_id: str | None = None,
+        trigger_id: str | None = None,
     ) -> list[RunResult]:
         """`parent_run_id` (S14, ADR 0018 §3): equality filter over the
         nullable parent column — a run's children, or None-filtered for
-        root runs when the API needs it."""
+        root runs when the API needs it.
+        `trigger_id` (S13, ADR 0019 §6): equality filter over the nullable
+        provenance column — the runs a trigger fired."""
         ...
 
     async def save_message(self, run_id: str, message: Message) -> None: ...
@@ -259,6 +263,53 @@ class McpServerRepo(Protocol):
     async def delete(self, server_id: str, *, tenant_id: str | None = None) -> bool: ...
 
 
+class TriggerRepo(Protocol):
+    """Trigger rules (S13, ADR 0019 §1) — strictly tenant-owned rows, no
+    platform-shared tier: explicit REQUIRED `tenant_id` kwargs (the
+    McpServerRepo pattern minus shared rows; D29: a foreign id reads as
+    absent, never leaked). Rows are mutable (no snapshot discipline — the
+    fired runs + their pinned versions are the audit trail)."""
+
+    async def create(self, trigger: Trigger, *, tenant_id: str) -> Trigger:
+        """Create the row; the returned trigger carries the stamped tenant."""
+        ...
+
+    async def get(self, trigger_id: str, *, tenant_id: str) -> Trigger | None: ...
+
+    async def list_triggers(self, *, tenant_id: str) -> list[Trigger]: ...
+
+    async def update(self, trigger: Trigger, *, tenant_id: str) -> Trigger:
+        """Replace the mutable fields of the existing row; None when absent.
+        The caller owns schedule math (next_fire_at on create/enable)."""
+        ...
+
+    async def delete(self, trigger_id: str, *, tenant_id: str) -> bool:
+        """Always deletable — no-FK provenance keeps past runs' trigger_id
+        intact (ADR 0019 §6; the eval 409-with-runs was rejected)."""
+        ...
+
+    async def claim_due_crons(self, now: datetime, limit: int = 10) -> list[Trigger]:
+        """Advance due cron triggers (D59): one transaction — SELECT due
+        `kind='cron' AND enabled` rows FOR UPDATE SKIP LOCKED, then advance
+        each (`last_fired_at=now`, `next_fire_at=croniter_next(now)`,
+        `last_error=NULL`) and COMMIT. Two racing claimants: the row lock
+        makes exactly one win (the queue-claim idiom). The enqueue happens
+        AFTER this commit — a crash in between misses the fire honestly."""
+        ...
+
+    async def record_fire(
+        self, trigger_id: str, *, tenant_id: str, fired_at: datetime, error: str | None = None
+    ) -> None:
+        """Stamp `last_fired_at` (+ `last_error` when a fire's enqueue or
+        evaluation failed — the honest record, never a retry storm)."""
+        ...
+
+    async def enabled_event_triggers(self, tenant_id: str) -> list[Trigger]:
+        """Enabled `kind='event'` rows of the tenant — the finalize observer's
+        candidates (D61; matching happens at the service)."""
+        ...
+
+
 class EvalRepo(Protocol):
     """Evaluation datasets, runs, and results (S11, ADR 0017 §3, D48) —
     tenant-scoped via explicit `tenant_id` kwargs (the McpServerRepo
@@ -350,5 +401,6 @@ __all__ = [
     "ExecutionRepo",
     "McpServerRepo",
     "ScratchpadRepo",
+    "TriggerRepo",
     "WorkflowRepo",
 ]

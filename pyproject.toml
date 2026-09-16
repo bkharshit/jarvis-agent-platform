@@ -25,6 +25,7 @@ dependencies = [
     "pyyaml>=6.0",
     "cryptography>=44.0",
     "mcp>=2.0,<3",
+    "croniter>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -92,4 +93,10 @@ strict = true
 # asyncpg ships no py.typed marker; the LISTEN/NOTIFY adapter is the only
 # direct consumer (the SQLAlchemy engine wraps it everywhere else).
 module = "asyncpg"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# croniter (S13, D59) ships no py.typed marker; the persistence/cron seam
+# is its only consumer — the schedule math is validated there.
+module = "croniter"
 ignore_missing_imports = true

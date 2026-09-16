@@ -13,7 +13,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-AuthMode = Literal["anonymous", "session", "api_key"]
+# S13 (ADR 0019 §2): `"system"` is the trigger-firing service principal —
+# no human is acting; tenant-scoped credential resolution (D28) still works.
+# Additive member; `mode`'s only branch is `is_anonymous`.
+AuthMode = Literal["anonymous", "session", "api_key", "system"]
 TenantRole = Literal["owner", "admin", "member"]
 
 
