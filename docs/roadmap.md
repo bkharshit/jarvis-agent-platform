@@ -538,6 +538,46 @@ ships independently, as the backend items do).
 
 ## S13 — Triggers
 
+> **Planning committed 2026-09-16** — `docs/adr/0019-triggers.md`
+> (D57–D62 in decisions.md), commit sequence in
+> `docs/implementation-plan-s13.md`. No S13 code exists. Scope
+> confirmed by Harshit: all three kinds in v1; cron rides **croniter +
+> a Postgres-truth loop** (APScheduler rejected — its job-store
+> paradigm fights the tenant/credential model; the "Postgres-cron
+> loop" option matches the `_sweep_loop` idiom). Key deltas from the
+> sketch below, all verified against code before writing:
+>
+> - **A trigger is exactly the queue producer ADR 0008 pre-declared**
+>   ("`enqueue` on the port exists for future producers") — the
+>   `child_runs` composition transposed with no parent; the worker,
+>   envelope, and queue contract are untouched. The fired run's
+>   principal is a synthesized service principal (new additive
+>   `AuthMode "system"` member) — `None` would break stored-BYOK
+>   resolution (D28).
+> - **Provenance is a real column**, not just metadata: the sketch's
+>   `metadata.trigger_id` rides BOTH a nullable indexed
+>   `agent_executions.trigger_id` (the D53 filter argument) and a
+>   namespaced `metadata["trigger"]` block (every other producer's
+>   style). No FK — deleting a trigger keeps its runs' provenance.
+> - **Event triggers evaluate at ONE seam**: an optional post-commit
+>   observer on `SqlExecutionRepo.finish_run` — the single choke point
+>   every terminal path already funnels through (runtime tails, worker
+>   fail-fast, sweeper, pause-reaper, cancel route). The guard reads
+>   the ROW's metadata (the runtime's finalize result carries none —
+>   a verified trap), and a pre-declared S14 seam change makes
+>   sub-agent children + handoff successors copy the parent's trigger
+>   provenance or child-completions re-fire through every generation.
+> - **Cron firing is claim-first at-most-once**: the due-claim is one
+>   `FOR UPDATE SKIP LOCKED` transaction (the codebase's only
+>   concurrency idiom — no advisory locks, no APScheduler); the
+>   enqueue follows and a miss is an honest `last_error`, never a
+>   retry storm. Catch-up after downtime fires ONCE.
+> - **Webhook secrets reuse the D30 AES-GCM machinery**: generated at
+>   create, stored in the trigger row, plaintext exactly once (the
+>   API-key pattern), never in GET; the ingest route takes no auth
+>   dependency (no middleware exists — the login precedent) and the
+>   trigger row is the trust boundary.
+
 **Goal:** runs start without a human calling `/run` — schedules, webhooks,
 event watchers.
 

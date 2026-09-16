@@ -648,6 +648,144 @@ the code.
   (the rendered-transcript upgrade path); sub-agent/HITL composition;
   cross-tenant sub-agents.
 
+- **D57 (2026-09-16, S13 planning) — One tenant-owned `triggers`
+  table; three kinds; typed configs; provenance is a real column
+  (ADR 0019 §1).** Migration 0013: `triggers` (eval tenancy pattern —
+  `tenant_id` NOT NULL + `"default"` server_default) with kind-specific
+  JSONB `config` union in NEW `domain/trigger.py`:
+  `CronConfig{schedule}` (five-field, croniter-validated at the
+  boundary, UTC-only — IANA per-trigger timezones deferred),
+  `WebhookConfig{}`, `EventConfig{status: succeeded|failed|cancelled|
+  timed_out|any, source_agent_id?}` (the CLOSED condition set — "tool
+  emits Y" deferred). `agent_id` is a loose string reference, NO FK
+  (the mcp-binding precedent; firing a dead agent fails honestly via
+  `last_error`). Provenance: `agent_executions.trigger_id` nullable
+  string, NO FK, + index — the D53 argument (the executions filter
+  needs a queryable index, not a JSONB scan), and no FK means DELETE
+  is always 204 with past runs keeping their provenance (the eval
+  409-with-runs REJECTED). Ports (the rule-7 pre-declared pair): NEW
+  `TriggerRepo` Protocol (explicit `tenant_id` kwargs, the
+  McpServerRepo pattern) + `ExecutionRepo.list_runs` gains
+  `trigger_id`. Version policy `pinned|latest`: pinned = route-stamped
+  `agent_version_id` (the `_pin_agent_versions` pattern, D42/D51
+  transposed; 422 no published version; republish = detail LINT),
+  latest = NULL pin resolved at fire time (explicit opt-in to drift).
+
+- **D58 (2026-09-16, S13 planning) — A trigger is an ordinary queue
+  producer; the principal is a synthesized service principal
+  (ADR 0019 §2).** `runtime/trigger_firing.py` composes the
+  child-run shape with NO parent: fresh run_id + trace_id, fresh
+  platform deadline, `session_id=None`, metadata `{"trigger":
+  {trigger_id, kind, name, depth}}`, then `enqueue_child_run` (row +
+  message one tx, ADR 0008 §2) — a trigger-fired run is
+  indistinguishable from a manual one in `/v1/executions`, claimed by
+  the UNCHANGED worker. Principal =
+  `Principal(tenant_id=trigger.tenant_id, mode="system")` — the NEW
+  additive `AuthMode` member (pre-declared; `is_anonymous` is
+  `mode`'s only branch): `None` would break stored-BYOK resolution
+  (D28 needs a tenant), reusing `api_key`/`anonymous` would be
+  dishonest. Input = `render_template(input_template, vars)` (the S6
+  substitution reused; unknown vars pass through); per-kind honest
+  defaults when empty; `{{payload}}` on webhooks, `{{run_id}}/
+  {{status}}/{{output}}` on events, `{{now}}` everywhere; Settings
+  caps. `session_id=None` means memory-enabled targets silently run
+  memory-less → detail lint (`memory_ignored` pattern); stable
+  per-trigger sessions deferred (overlapping fired runs would
+  interleave one conversation). Depth: cron/webhook fire at 0, event
+  at incoming+1 (D61 reads it).
+
+- **D59 (2026-09-16, S13 planning) — Cron: croniter + a Postgres-truth
+  scheduler loop; claim-first at-most-once (ADR 0019 §3, Harshit's
+  scope call — NOT APScheduler).** `croniter` for parsing only; the
+  loop is ours: `while True: sleep(poll); fire_due()` (the
+  `_sweep_loop` idiom), exceptions contained, container-managed via
+  `start_scheduler`/`stop_scheduler` (the worker pattern), serve-
+  lifespan-gated by `trigger_scheduler_enabled` (default True,
+  independent of `embedded_worker`; NOT in the `jarvis worker` CLI).
+  The claim (`TriggerRepo.claim_due_crons`) is ONE transaction —
+  SELECT due rows `FOR UPDATE SKIP LOCKED` (the codebase's only
+  concurrency idiom; no advisory locks), advance each row
+  (`last_fired_at`, `next_fire_at=croniter_next(now)`, clear
+  `last_error`), COMMIT — exactly one claimant wins across
+  scheduler instances. The enqueue happens AFTER the claim commit;
+  enqueue failure → honest `last_error` on the row: AT-MOST-ONCE by
+  design (a missed tick is benign — the next is already scheduled; a
+  duplicate side-effect run is not). Catch-up: fire ONCE (all math
+  `croniter(schedule, now)` — downtime then one fire, not
+  once-per-missed-slot); create/re-enable stamps next_fire_at from
+  now; the claim requires `enabled`.
+
+- **D60 (2026-09-16, S13 planning) — Webhooks: one unauthenticated
+  HMAC route; per-trigger write-only secret, plaintext exactly once
+  (ADR 0019 §4).** `POST /v1/triggers/webhook/{trigger_id}` takes NO
+  auth dependency (no auth middleware exists — the login precedent);
+  the trigger ROW is the trust boundary; tenant/principal NEVER come
+  from the request. Signature `X-Jarvis-Signature: sha256=<hex hmac of
+  the raw body>`, constant-time compare. Missing / non-webhook /
+  disabled trigger → 404 (absent — the D29 no-leak stance toward an
+  unauthenticated caller, and the acceptance's "disabling stops
+  runs"); bad signature → 401 `invalid_signature`; body over 64 KiB
+  → 413; else 202 `{run_id, status: "queued"}` — the ingest never
+  blocks on the run (it streams via the existing endpoints). Secret:
+  server-generated at create, AES-GCM envelope in `triggers.secret`
+  (the D30 machinery reused); returned EXACTLY ONCE (create +
+  rotate-secret responses), never in GET/logs (the credentials
+  write-only pattern); missing master key at create/rotate → 503
+  `credentials_unavailable`. Replay protection deferred.
+
+- **D61 (2026-09-16, S13 planning) — Event triggers: a finish_run
+  post-commit observer; the depth guard reads the ROW (ADR 0019 §5).**
+  `SqlExecutionRepo` gains an optional constructor `on_finalized`
+  callback; `finish_run` invokes it AFTER commit, best-effort
+  (try/except + log — a trigger side-effect can NEVER break a
+  terminal write, rule 2). ONE seam catches every finalize path by
+  construction (runtime tails, worker fail-fast, sweeper,
+  pause-reaper, cancel route, CLI). Load-bearing detail: the
+  callback receives the result REBUILT FROM THE ROW (status AND
+  `row.metadata`) — `agent_runtime._result` constructs the finalize
+  RunResult WITHOUT row metadata, and the loop guard must read
+  PERSISTED provenance or a crafted/absent in-memory value bypasses
+  it. Guard: skip when the finalized run's own
+  `metadata["trigger"]["depth"] >= trigger_max_depth` (default 1 —
+  a manual run's outcome may fire triggers; a trigger-fired run's
+  outcome may not). Pre-declared S14 seam change: BOTH
+  `tools/subagents/provider.py` producers (child, handoff successor)
+  copy the parent's `metadata["trigger"]` verbatim when present —
+  S14 mints metadata fresh, so without the copy a child-completion
+  re-fires through every generation (fire → delegate → child at depth
+  0 → fire → …); regression-gated byte-identical for
+  provenance-free parents. Eval/sub-agent/handoff children ARE
+  ordinary runs and DO fire event triggers (bounded by the guard);
+  failures log + `last_error`, the finalized run is never affected.
+
+- **D62 (2026-09-16, S13 planning) — API surface, capabilities, and
+  UI enablement (ADR 0019 §6).** Routes `/v1/triggers` (the mcp CRUD
+  pattern — AuthDep + explicit-tenant repo calls, owner/admin
+  manage, member read, foreign 404): list, detail (computed
+  `next_fire_at`, `last_fired_at`, `last_error`, lints — stale pin,
+  memory-on-target; NO secret field ever), create (config validation,
+  pin stamping, webhook secret-once), FULL-document PATCH (the
+  established discipline; enabling a cron trigger recomputes
+  next_fire_at, disabling clears it), DELETE (204 always), rotate-
+  secret, and fire-now (**409 when disabled** — "disabled fires
+  nothing" stays a true sentence). Provenance surfaces twice: the
+  row `trigger_id` (queryable via `GET /v1/executions?trigger_id=`)
+  and the `metadata["trigger"]` namespace (display — the sketch's
+  flat `metadata.trigger_id` namespaced like every other producer).
+  Capabilities `triggers.enabled` + derived detail (tenant counts by
+  kind, the `_evaluations_detail` pattern) ships IN THE SAME COMMIT
+  as migration 0013's usage — the S4 lesson (capabilities are
+  derived facts; a missing table 500s the whole web shell). Web: the
+  Triggers section flips on (registry + placeholder route already
+  exist) — list, per-kind editor, enable toggle, fire-now, webhook
+  URL + secret-once banner + rotate, runs-of-trigger list; the
+  executions detail gains a trigger-provenance chip + link. Deferred
+  with rationale (ADR 0019 §8): IANA timezones; webhook replay
+  protection; "tool emits Y" conditions; stable per-trigger sessions;
+  pause notifications (S10's owed webhooks — `awaiting_input` is not
+  a finish_run state, needs its own observer semantics); per-trigger
+  backpressure.
+
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 
 Redis/queues · plugins & marketplace · multi-tenancy/auth · RAG · workflow
