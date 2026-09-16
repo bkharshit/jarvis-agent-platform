@@ -1669,6 +1669,15 @@ class SqlTriggerRepo:
             await session.commit()
         return self._load(row)
 
+    async def get_unscoped(self, trigger_id: str) -> Trigger | None:
+        """The webhook ingest's tenant-free lookup (ADR 0019 §4) — the row
+        + its HMAC secret are the trust boundary; never for principals."""
+        async with self._sessionmaker() as session:
+            row = (
+                await session.execute(select(TriggerRow).where(TriggerRow.id == trigger_id))
+            ).scalar_one_or_none()
+        return None if row is None else self._load(row)
+
     async def get(self, trigger_id: str, *, tenant_id: str) -> Trigger | None:
         async with self._sessionmaker() as session:
             row = (

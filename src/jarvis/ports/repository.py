@@ -276,6 +276,13 @@ class TriggerRepo(Protocol):
 
     async def get(self, trigger_id: str, *, tenant_id: str) -> Trigger | None: ...
 
+    async def get_unscoped(self, trigger_id: str) -> Trigger | None:
+        """The unauthenticated webhook ingest's ONLY lookup (ADR 0019 §4):
+        no tenant kwarg because the ingest route never derives tenant from
+        the request — the trigger row + its HMAC secret are the trust
+        boundary. Never use it where a principal exists."""
+        ...
+
     async def list_triggers(self, *, tenant_id: str) -> list[Trigger]: ...
 
     async def update(self, trigger: Trigger, *, tenant_id: str) -> Trigger:

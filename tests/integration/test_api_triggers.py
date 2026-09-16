@@ -5,6 +5,8 @@ fire-now 409-when-disabled, and the executions trigger_id filter."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -23,7 +25,10 @@ AGENT_BODY = {
 
 
 async def _agent(client) -> str:
-    resp = await client.post("/v1/agents", json=AGENT_BODY)
+    from uuid import uuid4
+
+    body = {**AGENT_BODY, "name": f"watched-agent-{uuid4().hex[:8]}"}
+    resp = await client.post("/v1/agents", json=body)
     assert resp.status_code == 201, resp.text
     return resp.json()["definition"]["id"]
 
@@ -291,3 +296,109 @@ async def test_trigger_rows_survive_the_api_roundtrip_through_the_repo(client, c
     assert loaded is not None
     assert loaded.agent_version_id == body["agent_version_id"]
     assert loaded.next_fire_at is not None
+
+
+# --- webhook ingest (D60) ----------------------------------------------------------
+
+
+def _sig(secret: str, body: bytes) -> str:
+    return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+async def _webhook_trigger(client) -> tuple[str, str]:
+    agent_id = await _agent(client)
+    created = await client.post(
+        "/v1/triggers",
+        json={
+            "name": "ingest-hook",
+            "kind": "webhook",
+            "agent_id": agent_id,
+            "config": {"type": "webhook"},
+        },
+    )
+    assert created.status_code == 201, created.text
+    return created.json()["trigger"]["id"], created.json()["secret"]
+
+
+async def test_webhook_ingest_fires_an_ordinary_run_with_the_payload(client, _master_key):
+    trigger_id, secret = await _webhook_trigger(client)
+    body = b'{"alert": "disk-full"}'
+    resp = await client.post(
+        f"/v1/triggers/webhook/{trigger_id}",
+        content=body,
+        headers={"X-Jarvis-Signature": _sig(secret, body)},
+    )
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["status"] == "queued"
+    run_id = resp.json()["run_id"]
+    for _ in range(50):
+        runs = (await client.get("/v1/executions", params={"trigger_id": trigger_id})).json()
+        if any(r["run_id"] == run_id for r in runs["items"]):
+            break
+        await asyncio.sleep(0.1)
+    fired = next(r for r in runs["items"] if r["run_id"] == run_id)
+    assert fired["input"] == '{"alert": "disk-full"}'  # the default template IS the payload
+
+
+async def test_webhook_rejects_wrong_and_missing_signatures(client, _master_key):
+    trigger_id, secret = await _webhook_trigger(client)
+    body = b"{}"
+    wrong = await client.post(
+        f"/v1/triggers/webhook/{trigger_id}",
+        content=body,
+        headers={"X-Jarvis-Signature": _sig("a-different-secret", body)},
+    )
+    assert wrong.status_code == 401
+    assert wrong.json()["error"]["kind"] == "invalid_signature"
+    missing = await client.post(f"/v1/triggers/webhook/{trigger_id}", content=body)
+    assert missing.status_code == 401
+    # nothing fired either way
+    runs = (await client.get("/v1/executions", params={"trigger_id": trigger_id})).json()
+    assert runs["items"] == []
+
+
+async def test_webhook_missing_non_webhook_and_disabled_are_all_404(client, _master_key):
+    trigger_id, secret = await _webhook_trigger(client)
+    agent_id = await _agent(client)
+    cron_id = (
+        await client.post("/v1/triggers", json=_cron_body(agent_id, name="plain-cron"))
+    ).json()["trigger"]["id"]
+    body = b"{}"
+    sig = {"X-Jarvis-Signature": _sig(secret, body)}
+    # unknown id — same 404, no existence leak
+    unknown = await client.post(
+        "/v1/triggers/webhook/trg-does-not-exist", content=body, headers=sig
+    )
+    assert unknown.status_code == 404
+    # a cron trigger is not an ingest target
+    assert (
+        await client.post(f"/v1/triggers/webhook/{cron_id}", content=body, headers=sig)
+    ).status_code == 404
+    # disabled behaves as absent
+    await client.patch(
+        f"/v1/triggers/{trigger_id}",
+        json={
+            "name": "ingest-hook",
+            "kind": "webhook",
+            "agent_id": agent_id,
+            "version_policy": "latest",
+            "input_template": None,
+            "enabled": False,
+            "config": {"type": "webhook"},
+        },
+    )
+    assert (
+        await client.post(f"/v1/triggers/webhook/{trigger_id}", content=body, headers=sig)
+    ).status_code == 404
+
+
+async def test_webhook_oversized_body_413s(client, _master_key):
+    trigger_id, secret = await _webhook_trigger(client)
+    body = b"x" * (65_536 + 1)
+    resp = await client.post(
+        f"/v1/triggers/webhook/{trigger_id}",
+        content=body,
+        headers={"X-Jarvis-Signature": _sig(secret, body)},
+    )
+    assert resp.status_code == 413
+    assert resp.json()["error"]["kind"] == "payload_too_large"

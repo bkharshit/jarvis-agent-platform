@@ -460,6 +460,14 @@ class TriggerFireResponse(_Model):
     run_id: str
 
 
+class WebhookIngestResponse(_Model):
+    """POST /v1/triggers/webhook/{id} — accepted; the run never blocks the
+    ingest (it streams via the existing executions endpoints)."""
+
+    run_id: str
+    status: str
+
+
 class EvalDatasetUpsert(_Model):
     """POST/PATCH /evaluations/datasets — the mutable fields wholesale
     (the PATCH discipline). D50: scorers including `llm_judge` without a
@@ -600,4 +608,5 @@ __all__ = [
     "TriggerPatch",
     "TriggerSecretResponse",
     "VersionSummary",
+    "WebhookIngestResponse",
 ]

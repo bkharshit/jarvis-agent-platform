@@ -9,11 +9,13 @@ rejected. A disabled trigger fires nothing — fire-now is a 409."""
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import secrets as _secrets
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
@@ -29,12 +31,13 @@ from jarvis.api.schemas import (
     TriggerOut,
     TriggerPatch,
     TriggerSecretResponse,
+    WebhookIngestResponse,
 )
 from jarvis.domain.agent import AgentVersion
 from jarvis.domain.trigger import CronConfig, Trigger
 from jarvis.persistence.cron import next_cron_fire, validate_cron_schedule
 from jarvis.runtime.trigger_firing import TriggerFireError
-from jarvis.security.crypto import CryptoError, encrypt, load_master_key
+from jarvis.security.crypto import CryptoError, decrypt, encrypt, load_master_key
 
 router = APIRouter(prefix="/triggers", tags=["triggers"])
 
@@ -101,13 +104,18 @@ def _stamp_next_fire(trigger: Trigger) -> Trigger:
 
 def _seal_webhook_secret(trigger: Trigger, container: AppContainer) -> tuple[Trigger, str]:
     """Generate the HMAC secret, seal it AES-GCM into the row envelope, and
-    return (trigger, plaintext-shown-once). CryptoError means the platform
-    is misconfigured — the stored-credential path would fail identically."""
+    return (trigger, plaintext-shown-once). A missing master key is a
+    deployment problem, not a 500 (the credentials route's 503 pattern) —
+    a webhook trigger always carries a secret."""
     plaintext = _secrets.token_urlsafe(32)
     try:
         master_key = load_master_key(container.settings)
     except CryptoError as exc:
-        raise ApiError(500, "internal", str(exc)) from None
+        raise ApiError(
+            503,
+            "credentials_unavailable",
+            f"webhook secrets are not configured: {exc.message}",
+        ) from None
     sealed = trigger.model_copy(update={"secret": encrypt(plaintext, master_key=master_key)})
     return sealed, plaintext
 
@@ -241,6 +249,70 @@ async def fire_trigger(
     except TriggerFireError as exc:
         raise ApiError(422, "validation", str(exc)) from None
     return TriggerFireResponse(run_id=run_id)
+
+
+# --- webhook ingest (D60) ------------------------------------------------------------
+
+
+def _hmac_secret(trigger: Trigger, container: AppContainer) -> str:
+    """The trigger's plaintext HMAC secret for verification — a missing
+    master key is a deployment problem (503); a secret-less or undecryptable
+    row simply fails verification (401)."""
+    if trigger.secret is None:
+        raise ApiError(401, "invalid_signature", "invalid signature")
+    try:
+        master_key = load_master_key(container.settings)
+    except CryptoError as exc:
+        raise ApiError(
+            503,
+            "credentials_unavailable",
+            f"webhook secrets are not configured: {exc.message}",
+        ) from None
+    try:
+        return decrypt(trigger.secret, master_key=master_key)
+    except CryptoError:
+        raise ApiError(401, "invalid_signature", "invalid signature") from None
+
+
+@router.post("/webhook/{trigger_id}", status_code=202)
+async def webhook_ingest(
+    trigger_id: str, request: Request, container: AppContainer = ContainerDep
+) -> WebhookIngestResponse:
+    """The ONE unauthenticated ingest route (D60) — no AuthDep, and the
+    tenant/principal are NEVER derived from the request: the trigger row is
+    the trust boundary (the ADR 0008 queue-message stance, transposed
+    inbound). HMAC-SHA256 over the RAW body bytes, constant-time compared.
+    Missing / non-webhook / disabled → 404 (a disabled trigger behaves as
+    absent — "disabling stops runs"); wrong/missing signature → 401; an
+    oversized body → 413; otherwise enqueue and 202 — the ingest never
+    blocks on the run."""
+    body = await request.body()
+    if len(body) > container.settings.trigger_webhook_max_body_bytes:
+        raise ApiError(
+            413,
+            "payload_too_large",
+            f"webhook body exceeds {container.settings.trigger_webhook_max_body_bytes} bytes",
+        )
+    trigger = await container.triggers.get_unscoped(trigger_id)
+    if trigger is None or trigger.kind != "webhook" or not trigger.enabled:
+        # One 404 for all three — no existence leak toward an anonymous caller.
+        raise ApiError(404, "not_found", f"trigger {trigger_id!r} not found")
+    provided = request.headers.get("X-Jarvis-Signature", "")
+    if not provided.startswith("sha256="):
+        raise ApiError(401, "invalid_signature", "invalid signature")
+    expected = hmac.new(_hmac_secret(trigger, container).encode(), body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, provided[len("sha256=") :]):
+        raise ApiError(401, "invalid_signature", "invalid signature")
+    # UTF-8 with replacement: the payload is model input, never a protocol.
+    payload = body.decode("utf-8", errors="replace")
+    try:
+        run_id = await container.firing.fire(trigger, context_vars={"payload": payload})
+    except TriggerFireError as exc:
+        # The caller is an authenticated-by-HMAC producer; an unfireable
+        # target is honest to name, but it is a server-side config fault —
+        # 502, never a retry instruction.
+        raise ApiError(502, "trigger_unfireable", str(exc)) from None
+    return WebhookIngestResponse(run_id=run_id, status="queued")
 
 
 __all__ = ["router"]
