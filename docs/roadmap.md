@@ -746,3 +746,51 @@ would complete the no-terminal user story:
 Companion to the markdown skill packs idea above — both are about making
 skill/plugin management a product surface instead of a terminal ritual;
 both need the security model designed before any UI ships.
+
+---
+
+## Parked idea — sub-agent factory, agents creating sub-agents on the fly (proposed 2026-09-16, post-S14)
+
+**RESEARCH FLAG — for whoever picks this up (including future Claude
+sessions): do a THOROUGH research pass first (this platform's ADRs +
+how peer platforms handle dynamic agent creation), and PRESENT THE CONS
+to Harshit before any design or build talk. He asked for the cons to be
+prompted explicitly whenever this comes up. Do not treat the sketch
+below as a green light.**
+
+A `factory__` tool family that would let an agent mint, publish, and
+delegate to a NEW agent definition mid-run ("spawn an agent that reads
+this proprietary log format"), roughly:
+
+- a new tool family alongside `sub__`/`handoff__` (S14, ADR 0018):
+  create → publish → pin → delegate in one call, with a TTL/lifecycle so
+  spawned definitions don't accumulate;
+- strict capability inheritance: a spawned child's tool set must be a
+  SUBSET of the creator's bindings (no privilege escalation through
+  delegation);
+- creation quotas per tenant + ownership/GC rules (spawned rows,
+  spend attribution, orphaned definitions after the parent run ends).
+
+Why it is parked, not planned (the cons that must be re-argued first):
+
+- **Replay fidelity (D1)** — runs replay against pinned immutable
+  versions; a factory makes replay depend on side effects performed
+  DURING the original run unless spawned definitions are durable
+  first-class snapshots (new runtime DB writes from inside a tool call).
+- **Cycle safety** — the publish-time 422 walk needs a static graph; a
+  runtime-spawned agent can bind back at its creator, moving cycle
+  detection into the runtime or banning self-reference.
+- **Trust/tenancy** — ownership of spawned rows, spend attribution,
+  lifetime, and the escalation question above are an ADR-level trust
+  model, not a tool descriptor.
+- **Cheap alternatives cover most of the need** — the zoo pattern
+  (pre-created role workers; proven live in the S14 deep-research demo),
+  parameterized delegation (let `sub__` bindings override the child's
+  system prompt from the tool config — roadmap item, not ADR), and
+  admin-defined agent templates (instantiate a RUN from a template,
+  never a new definition). Full factory only if all three demonstrably
+  fall short in a real workload.
+
+Graduation path if it ever earns an ADR (0019-class): parameterized
+delegation first, templates second, factory last. Recorded from the S14
+closure discussion 2026-09-16; also noted in walkthrough-s14.md §8.
