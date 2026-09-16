@@ -38,6 +38,7 @@ from jarvis.runtime.agent_runtime import AgentRuntime
 from jarvis.runtime.limits import RunLimits
 from jarvis.runtime.llm_trace import LlmTraceBuffer
 from jarvis.runtime.scheduler import TriggerScheduler
+from jarvis.runtime.trigger_events import TriggerService
 from jarvis.runtime.trigger_firing import TriggerFireService
 from jarvis.runtime.worker import Worker, worker_persist
 from jarvis.runtime.workflow_runtime import WorkflowRuntime
@@ -81,6 +82,7 @@ class AppContainer:
     limits: RunLimits
     worker: Worker
     firing: TriggerFireService
+    trigger_events: TriggerService
     scheduler: TriggerScheduler
     _worker_task: asyncio.Task[None] | None = field(default=None, repr=False)
     _scheduler_task: asyncio.Task[None] | None = field(default=None, repr=False)
@@ -220,6 +222,17 @@ class AppContainer:
             firing=firing,
             poll_seconds=settings.trigger_poll_seconds,
         )
+        # S13 (D61): the event observer rides the executions repo's
+        # post-commit finalize callback — the wiring loop (repo ← service ←
+        # repo) resolves by late assignment, the observer is invoked only
+        # after commit.
+        trigger_events = TriggerService(
+            triggers=triggers,
+            firing=firing,
+            max_depth=settings.trigger_max_depth,
+            max_output_chars=settings.trigger_event_max_output_chars,
+        )
+        executions.on_finalized = trigger_events.on_run_finalized
         return cls(
             settings=settings,
             engine=engine,
@@ -247,6 +260,7 @@ class AppContainer:
             limits=limits,
             worker=worker,
             firing=firing,
+            trigger_events=trigger_events,
             scheduler=scheduler,
         )
 

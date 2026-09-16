@@ -8,7 +8,8 @@ event sink uses that value as the SSE Last-Event-ID (ADR 0003).
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import uuid4
@@ -84,6 +85,8 @@ from jarvis.persistence.models import (
     WorkflowVersionRow,
 )
 from jarvis.ports.queue import ResumeRequest, RunQueueMessage
+
+logger = logging.getLogger("jarvis.persistence")
 
 _EVENT_ADAPTER: TypeAdapter[ExecutionEvent] = TypeAdapter(ExecutionEvent)
 _MCP_CONFIG_ADAPTER: TypeAdapter[McpServerConfig] = TypeAdapter(McpServerConfig)
@@ -694,9 +697,24 @@ def _shadow_shared(servers: list[McpServer]) -> list[McpServer]:
     return [s for s in servers if s.tenant_id is not None or s.name not in seen_owned]
 
 
+FinalizeObserver = Callable[[RunResult], Awaitable[None]]
+
+
 class SqlExecutionRepo:
-    def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        sessionmaker: async_sessionmaker[AsyncSession],
+        *,
+        on_finalized: FinalizeObserver | None = None,
+    ) -> None:
         self._sessionmaker = sessionmaker
+        # S13 (D61): the post-commit finalize observer — the event-trigger
+        # seam. Invoked after the terminal write commits with the result
+        # REBUILT FROM THE ROW (status AND metadata): the runtime's in-memory
+        # result carries no row metadata, and the depth guard must read
+        # PERSISTED provenance. Best-effort by contract — a trigger
+        # side-effect can never break a terminal write (rule 2).
+        self.on_finalized: FinalizeObserver | None = on_finalized
 
     async def create_queued_run(self, result: RunResult, message: RunQueueMessage) -> None:
         """Execution row (`status='queued'`) + queue message in ONE
@@ -836,11 +854,17 @@ class SqlExecutionRepo:
             await session.commit()
 
     async def finish_run(self, result: RunResult) -> None:
-        """Persist the terminal state; upserts in case no RUNNING row exists."""
+        """Persist the terminal state; upserts in case no RUNNING row exists.
+
+        After the commit, the `on_finalized` observer (S13, D61) sees the
+        result rebuilt from the ROW — status AND metadata. Best-effort:
+        an observer failure is logged, never propagated (rule 2 — the
+        terminal write stands)."""
         async with self._sessionmaker() as session:
             row = await session.get(AgentExecutionRow, result.run_id)
             if row is None:
-                session.add(self._run_row(result))
+                row = self._run_row(result)
+                session.add(row)
             else:
                 row.status = result.status
                 row.output = result.final_message
@@ -853,6 +877,16 @@ class SqlExecutionRepo:
                 row.event_cursor = result.event_cursor
                 row.awaiting_until = None  # terminal clears a pause (S10)
             await session.commit()
+        if self.on_finalized is not None:
+            # From the ROW, not the caller's result: metadata_json is never
+            # touched by this write, so the persisted provenance is the
+            # authority the depth guard reads.
+            try:
+                await self.on_finalized(self._load_run(row))
+            except Exception:
+                logger.exception(
+                    "on_finalized observer failed for run %s — finalize stands", result.run_id
+                )
 
     async def get(self, run_id: str, *, tenant_id: str | None = None) -> RunResult | None:
         async with self._sessionmaker() as session:
