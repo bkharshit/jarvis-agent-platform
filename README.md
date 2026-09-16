@@ -82,7 +82,7 @@ uv run jarvis doctor --ping-model
 | GET | `/agents/{id}/versions` | Version history (append-only snapshots) |
 | POST | `/agents/{id}/run` | Blocking run (queued; waits for the worker) → final `RunResult` |
 | POST | `/agents/{id}/stream` | SSE stream of run events |
-| GET | `/executions` | List runs (`agent_id`, `status`, `session_id`, `limit`, `offset`) |
+| GET | `/executions` | List runs (`agent_id`, `status`, `session_id`, `parent_run_id`, `limit`, `offset`) |
 | GET | `/executions/{run_id}` | Run + transcript + tool executions |
 | POST | `/executions/{run_id}/cancel` | Idempotent cancel — live token in-process, cross-process request row otherwise |
 | POST | `/executions/{run_id}/resume` | Answer a paused run (`{content}`, `{tool_approval: bool}`, or per-call `{decisions}`; blocking, mirrors `/run`) — 409 when not awaiting |
@@ -402,6 +402,40 @@ The web **Evaluations** section covers dataset CRUD (wholesale-PATCH
 editor), eval runs with per-case score chips linking each child run,
 and a per-version Compare view. A live walkthrough is in
 `docs/walkthrough-s11.md`.
+
+### Sub-agents and handoffs (S14, ADR 0018)
+
+Agents delegate to agents. A tool binding named `sub__<target>` spawns a
+child run the parent's tool call blocks on; `handoff__<target>` transfers
+the conversation to a successor run and ends the predecessor. Bindings
+carry only `{agent_id}` in config — the server stamps the pinned
+`agent_version_id` at save/publish (the client never supplies it), detects
+cycles at publish (A→B→A is a 422), and lints stale pins instead of
+failing. Children are ordinary durable runs: they appear in
+`/executions` (filter by `parent_run_id`), share the parent's `trace_id`,
+have no session, inherit the parent's deadline, and never pause — an
+approval a child needs is auto-declined honestly and the run completes.
+The child's usage folds into the parent's budget (ADR 0004 clamps the
+whole tree); depth is capped (`JARVIS_SUB_AGENT_MAX_DEPTH`, default 2)
+with an honest refusal past it.
+
+```bash
+curl -X POST localhost:8000/v1/agents -H 'content-type: application/json' -d '{
+  "name": "supervisor",
+  "model": {"provider": "openai_compatible", "model": "gemma4:31b",
+            "base_url": "https://ollama.com/v1",
+            "credential_ref": {"type": "env", "env_var": "OLLAMA_API_KEY"}},
+  "strategy": {"type": "function_calling"},
+  "tools": [{"name": "sub__researcher", "config": {"agent_id": "<researcher-id>"}}]
+}'
+# run it, then see the children:
+curl "localhost:8000/v1/executions?parent_run_id=<run-id>"
+```
+
+The web **Agents** editor gets *Delegate to sub-agent* / *Hand off to
+agent* pickers (self excluded), and **Executions** detail pages link
+children ("Sub-agent runs") and the parent run both ways. A live
+walkthrough is in `docs/walkthrough-s14.md`.
 
 ### Queue-backed runs and distributed mode (S1, ADR 0008)
 

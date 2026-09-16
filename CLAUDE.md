@@ -195,6 +195,28 @@ uv run jarvis serve        # API on :8000
   bricks the whole shell. Repair existing rows in the same commit that
   tightens the constraint (here: a one-line DELETE of empty-input
   cases), or make the read lenient.
+- **The sub-agent tooling resolver must match ALL family prefixes**
+  (S14, found by the acceptance e2e): `_resolve_tooling` originally
+  filtered on the `sub__` prefix only, so `handoff__` bindings never
+  resolved — "unknown tool" at run time with a perfectly valid binding.
+  Filter on `FAMILY_PREFIXES` (both), and never decide handoff vs
+  delegation from the tool NAME (the loop reads result metadata
+  `kind: "handoff"` — unit stand-ins use neutral tool names).
+- **An auto-declined approval call leaves NO tool-execution row**
+  (S14, found live in the walkthrough): a child's gated tool call is
+  declined in-transcript only — no `tool.started`/`tool.completed`
+  events, no `tool_executions` row — so hunting the decline receipt in
+  the child's tool rows finds nothing. It lives in the next iteration's
+  request messages: read the child run's `/llm-trace` (iteration 0
+  tool_call → iteration 1 carries the decline tool result). Expect the
+  S10 decline→re-ask loop: the model re-calls the declined tool several
+  times before answering narratively, all without pausing.
+- **`AgentDetail.versions` is a SIBLING of `definition`**
+  (`api/schemas.py`): the detail response is
+  `{definition, versions, lints}` — parse `body["versions"]`, never
+  `body["definition"]["versions"]` (cost two live KeyErrors; the
+  agent LIST endpoint returns bare definitions with no versions at
+  all).
 
 ## Working agreement
 

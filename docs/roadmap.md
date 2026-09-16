@@ -570,10 +570,14 @@ enable/disable, provenance shown on trigger-fired runs).
 
 ## S14 — Multi-agent
 
-> **Planned 2026-09-15** (planning session; no S14 code exists yet —
-> this record pins the verified design before the build). Design
-> pinned in docs/adr/0018-multi-agent.md (D51–D56 in decisions.md),
-> commit sequence in docs/implementation-plan-s14.md. Scope confirmed
+> **Shipped 2026-09-16** (commits `a4efb27..c6c921b`; the joint manual
+> session ran the whole `docs/walkthrough-s14.md` green — D51–D56
+> receipts live, including a 3-hop depth-cap refusal chain and a
+> 4-agent deep-research demo (lead → reader + writer → critic, depth-2
+> grandchild) built in the web UI; live notes in
+> `docs/walkthrough-s14.md` §8). Design pinned in
+> `docs/adr/0018-multi-agent.md` (D51–D56 in decisions.md), commit
+> sequence in `docs/implementation-plan-s14.md`. Scope confirmed
 > by Harshit: handoffs are IN v1, not deferred. Key deltas from the
 > sketch below, all verified against code before writing:
 >
@@ -613,11 +617,22 @@ enable/disable, provenance shown on trigger-fired runs).
 >   different target agent NOTHING — the successor's input carries
 >   the predecessor's rendered transcript + note; the predecessor ends
 >   via the ordinary `run.completed` (no new event type/status).
+> - Build-time fix: `_resolve_tooling` originally filtered bindings on
+>   the `sub__` prefix only, so `handoff__` bindings never resolved
+>   ("unknown tool") — found by the acceptance e2e, fixed with
+>   `FAMILY_PREFIXES`.
 >
 > Deferred with rationale (ADR 0018 §8): parallel children,
 > child-progress relay, message-role-faithful transcript seeding,
 > sub-agent/HITL composition (paused-both-parent-and-child),
 > cross-tenant sub-agents.
+>
+> **Follow-ups (backlog):** a whole-tree roll-up on the root run's
+> detail page (children render one hop deep by design — a grandchild
+> needs a visit to its own parent's page, noticed in the deep-research
+> demo); a sub-agent factory (an agent creating a new agent at runtime)
+> stays OUT by design — delegation targets are frozen at publish for
+> replay fidelity, cycle safety, and tenancy; revisiting needs an ADR.
 
 **Goal:** agents that delegate to agents — supervisor/handoff patterns.
 
