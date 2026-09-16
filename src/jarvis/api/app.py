@@ -44,6 +44,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # false here plus any number of `jarvis worker` processes.
         if container.settings.embedded_worker:
             await container.start_worker()
+        # The scheduler only enqueues — independent of embedded_worker (ADR
+        # 0019 §3): workers anywhere execute, the serve process claims crons.
+        if container.settings.trigger_scheduler_enabled:
+            await container.start_scheduler()
         try:
             yield
         finally:

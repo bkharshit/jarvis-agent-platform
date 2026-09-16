@@ -37,6 +37,8 @@ from jarvis.persistence.repositories import (
 from jarvis.runtime.agent_runtime import AgentRuntime
 from jarvis.runtime.limits import RunLimits
 from jarvis.runtime.llm_trace import LlmTraceBuffer
+from jarvis.runtime.scheduler import TriggerScheduler
+from jarvis.runtime.trigger_firing import TriggerFireService
 from jarvis.runtime.worker import Worker, worker_persist
 from jarvis.runtime.workflow_runtime import WorkflowRuntime
 from jarvis.strategies.plugins import PluginLoadResult, load_strategy_plugins
@@ -78,7 +80,10 @@ class AppContainer:
     workflow_runtime: WorkflowRuntime
     limits: RunLimits
     worker: Worker
+    firing: TriggerFireService
+    scheduler: TriggerScheduler
     _worker_task: asyncio.Task[None] | None = field(default=None, repr=False)
+    _scheduler_task: asyncio.Task[None] | None = field(default=None, repr=False)
 
     @classmethod
     def from_settings(cls, settings: Settings, *, mock_provider: Any | None = None) -> AppContainer:
@@ -202,6 +207,19 @@ class AppContainer:
             workflow_versions=workflows,
             concurrency=settings.worker_concurrency,
         )
+        # S13 (ADR 0019 §2): the firing service and the cron scheduler ride
+        # the same repos — the scheduler only enqueues, so it is independent
+        # of embedded_worker and started by the serve lifespan when enabled.
+        firing = TriggerFireService(
+            executions=executions,
+            agents=agents,
+            run_timeout_seconds=settings.run_timeout_seconds,
+        )
+        scheduler = TriggerScheduler(
+            triggers=triggers,
+            firing=firing,
+            poll_seconds=settings.trigger_poll_seconds,
+        )
         return cls(
             settings=settings,
             engine=engine,
@@ -228,6 +246,8 @@ class AppContainer:
             workflow_runtime=workflow_runtime,
             limits=limits,
             worker=worker,
+            firing=firing,
+            scheduler=scheduler,
         )
 
     # --- embedded worker lifecycle (S1, ADR 0008) ------------------------------
@@ -249,8 +269,26 @@ class AppContainer:
             self._worker_task = None
         await self.worker.aclose()
 
+    # --- trigger scheduler lifecycle (S13, ADR 0019 §3) -------------------------
+
+    async def start_scheduler(self) -> None:
+        """Run the cron scheduler inside this process — the serve lifespan's
+        job (gated by `trigger_scheduler_enabled`), never the worker CLI's."""
+        if self._scheduler_task is None:
+            self._scheduler_task = asyncio.create_task(self.scheduler.run_forever())
+
+    async def stop_scheduler(self) -> None:
+        if self._scheduler_task is not None:
+            self._scheduler_task.cancel()
+            try:
+                await self._scheduler_task
+            except asyncio.CancelledError:
+                pass
+            self._scheduler_task = None
+
     async def aclose(self) -> None:
         await self.stop_worker()
+        await self.stop_scheduler()
         await self.streams.aclose()
         await self.notifier.aclose()
         await self.engine.dispose()

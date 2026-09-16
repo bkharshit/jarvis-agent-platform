@@ -49,6 +49,21 @@ class Settings(BaseSettings):
     # the recent context is what a successor needs.
     handoff_max_transcript_chars: int = 20_000
 
+    # --- triggers (S13, ADR 0019) ------------------------------------------
+    # The scheduler loop is serve-side only (independent of embedded_worker —
+    # it only enqueues; workers anywhere execute); `jarvis worker` never runs
+    # it. The guarded claim tolerates overlap if that ever changes.
+    trigger_scheduler_enabled: bool = True
+    trigger_poll_seconds: float = 5.0
+    # The event-trigger chain clamp (§6): a manual run's outcome may fire
+    # triggers; a trigger-fired run's outcome may not fire another.
+    trigger_max_depth: int = 1
+    # Inbound webhook bodies larger than this are refused 413 (§4).
+    trigger_webhook_max_body_bytes: int = 65_536
+    # The `{{output}}` context var on event triggers is capped to this many
+    # characters before rendering (§2).
+    trigger_event_max_output_chars: int = 8_000
+
     # --- MCP tool providers (S4, ADR 0012) --------------------------------
     # Per-server connect + tools/list budget. Per-CALL timeouts ride binding
     # config through the ToolRuntime envelope — this is the one new knob.
