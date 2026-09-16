@@ -288,6 +288,37 @@ class TestSubAgentToolCall:
         assert stream.subscribed == [message.run_id]
         assert queue.cancels == []
 
+    async def test_child_copies_parent_trigger_provenance_verbatim(self):
+        """S13 (ADR 0019 §6): a trigger-fired parent's `trigger` namespace
+        rides the delegation verbatim — without the copy an event trigger
+        on the child's completion re-fires through every generation, the
+        depth guard bypassed at each hop. A parent WITHOUT trigger
+        provenance composes byte-identical children (the shape test above
+        regression-gates that direction)."""
+        trigger_meta = {"trigger_id": "trg-1", "kind": "event", "name": "watcher", "depth": 1}
+        executions = FakeExecutions()
+        tooling = await _provider(
+            FakeAgents({"worker": _target_version()}),
+            executions,
+            stream=FakeStream(
+                [
+                    _event(
+                        RunCompleted,
+                        "child-1",
+                        final_message="ok",
+                        total_usage=Usage(),
+                        iterations=1,
+                    )
+                ]
+            ),
+        ).resolve([_BINDING], _parent_ctx(metadata={"trigger": trigger_meta}))
+        await tooling.tools[0].execute({"task": "go"}, _tool_context())
+        _, message = executions.written[0]
+        assert message.metadata["trigger"] == trigger_meta
+        # Verbatim: the child's OWN depth stamp is untouched — the guard
+        # compares the finalized run's depth, not a fresh one.
+        assert message.metadata["sub_agent"] == {"depth": 1}
+
     async def test_completed_child_reports_usage_through_the_context(self):
         """D54: the child's terminal-event usage rides ToolContext.
         result_metadata — the ToolRuntime merges it into ToolResult.metadata

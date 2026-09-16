@@ -17,7 +17,12 @@ from jarvis.domain.agent import AgentVersion
 from jarvis.domain.execution import ExecutionContext
 from jarvis.domain.message import Message
 from jarvis.domain.tools import ToolContext, ToolDescriptor
-from jarvis.runtime.child_runs import QueuedRunWriter, child_message, enqueue_child_run
+from jarvis.runtime.child_runs import (
+    QueuedRunWriter,
+    child_message,
+    enqueue_child_run,
+    with_trigger_provenance,
+)
 from jarvis.tools.base import BaseTool
 
 
@@ -104,10 +109,13 @@ class HandoffTool(BaseTool):
             trace_id=self._parent_ctx.trace_id,
             deadline=self._parent_ctx.deadline,
             parent_run_id=self._parent_ctx.run_id,
-            metadata={
-                "handoff": {"note": note_text or None},
-                "sub_agent": {"depth": self._parent_depth},
-            },
+            metadata=with_trigger_provenance(
+                {
+                    "handoff": {"note": note_text or None},
+                    "sub_agent": {"depth": self._parent_depth},
+                },
+                self._parent_ctx.metadata,
+            ),
         )
         successor_run_id = await enqueue_child_run(executions=self._executions, message=message)
         # The tool→runtime reporting channel (D54): the loop reads these back

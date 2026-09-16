@@ -24,7 +24,12 @@ from jarvis.domain.agent import AgentVersion, ToolBinding
 from jarvis.domain.events import ExecutionEvent, RunCancelled, RunCompleted, RunFailed
 from jarvis.domain.execution import ExecutionCancelled, ExecutionContext
 from jarvis.domain.tools import ToolContext, ToolDescriptor
-from jarvis.runtime.child_runs import QueuedRunWriter, child_message, enqueue_child_run
+from jarvis.runtime.child_runs import (
+    QueuedRunWriter,
+    child_message,
+    enqueue_child_run,
+    with_trigger_provenance,
+)
 from jarvis.tools.base import BaseTool
 from jarvis.tools.mcp.errors import SubAgentResolutionError
 from jarvis.tools.subagents.handoff import (
@@ -134,6 +139,16 @@ class SubAgentTool(BaseTool):
         self._max_depth = max_depth
         self._parent_depth = parent_depth
 
+    def _child_metadata(self, base: dict[str, Any]) -> dict[str, Any]:
+        """The child's metadata: the minted-fresh namespaces plus the
+        parent's `trigger` provenance copied verbatim when present
+        (ADR 0019 §6, `with_trigger_provenance`)."""
+        metadata = dict(base)
+        # D55: children never pause — approvals auto-decline, asks
+        # auto-answer, and the runtime's branches key off this flag.
+        metadata["auto_decline_approvals"] = True
+        return with_trigger_provenance(metadata, self._parent_ctx.metadata)
+
     async def _execute(self, arguments: dict[str, Any], context: ToolContext) -> str:
         task = str(arguments.get("task") or "")
         child_depth = self._parent_depth + 1
@@ -157,12 +172,7 @@ class SubAgentTool(BaseTool):
             trace_id=self._parent_ctx.trace_id,
             deadline=self._parent_ctx.deadline,
             parent_run_id=self._parent_ctx.run_id,
-            metadata={
-                "sub_agent": {"depth": child_depth},
-                # D55: children never pause — approvals auto-decline, asks
-                # auto-answer, and the runtime's branches key off this flag.
-                "auto_decline_approvals": True,
-            },
+            metadata=self._child_metadata({"sub_agent": {"depth": child_depth}}),
         )
         child_run_id = await enqueue_child_run(executions=self._executions, message=message)
         # The parent's remaining budget bounds the whole wait (D52: REQUIRED

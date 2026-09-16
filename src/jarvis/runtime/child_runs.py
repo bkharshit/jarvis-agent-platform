@@ -86,4 +86,26 @@ async def enqueue_child_run(*, executions: QueuedRunWriter, message: RunQueueMes
     return message.run_id
 
 
-__all__ = ["QueuedRunWriter", "child_message", "enqueue_child_run"]
+def with_trigger_provenance(
+    metadata: dict[str, Any], parent_metadata: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Copy the parent's `trigger` provenance verbatim when present
+    (S13, ADR 0019 §6): without the copy an event trigger on a child's
+    completion re-fires through every delegation generation, the depth
+    guard bypassed at each hop. Both S14 producers (sub-agent child,
+    handoff successor) run their minted-fresh metadata through this — a
+    parent without trigger provenance composes byte-identical children
+    (regression-gated)."""
+    if isinstance(parent_metadata, dict):
+        trigger = parent_metadata.get("trigger")
+        if isinstance(trigger, dict):
+            metadata["trigger"] = dict(trigger)
+    return metadata
+
+
+__all__ = [
+    "QueuedRunWriter",
+    "child_message",
+    "enqueue_child_run",
+    "with_trigger_provenance",
+]

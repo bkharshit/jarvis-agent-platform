@@ -159,6 +159,31 @@ class TestHandoffTool:
         assert "[assistant] I narrowed it" in message.input
         assert message.input.endswith("[handoff note] please take over")
 
+    async def test_successor_copies_parent_trigger_provenance_verbatim(self):
+        """S13 (ADR 0019 §6): the handoff copy mirrors the sub-agent child's
+        — a handoff chain cannot launder trigger provenance any more than
+        it can launder the depth cap. A parent without it composes
+        byte-identical successors (the shape test above gates that)."""
+        trigger_meta = {"trigger_id": "trg-1", "kind": "event", "name": "watcher", "depth": 1}
+        executions = FakeExecutions()
+        version = _target_version()
+        tool = HandoffTool(
+            mint_handoff_descriptor("handoff__worker", version),
+            agent_id="worker",
+            agent_name=version.snapshot.name,
+            version_id=version.id,
+            parent_ctx=_parent(metadata={"trigger": trigger_meta}),
+            executions=executions,
+            transcripts=_FakeTranscripts(list(_TRANSCRIPT)),
+            max_transcript_chars=20_000,
+            parent_depth=1,
+        )
+        await tool.execute({"note": None}, _tool_context())
+        _, message = executions.written[0]
+        assert message.metadata["trigger"] == trigger_meta
+        assert message.metadata["handoff"] == {"note": None}
+        assert message.metadata["sub_agent"] == {"depth": 1}
+
     async def test_no_note_keeps_a_plain_transcript_input(self):
         parent = _parent()
         executions = FakeExecutions()
