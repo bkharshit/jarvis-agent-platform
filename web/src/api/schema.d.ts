@@ -709,6 +709,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/triggers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Triggers */
+        get: operations["list_triggers_v1_triggers_get"];
+        put?: never;
+        /** Create Trigger */
+        post: operations["create_trigger_v1_triggers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/triggers/{trigger_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Trigger */
+        get: operations["get_trigger_v1_triggers__trigger_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Trigger
+         * @description Always allowed — no-FK provenance means past runs keep their
+         *     trigger_id; the executions filter keeps working on a deleted trigger.
+         */
+        delete: operations["delete_trigger_v1_triggers__trigger_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Trigger
+         * @description FULL document (the mcp/eval discipline). The pin re-stamps to the
+         *     target's latest published version at patch time; enabling a cron
+         *     recomputes next_fire_at from now, disabling clears it. The stored
+         *     secret is untouched — the patch never carries one.
+         */
+        patch: operations["update_trigger_v1_triggers__trigger_id__patch"];
+        trace?: never;
+    };
+    "/v1/triggers/{trigger_id}/rotate-secret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rotate Webhook Secret */
+        post: operations["rotate_webhook_secret_v1_triggers__trigger_id__rotate_secret_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/triggers/{trigger_id}/fire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fire Trigger
+         * @description Manual test-fire — the same §2 composition with the cron/webhook
+         *     defaults. 409 when disabled: "disabled fires nothing" stays true.
+         */
+        post: operations["fire_trigger_v1_triggers__trigger_id__fire_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/triggers/webhook/{trigger_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Webhook Ingest
+         * @description The ONE unauthenticated ingest route (D60) — no AuthDep, and the
+         *     tenant/principal are NEVER derived from the request: the trigger row is
+         *     the trust boundary (the ADR 0008 queue-message stance, transposed
+         *     inbound). HMAC-SHA256 over the RAW body bytes, constant-time compared.
+         *     Missing / non-webhook / disabled → 404 (a disabled trigger behaves as
+         *     absent — "disabling stops runs"); wrong/missing signature → 401; an
+         *     oversized body → 413; otherwise enqueue and 202 — the ingest never
+         *     blocks on the run.
+         */
+        post: operations["webhook_ingest_v1_triggers_webhook__trigger_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -1012,6 +1124,21 @@ export interface components {
             secret?: string | null;
         };
         /**
+         * CronConfig
+         * @description A five-field cron expression. UTC-only (the codebase is uniformly
+         *     UTC); per-trigger IANA timezones are a recorded deferral (ADR 0019 §8).
+         *     Parse validation lives at the API/firing boundary via croniter.
+         */
+        CronConfig: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "cron";
+            /** Schedule */
+            schedule: string;
+        };
+        /**
          * CursorEvent
          * @description One replayed event tagged with its durable cursor (SSE Last-Event-ID
          *     space), so JSON replay can drive exactly-once clients too.
@@ -1243,6 +1370,25 @@ export interface components {
             pass_rate?: number | null;
             /** Scorers */
             scorers: components["schemas"]["EvalScorerStats"][];
+        };
+        /**
+         * EventConfig
+         * @description A run of this tenant (optionally only `source_agent_id`'s runs)
+         *     reached this terminal status.
+         */
+        EventConfig: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "event";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "succeeded" | "failed" | "cancelled" | "timed_out" | "any";
+            /** Source Agent Id */
+            source_agent_id?: string | null;
         };
         /** EventList */
         EventList: {
@@ -2397,6 +2543,166 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * TriggerCreate
+         * @description POST /v1/triggers — kind and config must agree (the domain validator
+         *     maps to 422); a cron schedule is parse-validated via croniter; the
+         *     target must have a published version (a `pinned` policy stamps it —
+         *     D42/D51 transposed).
+         */
+        TriggerCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "cron" | "webhook" | "event";
+            /** Agent Id */
+            agent_id: string;
+            /**
+             * Version Policy
+             * @default latest
+             * @enum {string}
+             */
+            version_policy: "pinned" | "latest";
+            /** Input Template */
+            input_template?: string | null;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Config */
+            config: components["schemas"]["CronConfig"] | components["schemas"]["WebhookConfig"] | components["schemas"]["EventConfig"];
+        };
+        /**
+         * TriggerCreated
+         * @description POST /v1/triggers — the row, plus the webhook secret's plaintext
+         *     shown EXACTLY ONCE (webhook kind only; D29/D30).
+         */
+        TriggerCreated: {
+            trigger: components["schemas"]["TriggerOut"];
+            /** Secret */
+            secret?: string | null;
+        };
+        /**
+         * TriggerDetail
+         * @description GET /v1/triggers/{id} — the row plus the derived lints (the
+         *     workflow-detail shape): stale pin, memory-on-target.
+         */
+        TriggerDetail: {
+            trigger: components["schemas"]["TriggerOut"];
+            /** Lints */
+            lints: string[];
+        };
+        /**
+         * TriggerFireResponse
+         * @description POST /v1/triggers/{id}/fire — the pre-generated run_id of an
+         *     ordinary queue run.
+         */
+        TriggerFireResponse: {
+            /** Run Id */
+            run_id: string;
+        };
+        /**
+         * TriggerList
+         * @description GET /v1/triggers.
+         */
+        TriggerList: {
+            /** Items */
+            items: components["schemas"]["TriggerOut"][];
+        };
+        /**
+         * TriggerOut
+         * @description A trigger as the API returns it — NO secret field ever (D29/D30):
+         *     the AES-GCM envelope lives on the row, the plaintext exists exactly
+         *     once (create / rotate responses).
+         */
+        TriggerOut: {
+            /** Id */
+            id: string;
+            /** Tenant Id */
+            tenant_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "cron" | "webhook" | "event";
+            /** Agent Id */
+            agent_id: string;
+            /** Agent Version Id */
+            agent_version_id?: string | null;
+            /**
+             * Version Policy
+             * @default latest
+             * @enum {string}
+             */
+            version_policy: "pinned" | "latest";
+            /** Input Template */
+            input_template?: string | null;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Config */
+            config: components["schemas"]["CronConfig"] | components["schemas"]["WebhookConfig"] | components["schemas"]["EventConfig"];
+            /** Next Fire At */
+            next_fire_at?: string | null;
+            /** Last Fired At */
+            last_fired_at?: string | null;
+            /** Last Error */
+            last_error?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * TriggerPatch
+         * @description PATCH /v1/triggers/{id} — FULL document (the mcp/eval discipline).
+         *     The secret is never patchable (rotate-only); id/tenant/fire bookkeeping
+         *     are server-owned.
+         */
+        TriggerPatch: {
+            /** Name */
+            name: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "cron" | "webhook" | "event";
+            /** Agent Id */
+            agent_id: string;
+            /**
+             * Version Policy
+             * @enum {string}
+             */
+            version_policy: "pinned" | "latest";
+            /** Input Template */
+            input_template: string | null;
+            /** Enabled */
+            enabled: boolean;
+            /** Config */
+            config: components["schemas"]["CronConfig"] | components["schemas"]["WebhookConfig"] | components["schemas"]["EventConfig"];
+        };
+        /**
+         * TriggerSecretResponse
+         * @description POST /v1/triggers/{id}/rotate-secret — the new plaintext, once.
+         */
+        TriggerSecretResponse: {
+            /** Secret */
+            secret: string;
+        };
         /** Usage */
         Usage: {
             /**
@@ -2440,6 +2746,29 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+        };
+        /**
+         * WebhookConfig
+         * @description No fields v1 — the member exists so the discriminated parse stays
+         *     closed; the ingest route's behavior is fixed by kind.
+         */
+        WebhookConfig: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "webhook";
+        };
+        /**
+         * WebhookIngestResponse
+         * @description POST /v1/triggers/webhook/{id} — accepted; the run never blocks the
+         *     ingest (it streams via the existing executions endpoints).
+         */
+        WebhookIngestResponse: {
+            /** Run Id */
+            run_id: string;
+            /** Status */
+            status: string;
         };
         /**
          * WhoamiResponse
@@ -3227,6 +3556,7 @@ export interface operations {
                 status?: ("queued" | "running" | "awaiting_input" | "succeeded" | "failed" | "cancelled" | "timed_out") | null;
                 session_id?: string | null;
                 parent_run_id?: string | null;
+                trigger_id?: string | null;
                 limit?: number;
                 offset?: number;
             };
@@ -4229,6 +4559,247 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkflowVersion"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_triggers_v1_triggers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerList"];
+                };
+            };
+        };
+    };
+    create_trigger_v1_triggers_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriggerCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_trigger_v1_triggers__trigger_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trigger_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_trigger_v1_triggers__trigger_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trigger_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_trigger_v1_triggers__trigger_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trigger_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriggerPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rotate_webhook_secret_v1_triggers__trigger_id__rotate_secret_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trigger_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerSecretResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fire_trigger_v1_triggers__trigger_id__fire_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trigger_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerFireResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    webhook_ingest_v1_triggers_webhook__trigger_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trigger_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookIngestResponse"];
                 };
             };
             /** @description Validation Error */

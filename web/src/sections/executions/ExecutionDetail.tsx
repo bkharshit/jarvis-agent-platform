@@ -131,6 +131,15 @@ function ExecutionDetailInner() {
   // (metadata.kind === "workflow" marks the sibling executor's rows).
   const resourceName = detail.names?.[run.agent_id] ?? run.agent_id;
   const isWorkflow = run.metadata?.["kind"] === "workflow";
+  // S13 (D62): trigger-fired runs carry the provenance namespace — the chip
+  // names the trigger honestly (a deleted trigger's last known name stays,
+  // the runs link works either way — D57 no-FK provenance).
+  const triggerInfo = ((): { trigger_id?: string; kind?: string; name?: string; depth?: number } | null => {
+    const raw = run.metadata?.["trigger"];
+    return typeof raw === "object" && raw !== null
+      ? (raw as { trigger_id?: string; kind?: string; name?: string; depth?: number })
+      : null;
+  })();
   // S14 (ADR 0018 §7): this run's children — sub-agent delegations and
   // handoff successors — with the parent link when the run is one itself.
   const children = detail.children ?? [];
@@ -201,6 +210,23 @@ function ExecutionDetailInner() {
             >
               {run.parent_run_id}
             </Link>
+          </div>
+        )}
+        {triggerInfo !== null && (
+          <div className="flex gap-2 text-sm" data-testid="trigger-chip">
+            <span className="w-32 shrink-0 text-neutral-400">Fired by</span>
+            <span className="min-w-0 break-words text-neutral-200">
+              {triggerInfo.name ?? triggerInfo.trigger_id} ({triggerInfo.kind}
+              {typeof triggerInfo.depth === "number" ? `, depth ${triggerInfo.depth}` : ""}) ·{" "}
+              {triggerInfo.trigger_id !== undefined && (
+                <Link
+                  to={`/executions?trigger=${triggerInfo.trigger_id}`}
+                  className="underline text-neutral-300"
+                >
+                  runs
+                </Link>
+              )}
+            </span>
           </div>
         )}
         <SummaryRow label="Input" value={run.input} />

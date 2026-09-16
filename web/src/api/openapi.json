@@ -942,6 +942,22 @@
             }
           },
           {
+            "name": "trigger_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Trigger Id"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -2369,6 +2385,321 @@
         }
       }
     },
+    "/v1/triggers": {
+      "get": {
+        "tags": [
+          "triggers"
+        ],
+        "summary": "List Triggers",
+        "operationId": "list_triggers_v1_triggers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerList"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "triggers"
+        ],
+        "summary": "Create Trigger",
+        "operationId": "create_trigger_v1_triggers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriggerCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerCreated"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/triggers/{trigger_id}": {
+      "get": {
+        "tags": [
+          "triggers"
+        ],
+        "summary": "Get Trigger",
+        "operationId": "get_trigger_v1_triggers__trigger_id__get",
+        "parameters": [
+          {
+            "name": "trigger_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Trigger Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "triggers"
+        ],
+        "summary": "Update Trigger",
+        "description": "FULL document (the mcp/eval discipline). The pin re-stamps to the\ntarget's latest published version at patch time; enabling a cron\nrecomputes next_fire_at from now, disabling clears it. The stored\nsecret is untouched \u2014 the patch never carries one.",
+        "operationId": "update_trigger_v1_triggers__trigger_id__patch",
+        "parameters": [
+          {
+            "name": "trigger_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Trigger Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriggerPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "triggers"
+        ],
+        "summary": "Delete Trigger",
+        "description": "Always allowed \u2014 no-FK provenance means past runs keep their\ntrigger_id; the executions filter keeps working on a deleted trigger.",
+        "operationId": "delete_trigger_v1_triggers__trigger_id__delete",
+        "parameters": [
+          {
+            "name": "trigger_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Trigger Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/triggers/{trigger_id}/rotate-secret": {
+      "post": {
+        "tags": [
+          "triggers"
+        ],
+        "summary": "Rotate Webhook Secret",
+        "operationId": "rotate_webhook_secret_v1_triggers__trigger_id__rotate_secret_post",
+        "parameters": [
+          {
+            "name": "trigger_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Trigger Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerSecretResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/triggers/{trigger_id}/fire": {
+      "post": {
+        "tags": [
+          "triggers"
+        ],
+        "summary": "Fire Trigger",
+        "description": "Manual test-fire \u2014 the same \u00a72 composition with the cron/webhook\ndefaults. 409 when disabled: \"disabled fires nothing\" stays true.",
+        "operationId": "fire_trigger_v1_triggers__trigger_id__fire_post",
+        "parameters": [
+          {
+            "name": "trigger_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Trigger Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerFireResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/triggers/webhook/{trigger_id}": {
+      "post": {
+        "tags": [
+          "triggers"
+        ],
+        "summary": "Webhook Ingest",
+        "description": "The ONE unauthenticated ingest route (D60) \u2014 no AuthDep, and the\ntenant/principal are NEVER derived from the request: the trigger row is\nthe trust boundary (the ADR 0008 queue-message stance, transposed\ninbound). HMAC-SHA256 over the RAW body bytes, constant-time compared.\nMissing / non-webhook / disabled \u2192 404 (a disabled trigger behaves as\nabsent \u2014 \"disabling stops runs\"); wrong/missing signature \u2192 401; an\noversized body \u2192 413; otherwise enqueue and 202 \u2014 the ingest never\nblocks on the run.",
+        "operationId": "webhook_ingest_v1_triggers_webhook__trigger_id__post",
+        "parameters": [
+          {
+            "name": "trigger_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Trigger Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookIngestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/healthz": {
       "get": {
         "summary": "Healthz",
@@ -3142,6 +3473,28 @@
         "type": "object",
         "title": "CredentialPatch"
       },
+      "CronConfig": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "cron",
+            "title": "Type",
+            "default": "cron"
+          },
+          "schedule": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Schedule"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "schedule"
+        ],
+        "title": "CronConfig",
+        "description": "A five-field cron expression. UTC-only (the codebase is uniformly\nUTC); per-trigger IANA timezones are a recorded deferral (ADR 0019 \u00a78).\nParse validation lives at the API/firing boundary via croniter."
+      },
       "CursorEvent": {
         "properties": {
           "cursor": {
@@ -3746,6 +4099,45 @@
         ],
         "title": "EvalVersionCompare",
         "description": "One agent version side of GET /evaluations/compare."
+      },
+      "EventConfig": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "event",
+            "title": "Type",
+            "default": "event"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed",
+              "cancelled",
+              "timed_out",
+              "any"
+            ],
+            "title": "Status"
+          },
+          "source_agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Agent Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "EventConfig",
+        "description": "A run of this tenant (optionally only `source_agent_id`'s runs)\nreached this terminal status."
       },
       "EventList": {
         "properties": {
@@ -6542,6 +6934,406 @@
         ],
         "title": "ToolResult"
       },
+      "TriggerCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "cron",
+              "webhook",
+              "event"
+            ],
+            "title": "Kind"
+          },
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Agent Id"
+          },
+          "version_policy": {
+            "type": "string",
+            "enum": [
+              "pinned",
+              "latest"
+            ],
+            "title": "Version Policy",
+            "default": "latest"
+          },
+          "input_template": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Template"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "config": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CronConfig"
+              },
+              {
+                "$ref": "#/components/schemas/WebhookConfig"
+              },
+              {
+                "$ref": "#/components/schemas/EventConfig"
+              }
+            ],
+            "title": "Config",
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "cron": "#/components/schemas/CronConfig",
+                "event": "#/components/schemas/EventConfig",
+                "webhook": "#/components/schemas/WebhookConfig"
+              }
+            }
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "agent_id",
+          "config"
+        ],
+        "title": "TriggerCreate",
+        "description": "POST /v1/triggers \u2014 kind and config must agree (the domain validator\nmaps to 422); a cron schedule is parse-validated via croniter; the\ntarget must have a published version (a `pinned` policy stamps it \u2014\nD42/D51 transposed)."
+      },
+      "TriggerCreated": {
+        "properties": {
+          "trigger": {
+            "$ref": "#/components/schemas/TriggerOut"
+          },
+          "secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "trigger"
+        ],
+        "title": "TriggerCreated",
+        "description": "POST /v1/triggers \u2014 the row, plus the webhook secret's plaintext\nshown EXACTLY ONCE (webhook kind only; D29/D30)."
+      },
+      "TriggerDetail": {
+        "properties": {
+          "trigger": {
+            "$ref": "#/components/schemas/TriggerOut"
+          },
+          "lints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Lints"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "trigger",
+          "lints"
+        ],
+        "title": "TriggerDetail",
+        "description": "GET /v1/triggers/{id} \u2014 the row plus the derived lints (the\nworkflow-detail shape): stale pin, memory-on-target."
+      },
+      "TriggerFireResponse": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "run_id"
+        ],
+        "title": "TriggerFireResponse",
+        "description": "POST /v1/triggers/{id}/fire \u2014 the pre-generated run_id of an\nordinary queue run."
+      },
+      "TriggerList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TriggerOut"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "TriggerList",
+        "description": "GET /v1/triggers."
+      },
+      "TriggerOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "tenant_id": {
+            "type": "string",
+            "title": "Tenant Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "cron",
+              "webhook",
+              "event"
+            ],
+            "title": "Kind"
+          },
+          "agent_id": {
+            "type": "string",
+            "title": "Agent Id"
+          },
+          "agent_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Version Id"
+          },
+          "version_policy": {
+            "type": "string",
+            "enum": [
+              "pinned",
+              "latest"
+            ],
+            "title": "Version Policy",
+            "default": "latest"
+          },
+          "input_template": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Template"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "config": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CronConfig"
+              },
+              {
+                "$ref": "#/components/schemas/WebhookConfig"
+              },
+              {
+                "$ref": "#/components/schemas/EventConfig"
+              }
+            ],
+            "title": "Config",
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "cron": "#/components/schemas/CronConfig",
+                "event": "#/components/schemas/EventConfig",
+                "webhook": "#/components/schemas/WebhookConfig"
+              }
+            }
+          },
+          "next_fire_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Fire At"
+          },
+          "last_fired_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Fired At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "tenant_id",
+          "name",
+          "kind",
+          "agent_id",
+          "config",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "TriggerOut",
+        "description": "A trigger as the API returns it \u2014 NO secret field ever (D29/D30):\nthe AES-GCM envelope lives on the row, the plaintext exists exactly\nonce (create / rotate responses)."
+      },
+      "TriggerPatch": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "cron",
+              "webhook",
+              "event"
+            ],
+            "title": "Kind"
+          },
+          "agent_id": {
+            "type": "string",
+            "title": "Agent Id"
+          },
+          "version_policy": {
+            "type": "string",
+            "enum": [
+              "pinned",
+              "latest"
+            ],
+            "title": "Version Policy"
+          },
+          "input_template": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Template"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "config": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CronConfig"
+              },
+              {
+                "$ref": "#/components/schemas/WebhookConfig"
+              },
+              {
+                "$ref": "#/components/schemas/EventConfig"
+              }
+            ],
+            "title": "Config",
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "cron": "#/components/schemas/CronConfig",
+                "event": "#/components/schemas/EventConfig",
+                "webhook": "#/components/schemas/WebhookConfig"
+              }
+            }
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "agent_id",
+          "version_policy",
+          "input_template",
+          "enabled",
+          "config"
+        ],
+        "title": "TriggerPatch",
+        "description": "PATCH /v1/triggers/{id} \u2014 FULL document (the mcp/eval discipline).\nThe secret is never patchable (rotate-only); id/tenant/fire bookkeeping\nare server-owned."
+      },
+      "TriggerSecretResponse": {
+        "properties": {
+          "secret": {
+            "type": "string",
+            "title": "Secret"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "secret"
+        ],
+        "title": "TriggerSecretResponse",
+        "description": "POST /v1/triggers/{id}/rotate-secret \u2014 the new plaintext, once."
+      },
       "Usage": {
         "properties": {
           "input_tokens": {
@@ -6635,6 +7427,40 @@
           "created_at"
         ],
         "title": "VersionSummary"
+      },
+      "WebhookConfig": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "webhook",
+            "title": "Type",
+            "default": "webhook"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "WebhookConfig",
+        "description": "No fields v1 \u2014 the member exists so the discriminated parse stays\nclosed; the ingest route's behavior is fixed by kind."
+      },
+      "WebhookIngestResponse": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "run_id",
+          "status"
+        ],
+        "title": "WebhookIngestResponse",
+        "description": "POST /v1/triggers/webhook/{id} \u2014 accepted; the run never blocks the\ningest (it streams via the existing executions endpoints)."
       },
       "WhoamiResponse": {
         "properties": {

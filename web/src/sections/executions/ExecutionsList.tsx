@@ -68,11 +68,15 @@ function ExecutionsListInner() {
   const [searchParams, setSearchParams] = useSearchParams();
   const agentFilter = searchParams.get("agent");
   const statusFilter = searchParams.get("status");
+  // S13 (D62): ?trigger= from the triggers section's runs link — the runs a
+  // trigger fired, filterable even after the trigger row is deleted (D57).
+  const triggerFilter = searchParams.get("trigger");
   const { data: capabilities } = useCapabilities();
   const inboxEnabled = humanInTheLoop(capabilities);
   const { data, isPending, isError, error } = useExecutions({
     agent: agentFilter,
     status: (statusFilter as ExecutionStatus | null) ?? null,
+    trigger: triggerFilter,
   });
   const runs = data?.items;
   const names = data?.names ?? {};
@@ -89,6 +93,7 @@ function ExecutionsListInner() {
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">
           Executions{agentFilter ? ` — agent ${agentFilter}` : ""}
+          {triggerFilter ? " — by trigger" : ""}
         </h1>
         <div className="flex gap-1" role="group" aria-label="Status filter">
           {STATUS_FILTERS.map((s) => (

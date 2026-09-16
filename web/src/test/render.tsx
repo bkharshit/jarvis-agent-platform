@@ -88,7 +88,11 @@ export const TEST_CAPABILITIES: Capabilities = {
         allowlist: ["plan_execute"],
       },
     },
-    triggers: { enabled: false, stage: "S13", summary: "Cron, webhook, and event rules" },
+    triggers: {
+      enabled: true,
+      summary: "Cron, webhook, and event rules",
+      detail: { total: 2, cron: 1, webhook: 1, event: 0 },
+    },
     settings: {
       enabled: true,
       summary: "Auth, tenants, API keys, BYOK credentials",

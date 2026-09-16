@@ -54,6 +54,42 @@ describe("<ExecutionDetailPage/>", () => {
     expect(await screen.findByText("execution nope not found")).toBeInTheDocument();
   });
 
+  it("renders the trigger provenance chip with a runs link (S13)", async () => {
+    server.use(
+      http.get("/v1/executions/run-trg-1", () =>
+        HttpResponse.json({
+          run: {
+            ...runFixture,
+            run_id: "run-trg-1",
+            session_id: null,
+            metadata: {
+              trigger: { trigger_id: "trg-1", kind: "cron", name: "nightly-digest", depth: 1 },
+            },
+          },
+          messages: [],
+          tool_executions: [],
+          children: [],
+        }),
+      ),
+    );
+    renderWithProviders(<ExecutionDetailPage />, {
+      initialEntries: ["/executions/run-trg-1"],
+      path: "/executions/:runId",
+    });
+    const chip = await screen.findByTestId("trigger-chip");
+    expect(chip).toHaveTextContent("nightly-digest");
+    expect(chip).toHaveTextContent("cron");
+    expect(chip).toHaveTextContent("depth 1");
+    const runsLink = screen.getByRole("link", { name: "runs" });
+    expect(runsLink.getAttribute("href")).toBe("/executions?trigger=trg-1");
+  });
+
+  it("omits the trigger chip for a non-trigger run", async () => {
+    renderDetail();
+    await screen.findByText("run-abc-123");
+    expect(screen.queryByTestId("trigger-chip")).not.toBeInTheDocument();
+  });
+
   it("renders the pause card for an awaiting_input run and resumes it (S10)", async () => {
     // A durable pause: detail row awaiting_input, event log ending in the
     // pause frame. The resume POST flips the row the refetch will see.

@@ -49,6 +49,14 @@ export const runFixture = {
   metadata: {},
 };
 
+/** S13 (ADR 0019): a trigger-fired run — provenance in metadata["trigger"]. */
+export const triggerRunFixture = {
+  ...runFixture,
+  run_id: "run-trg-fired-1",
+  session_id: null,
+  metadata: { trigger: { trigger_id: "trg-1", kind: "cron", name: "nightly-digest", depth: 1 } },
+};
+
 /** S14 (ADR 0018 §7): a sub-agent child of runFixture — an ordinary row
  * linked by parent_run_id, carrying the delegation metadata. */
 export const subAgentRunFixture = {
@@ -265,6 +273,52 @@ export const evalCompareFixture = {
   ],
 };
 
+// --- triggers (S13, ADR 0019) ----------------------------------------------
+
+/** A cron trigger row as the API returns it — NO secret field ever. */
+export const triggerFixture = {
+  id: "trg-1",
+  tenant_id: "default",
+  name: "nightly-digest",
+  kind: "cron" as const,
+  agent_id: agentFixture.id,
+  agent_version_id: null,
+  version_policy: "latest" as const,
+  input_template: null,
+  enabled: true,
+  config: { type: "cron" as const, schedule: "0 3 * * *" },
+  next_fire_at: "2026-09-17T03:00:00Z",
+  last_fired_at: "2026-09-16T03:00:00Z",
+  last_error: null,
+  created_at: "2026-09-15T12:00:00Z",
+  updated_at: "2026-09-15T12:00:00Z",
+};
+
+/** A webhook trigger row — the plaintext secret lives only in create/rotate. */
+export const webhookTriggerFixture = {
+  ...triggerFixture,
+  id: "trg-2",
+  name: "alerts-hook",
+  kind: "webhook" as const,
+  config: { type: "webhook" as const },
+  next_fire_at: null,
+  last_fired_at: null,
+};
+
+/** Create-time response: the ONLY payload that ever carries the plaintext. */
+export const triggerCreatedFixture = {
+  trigger: webhookTriggerFixture,
+  secret: "whsec_only-shown-at-create-time-0123456789abcdef",
+};
+
+/** The run's trigger provenance id from the metadata namespace, or null. */
+function triggerIdOf(r: { metadata?: object }): string | null {
+  const raw = (r.metadata as Record<string, unknown> | undefined)?.["trigger"];
+  if (typeof raw !== "object" || raw === null) return null;
+  const id = (raw as Record<string, unknown>)["trigger_id"];
+  return typeof id === "string" ? id : null;
+}
+
 export const handlers = [
   http.get("/v1/agents", () => HttpResponse.json({ items: agentsFixture })),
   http.post("/v1/agents", () => HttpResponse.json({ definition: agentFixture, versions: [] }, { status: 201 })),
@@ -305,12 +359,16 @@ export const handlers = [
     const agent = url.searchParams.get("agent_id");
     const status = url.searchParams.get("status");
     const parent = url.searchParams.get("parent_run_id");
-    const all = [runFixture, subAgentRunFixture];
+    const trigger = url.searchParams.get("trigger_id");
+    const all = [runFixture, subAgentRunFixture, triggerRunFixture];
     const items = all.filter(
       (r) =>
         (agent === null || r.agent_id === agent) &&
         (status === null || r.status === status) &&
-        (parent === null || r.parent_run_id === parent),
+        (parent === null || r.parent_run_id === parent) &&
+        // S13 (D62): the metadata["trigger"].trigger_id namespace is the
+        // provenance the column filter matches.
+        (trigger === null || triggerIdOf(r) === trigger),
     );
     return HttpResponse.json({ items, names: { "agent-worker-1": "Worker agent" } });
   }),
@@ -440,7 +498,11 @@ export const handlers = [
         evaluations: { enabled: true, summary: "Datasets, runs, and scores" },
         observability: { enabled: false, stage: "S7", summary: "Traces and spans" },
         plugins: { enabled: false, stage: "S3", summary: "Strategy plugins" },
-        triggers: { enabled: false, stage: "S13", summary: "Cron, webhook, and event rules" },
+        triggers: {
+          enabled: true,
+          summary: "Cron, webhook, and event rules",
+          detail: { total: 2, cron: 1, webhook: 1, event: 0 },
+        },
         settings: {
           enabled: true,
           summary: "Auth, tenants, API keys, BYOK credentials",
@@ -555,6 +617,36 @@ export const handlers = [
   }),
   http.patch("/v1/credentials/:credential_id", () => HttpResponse.json(credentialFixture)),
   http.delete("/v1/credentials/:credential_id", () => new HttpResponse(null, { status: 204 })),
+  // --- triggers (S13, ADR 0019) ---------------------------------------------
+  http.get("/v1/triggers", () =>
+    HttpResponse.json({ items: [triggerFixture, webhookTriggerFixture] }),
+  ),
+  http.post("/v1/triggers", () => HttpResponse.json(triggerCreatedFixture, { status: 201 })),
+  http.get("/v1/triggers/:trigger_id", ({ params }) => {
+    const { trigger_id } = params as { trigger_id: string };
+    if (trigger_id === triggerFixture.id) {
+      return HttpResponse.json({ trigger: triggerFixture, lints: [] });
+    }
+    if (trigger_id === webhookTriggerFixture.id) {
+      return HttpResponse.json({ trigger: webhookTriggerFixture, lints: [] });
+    }
+    return HttpResponse.json(
+      { error: { kind: "not_found", message: `trigger ${trigger_id} not found` } },
+      { status: 404 },
+    );
+  }),
+  http.patch("/v1/triggers/:trigger_id", ({ params }) => {
+    const { trigger_id } = params as { trigger_id: string };
+    const row = trigger_id === webhookTriggerFixture.id ? webhookTriggerFixture : triggerFixture;
+    return HttpResponse.json({ trigger: row, lints: [] });
+  }),
+  http.delete("/v1/triggers/:trigger_id", () => new HttpResponse(null, { status: 204 })),
+  http.post("/v1/triggers/:trigger_id/rotate-secret", () =>
+    HttpResponse.json({ secret: "whsec_rotated-only-shown-once-9876543210fedcba" }),
+  ),
+  http.post("/v1/triggers/:trigger_id/fire", () =>
+    HttpResponse.json({ run_id: "run-fired-now-1" }, { status: 202 }),
+  ),
 ];
 
 /** Build a frozen-shape error envelope body (D13/D16). */

@@ -19,6 +19,7 @@ import { EvalCompare } from "@/sections/evaluations/EvalCompare";
 import { EvalDatasetDetail } from "@/sections/evaluations/EvalDatasetDetail";
 import { EvalRunDetail } from "@/sections/evaluations/EvalRunDetail";
 import { EvaluationsList } from "@/sections/evaluations/EvaluationsList";
+import { TriggersPage } from "@/sections/triggers/TriggersPage";
 
 import { SectionGate } from "@/capabilities/SectionGate";
 import type { SectionKey } from "@/capabilities/sectionRegistry";
@@ -78,7 +79,7 @@ export function sectionRoutes() {
     { path: "/evaluations/runs/:runId", element: gated("evaluations", <EvalRunDetail />) },
     { path: "/observability", element: gated("observability") },
     { path: "/plugins", element: gated("plugins", <PluginsPage />) },
-    { path: "/triggers", element: gated("triggers") },
+    { path: "/triggers", element: gated("triggers", <TriggersPage />) },
     { path: "/settings", element: gated("settings", <SettingsPage />) },
   ];
 }

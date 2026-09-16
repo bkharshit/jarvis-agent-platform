@@ -14,8 +14,12 @@ export type ExecutionStatus = RunResult["status"];
 export function executionsQueryKey(filters: {
   agent?: string | null;
   status?: ExecutionStatus | null;
+  trigger?: string | null;
 }) {
-  return ["executions", { agent: filters.agent ?? null, status: filters.status ?? null }] as const;
+  return [
+    "executions",
+    { agent: filters.agent ?? null, status: filters.status ?? null, trigger: filters.trigger ?? null },
+  ] as const;
 }
 
 export function executionQueryKey(runId: string) {
@@ -32,6 +36,7 @@ export interface ExecutionListPayload {
 export function useExecutions(filters: {
   agent?: string | null;
   status?: ExecutionStatus | null;
+  trigger?: string | null;
 }) {
   return useQuery({
     queryKey: executionsQueryKey(filters),
@@ -42,6 +47,9 @@ export function useExecutions(filters: {
             query: {
               ...(filters.agent ? { agent_id: filters.agent } : {}),
               ...(filters.status ? { status: filters.status } : {}),
+              // S13 (D62): the trigger provenance filter — the runs a
+              // trigger fired (survives trigger deletion; D57).
+              ...(filters.trigger ? { trigger_id: filters.trigger } : {}),
             },
           },
         }),
