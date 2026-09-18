@@ -13,16 +13,18 @@ from typing import Any
 
 from jarvis.domain.agent import CredentialRef, ModelRef, StoredCredentialRef
 from jarvis.domain.auth import Principal
+from jarvis.domain.knowledge import EmbeddingConfig
 from jarvis.models.client import BoundModelClient
 from jarvis.models.credentials import DefaultCredentialResolver
 from jarvis.models.errors import ModelAuthError, ModelError
-from jarvis.models.mock import MockModelProvider
+from jarvis.models.mock import MockEmbeddingProvider, MockModelProvider
 from jarvis.models.openai_compatible import OpenAICompatibleProvider
 from jarvis.ports.credential import (
     CredentialError,
     ResolvedEnv,
     ResolvedMaterial,
 )
+from jarvis.ports.model import EmbeddingClient
 
 
 class DefaultModelProviderFactory:
@@ -30,11 +32,13 @@ class DefaultModelProviderFactory:
         self,
         *,
         mock_provider: MockModelProvider | None = None,
+        mock_embedding_provider: MockEmbeddingProvider | None = None,
         api_key_override: str | None = None,
         extra_providers: dict[str, Any] | None = None,
         credential_resolver: DefaultCredentialResolver | Any | None = None,
     ) -> None:
         self._mock = mock_provider
+        self._mock_embeddings = mock_embedding_provider
         self._api_key_override = api_key_override
         self._extra = dict(extra_providers or {})
         self._credentials = credential_resolver or DefaultCredentialResolver()
@@ -86,6 +90,29 @@ class DefaultModelProviderFactory:
                 model=ref.model,
             )
         return OpenAICompatibleProvider.for_ref(ref, api_key=resolved.value)
+
+    async def resolve_embedder(
+        self, config: EmbeddingConfig, *, principal: Principal | None = None
+    ) -> EmbeddingClient:
+        """Embedder resolution mirrors `resolve()` (S8, ADR 0020 §2, D64 —
+        the D28 pattern): mock → the shared MockEmbeddingProvider; a stored
+        credential materializes tenant-scoped (principal required); any
+        other provider rides the OpenAI-compatible adapter."""
+        if config.provider == "mock":
+            return self._mock_embeddings or MockEmbeddingProvider()
+        ref = ModelRef(
+            provider=config.provider,
+            model=config.model,
+            base_url=config.base_url,
+            credential_ref=config.credential_ref,
+        )
+        if isinstance(config.credential_ref, StoredCredentialRef):
+            return await self._resolve_with_material(ref, config.credential_ref, principal)
+        return OpenAICompatibleProvider.for_ref(
+            ref,
+            name=config.provider,
+            api_key=self._api_key_override,
+        )
 
     async def list_models(
         self,

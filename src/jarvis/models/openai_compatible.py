@@ -29,6 +29,8 @@ from jarvis.models.errors import (
     ModelStreamError,
 )
 from jarvis.models.types import (
+    EmbeddingRequest,
+    EmbeddingResponse,
     FinishDelta,
     ModelRequest,
     ModelResponse,
@@ -222,6 +224,38 @@ class OpenAICompatibleProvider:
             if isinstance(entry, dict) and isinstance(entry.get("id"), str)
         )
 
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        """POST `{base_url}/embeddings` (S8, ADR 0020 §2, D64). One call
+        per batch — the CALLER (ingest/retrieval) owns batching and this
+        adapter sends the request's input list verbatim. Errors ride the
+        same ModelError taxonomy as chat."""
+        client = httpx.AsyncClient(timeout=self._timeout)
+        try:
+            try:
+                response = await client.send(
+                    client.build_request(
+                        "POST",
+                        f"{self._base_url}/embeddings",
+                        json={"model": request.model, "input": request.input},
+                        headers=self._headers(),
+                    )
+                )
+            except httpx.RequestError as exc:
+                raise ModelConnectionError(
+                    f"embedding request failed: {exc}", provider=self._name, model=request.model
+                ) from exc
+            if response.status_code != 200:
+                self._raise_http_error(response.status_code, response.text, request.model)
+            try:
+                data = response.json()
+            except ValueError as exc:
+                raise ModelStreamError(
+                    f"malformed embedding payload: {exc}", provider=self._name, model=request.model
+                ) from exc
+        finally:
+            await client.aclose()
+        return _parse_embeddings(data, request, self._name)
+
     # --- internals ---------------------------------------------------------
 
     def _request_payload(self, request: ModelRequest, *, stream: bool) -> dict[str, Any]:
@@ -350,6 +384,42 @@ def _parse_usage(raw: Any) -> Usage:
         input_tokens=int(raw.get("prompt_tokens", 0)),
         output_tokens=int(raw.get("completion_tokens", 0)),
     )
+
+
+def _parse_embeddings(data: Any, request: EmbeddingRequest, provider: str) -> EmbeddingResponse:
+    """The `/embeddings` shape: `{data: [{index, embedding}], usage}`.
+    Vectors come back ordered by `index` regardless of wire order."""
+    if not isinstance(data, dict) or not isinstance(data.get("data"), list):
+        raise ModelStreamError(
+            "malformed embedding payload: missing 'data' array",
+            provider=provider,
+            model=request.model,
+        )
+    entries = sorted(data["data"], key=lambda entry: entry.get("index", 0))
+    if len(entries) != len(request.input):
+        raise ModelStreamError(
+            f"embedding payload returned {len(entries)} vectors for {len(request.input)} inputs",
+            provider=provider,
+            model=request.model,
+        )
+    vectors: list[list[float]] = []
+    for position, entry in enumerate(entries):
+        raw_vector = entry.get("embedding") if isinstance(entry, dict) else None
+        if not isinstance(raw_vector, list) or not all(
+            isinstance(value, (int, float)) for value in raw_vector
+        ):
+            raise ModelStreamError(
+                f"malformed embedding payload: vector {position} is not a float array",
+                provider=provider,
+                model=request.model,
+            )
+        vectors.append([float(value) for value in raw_vector])
+    usage = (
+        Usage(input_tokens=int(data["usage"].get("prompt_tokens", 0)))
+        if isinstance(data.get("usage"), dict)
+        else Usage()
+    )
+    return EmbeddingResponse(vectors=vectors, usage=usage)
 
 
 def _parse_message(raw: dict[str, Any]) -> Message:

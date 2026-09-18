@@ -16,6 +16,8 @@ from jarvis.domain.message import Message, ToolCall, Usage
 from jarvis.models.capabilities import ModelCapabilities
 from jarvis.models.errors import ModelAbortedError
 from jarvis.models.types import (
+    EmbeddingRequest,
+    EmbeddingResponse,
     FinishDelta,
     ModelRequest,
     ModelResponse,
@@ -136,4 +138,57 @@ def _json_arguments(call: ToolCall) -> str:
     return json.dumps(call.arguments)
 
 
-__all__ = ["MockModelProvider", "MockTurn", "turn"]
+class MockEmbeddingProvider:
+    """Deterministic zero-network EmbeddingClient (S8, ADR 0020 §2, D64).
+
+    The vector is a NORMALIZED HASHED BAG OF WORDS, not a plain hash —
+    identical text embeds identically AND cosine similarity is meaningful
+    (texts sharing tokens share buckets), so retrieval ranking is real in
+    tests. Records every request; `errors` pops one per embed call."""
+
+    def __init__(
+        self,
+        *,
+        dimension: int = 8,
+        errors: list[Any] | None = None,
+        name: str = "mock",
+    ) -> None:
+        self._dimension = dimension
+        self._errors = list(errors or [])
+        self._name = name
+        self.requests: list[EmbeddingRequest] = []
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    async def list_models(self) -> list[str]:
+        return ["mock-embedder"]
+
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        self.requests.append(request)
+        if self._errors:
+            scripted = self._errors.pop(0)
+            raise scripted() if isinstance(scripted, type) else scripted
+        return EmbeddingResponse(
+            vectors=[mock_embedding(text, self._dimension) for text in request.input]
+        )
+
+
+def mock_embedding(text: str, dimension: int) -> list[float]:
+    """Normalized hashed bag of words: each token hashes to one bucket;
+    shared tokens → shared buckets → real cosine ranking."""
+    import hashlib
+    import math
+    import re
+
+    vector = [0.0] * dimension
+    for token in re.findall(r"[a-z0-9]+", text.lower()):
+        digest = hashlib.sha256(token.encode()).digest()
+        bucket = int.from_bytes(digest[:4], "big") % dimension
+        vector[bucket] += 1.0
+    norm = math.sqrt(sum(value * value for value in vector)) or 1.0
+    return [value / norm for value in vector]
+
+
+__all__ = ["MockEmbeddingProvider", "MockModelProvider", "MockTurn", "mock_embedding", "turn"]
