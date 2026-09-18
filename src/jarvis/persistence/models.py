@@ -26,6 +26,8 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from jarvis.persistence.types import VectorType
+
 # `awaiting_input` is a pause, not terminal (S10, ADR 0010 §2) — it does not
 # join TERMINAL_STATUSES and the run row can still reach one.
 EXECUTION_STATUSES = (
@@ -41,6 +43,7 @@ TRIGGER_KINDS = ("cron", "webhook", "event")
 MESSAGE_ROLES = ("system", "developer", "user", "assistant", "tool")
 QUEUE_STATUSES = ("pending", "claimed", "done")
 USER_ROLES = ("owner", "admin", "member")
+KNOWLEDGE_DOCUMENT_STATUSES = ("ready", "error")
 DEFAULT_TENANT = "default"
 
 
@@ -621,6 +624,85 @@ class EvalResultRow(Base):
     scored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class KnowledgeDatasetRow(Base):
+    """One knowledge dataset (S8, ADR 0020 §1, D63) — strictly tenant-owned.
+    The embedding config is IMMUTABLE (dimension pinned at create); only
+    name/description are mutable. No shared tier — every dataset belongs
+    to exactly one tenant (the TriggerRow shape)."""
+
+    __tablename__ = "knowledge_datasets"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_knowledge_datasets_tenant_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("tenants.id"),
+        nullable=False,
+        default=DEFAULT_TENANT,
+        server_default=DEFAULT_TENANT,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    embedding_config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    chunk_config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
+
+
+class KnowledgeDocumentRow(Base):
+    """One text document (S8, D65). `content` is the re-chunk/re-embed
+    source of truth; status='error' carries the ingest failure honestly.
+    No tenant column — reads join through the tenant-scoped dataset
+    (D29)."""
+
+    __tablename__ = "knowledge_documents"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    dataset_id: Mapped[str] = mapped_column(
+        String, ForeignKey("knowledge_datasets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        Enum(*KNOWLEDGE_DOCUMENT_STATUSES, name="knowledge_document_status", native_enum=True),
+        nullable=False,
+        default="ready",
+    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+
+
+class KnowledgeChunkRow(Base):
+    """One chunk + its pinned-dimension vector (S8, ADR 0020 §1). The
+    `embedding` column is dimension-free — the dimension is enforced at
+    WRITE time from the dataset's config. `dataset_id` is denormalized so
+    scoped search WHEREs it directly (no join)."""
+
+    __tablename__ = "knowledge_chunks"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    document_id: Mapped[str] = mapped_column(
+        String, ForeignKey("knowledge_documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    dataset_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(VectorType, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+
+
 __all__ = [
     "AgentExecutionRow",
     "AgentRow",
@@ -634,6 +716,10 @@ __all__ = [
     "EvalResultRow",
     "EvalRunRow",
     "ExecutionEventRow",
+    "KNOWLEDGE_DOCUMENT_STATUSES",
+    "KnowledgeChunkRow",
+    "KnowledgeDatasetRow",
+    "KnowledgeDocumentRow",
     "McpServerRow",
     "MemoryScratchRow",
     "MessageRow",

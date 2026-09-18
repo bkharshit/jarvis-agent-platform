@@ -28,6 +28,7 @@ from jarvis.persistence.repositories import (
     SqlConversationRepo,
     SqlEvalRepo,
     SqlExecutionRepo,
+    SqlKnowledgeRepo,
     SqlMcpServerRepo,
     SqlRunQueue,
     SqlScratchpadRepo,
@@ -64,6 +65,7 @@ class AppContainer:
     conversations: SqlConversationRepo
     scratchpad: SqlScratchpadRepo
     evaluations: SqlEvalRepo
+    knowledge: SqlKnowledgeRepo
     triggers: SqlTriggerRepo
     queue: SqlRunQueue
     auth: SqlAuthRepo
@@ -99,6 +101,9 @@ class AppContainer:
         conversations = SqlConversationRepo(sessionmaker)
         scratchpad = SqlScratchpadRepo(sessionmaker)
         evaluations = SqlEvalRepo(sessionmaker)
+        # S8 (ADR 0020 §1, D63): the knowledge repo rides the same
+        # sessionmaker — strictly tenant-scoped, pgvector-backed.
+        knowledge = SqlKnowledgeRepo(sessionmaker)
         triggers = SqlTriggerRepo(sessionmaker)
         queue = SqlRunQueue(sessionmaker)
         auth = SqlAuthRepo(sessionmaker)
@@ -242,6 +247,7 @@ class AppContainer:
             conversations=conversations,
             scratchpad=scratchpad,
             evaluations=evaluations,
+            knowledge=knowledge,
             triggers=triggers,
             queue=queue,
             auth=auth,

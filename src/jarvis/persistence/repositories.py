@@ -8,6 +8,7 @@ event sink uses that value as the SSE Last-Event-ID (ADR 0003).
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -15,7 +16,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 from pydantic import TypeAdapter
-from sqlalchemy import ColumnElement, bindparam, delete, func, select, update
+from sqlalchemy import ColumnElement, bindparam, delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import (
@@ -47,6 +48,14 @@ from jarvis.domain.evaluation import (
 )
 from jarvis.domain.events import ExecutionEvent
 from jarvis.domain.execution import ExecutionStatus, RunResult
+from jarvis.domain.knowledge import (
+    ChunkConfig,
+    EmbeddingConfig,
+    KnowledgeChunk,
+    KnowledgeDataset,
+    KnowledgeDocument,
+    KnowledgeDocumentStatus,
+)
 from jarvis.domain.mcp import McpServer, McpServerConfig
 from jarvis.domain.message import Message, Usage
 from jarvis.domain.tools import ToolResult
@@ -71,6 +80,9 @@ from jarvis.persistence.models import (
     EvalResultRow,
     EvalRunRow,
     ExecutionEventRow,
+    KnowledgeChunkRow,
+    KnowledgeDatasetRow,
+    KnowledgeDocumentRow,
     McpServerRow,
     MemoryScratchRow,
     MessageRow,
@@ -84,6 +96,7 @@ from jarvis.persistence.models import (
     WorkflowRow,
     WorkflowVersionRow,
 )
+from jarvis.persistence.types import parse_vector, render_vector
 from jarvis.ports.queue import ResumeRequest, RunQueueMessage
 
 logger = logging.getLogger("jarvis.persistence")
@@ -1686,6 +1699,296 @@ class SqlEvalRepo:
         return (await session.execute(query)).scalar_one_or_none()
 
 
+class SqlKnowledgeRepo:
+    """Knowledge datasets (S8, ADR 0020 §1, D63) — strictly tenant-owned
+    rows (the SqlTriggerRepo shape): every call takes a REQUIRED
+    `tenant_id` kwarg and scopes its WHERE clause. Documents and chunks
+    carry no tenant — every read joins through the tenant-scoped dataset
+    (the eval_results precedent). Only name/description are mutable; the
+    embedding/chunk configs are IMMUTABLE (dimension pinned at create)."""
+
+    def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
+        self._sessionmaker = sessionmaker
+
+    # --- datasets ---------------------------------------------------------
+
+    async def create_dataset(
+        self, dataset: KnowledgeDataset, *, tenant_id: str
+    ) -> KnowledgeDataset:
+        now = _now()
+        async with self._sessionmaker() as session:
+            row = KnowledgeDatasetRow(
+                id=dataset.id,
+                tenant_id=tenant_id,
+                name=dataset.name,
+                description=dataset.description,
+                embedding_config=dataset.embedding_config.model_dump(mode="json"),
+                chunk_config=dataset.chunk_config.model_dump(mode="json"),
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return self._dataset(row)
+
+    async def get_dataset(self, dataset_id: str, *, tenant_id: str) -> KnowledgeDataset | None:
+        async with self._sessionmaker() as session:
+            row = await self._dataset_row(dataset_id, tenant_id=tenant_id, session=session)
+        return None if row is None else self._dataset(row)
+
+    async def list_datasets(self, *, tenant_id: str) -> list[KnowledgeDataset]:
+        async with self._sessionmaker() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(KnowledgeDatasetRow)
+                        .where(KnowledgeDatasetRow.tenant_id == tenant_id)
+                        # ids are uuid4s — never ORDER BY id alone (the S11 note)
+                        .order_by(KnowledgeDatasetRow.created_at, KnowledgeDatasetRow.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [self._dataset(row) for row in rows]
+
+    async def update_dataset(
+        self, dataset: KnowledgeDataset, *, tenant_id: str
+    ) -> KnowledgeDataset | None:
+        """Mutable fields are name/description ONLY — the route 422s any
+        embedding/chunk-config change before reaching here; this method
+        never writes the configs even if the caller mutated them."""
+        async with self._sessionmaker() as session:
+            row = await self._dataset_row(dataset.id, tenant_id=tenant_id, session=session)
+            if row is None:
+                return None
+            row.name = dataset.name
+            row.description = dataset.description
+            row.updated_at = _now()
+            await session.commit()
+            await session.refresh(row)
+            return self._dataset(row)
+
+    async def delete_dataset(self, dataset_id: str, *, tenant_id: str) -> bool:
+        """False when an agent version snapshot references the dataset
+        (caller maps to 409) or the dataset is absent/foreign."""
+        async with self._sessionmaker() as session:
+            row = await self._dataset_row(dataset_id, tenant_id=tenant_id, session=session)
+            if row is None:
+                return False
+            if await self._references(dataset_id, session):
+                return False
+            await session.delete(row)
+            await session.commit()
+        return True
+
+    async def count_dataset_references(self, dataset_id: str) -> int:
+        async with self._sessionmaker() as session:
+            return await self._references(dataset_id, session)
+
+    async def _references(self, dataset_id: str, session: AsyncSession) -> int:
+        """Snapshot containment (D63): `snapshot #> '{knowledge,datasets}'
+        @> '["<id>"]'::jsonb` — matches on VALUE (the 0005 lesson; the
+        knowledge binding is a JSONB array of dataset ids)."""
+        stmt = text(
+            "SELECT count(*) FROM agent_versions"
+            " WHERE snapshot #> '{knowledge,datasets}' @> CAST(:contains AS jsonb)"
+        )
+        result = await session.execute(stmt, {"contains": json.dumps([dataset_id])})
+        return int(result.scalar_one())
+
+    async def _dataset_row(
+        self, dataset_id: str, *, tenant_id: str, session: AsyncSession
+    ) -> KnowledgeDatasetRow | None:
+        row = (
+            await session.execute(
+                select(KnowledgeDatasetRow).where(
+                    KnowledgeDatasetRow.id == dataset_id,
+                    KnowledgeDatasetRow.tenant_id == tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        return row
+
+    # --- documents ---------------------------------------------------------
+
+    async def create_document(
+        self, document: KnowledgeDocument, chunks: list[KnowledgeChunk], *, tenant_id: str
+    ) -> KnowledgeDocument:
+        """The document row + its chunks in ONE transaction (D65 — a ready
+        document has all its chunks). Defense-in-depth on the write path:
+        the dataset must exist in THIS tenant even though the route already
+        resolved it scoped (D29)."""
+        async with self._sessionmaker() as session:
+            dataset = await self._dataset_row(
+                document.dataset_id, tenant_id=tenant_id, session=session
+            )
+            if dataset is None:
+                raise ValueError(f"dataset {document.dataset_id!r} not found in this tenant")
+            session.add(
+                KnowledgeDocumentRow(
+                    id=document.id,
+                    dataset_id=document.dataset_id,
+                    name=document.name,
+                    content=document.content,
+                    status=document.status,
+                    error=document.error,
+                    chunk_count=document.chunk_count,
+                    created_at=document.created_at,
+                )
+            )
+            # Flush the document FIRST: without a declared relationship the
+            # unit of work sorts tables alphabetically and the chunks would
+            # hit the FK before the document row exists.
+            await session.flush()
+            for chunk in chunks:
+                session.add(
+                    KnowledgeChunkRow(
+                        id=chunk.id,
+                        document_id=chunk.document_id,
+                        dataset_id=chunk.dataset_id,
+                        chunk_index=chunk.chunk_index,
+                        content=chunk.content,
+                        embedding=chunk.embedding,
+                        created_at=chunk.created_at,
+                    )
+                )
+            await session.commit()
+        return document
+
+    async def list_documents(self, dataset_id: str, *, tenant_id: str) -> list[KnowledgeDocument]:
+        async with self._sessionmaker() as session:
+            scoped = await self._scoped_dataset_id(dataset_id, tenant_id, session)
+            if scoped is None:
+                return []
+            rows = (
+                (
+                    await session.execute(
+                        select(KnowledgeDocumentRow)
+                        .where(KnowledgeDocumentRow.dataset_id == dataset_id)
+                        .order_by(KnowledgeDocumentRow.created_at, KnowledgeDocumentRow.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [self._document(row) for row in rows]
+
+    async def get_document(
+        self, document_id: str, dataset_id: str, *, tenant_id: str
+    ) -> KnowledgeDocument | None:
+        async with self._sessionmaker() as session:
+            if await self._scoped_dataset_id(dataset_id, tenant_id, session) is None:
+                return None
+            row = (
+                await session.execute(
+                    select(KnowledgeDocumentRow).where(
+                        KnowledgeDocumentRow.id == document_id,
+                        KnowledgeDocumentRow.dataset_id == dataset_id,
+                    )
+                )
+            ).scalar_one_or_none()
+        return None if row is None else self._document(row)
+
+    async def delete_document(self, document_id: str, dataset_id: str, *, tenant_id: str) -> bool:
+        """Cascades the document's chunks (FK ON DELETE CASCADE)."""
+        async with self._sessionmaker() as session:
+            if await self._scoped_dataset_id(dataset_id, tenant_id, session) is None:
+                return False
+            row = (
+                await session.execute(
+                    select(KnowledgeDocumentRow).where(
+                        KnowledgeDocumentRow.id == document_id,
+                        KnowledgeDocumentRow.dataset_id == dataset_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return False
+            await session.delete(row)
+            await session.commit()
+        return True
+
+    async def _scoped_dataset_id(
+        self, dataset_id: str, tenant_id: str, session: AsyncSession
+    ) -> str | None:
+        row = await self._dataset_row(dataset_id, tenant_id=tenant_id, session=session)
+        return dataset_id if row is not None else None
+
+    # --- search ------------------------------------------------------------
+
+    async def search_chunks(
+        self,
+        dataset_ids: list[str],
+        embedding: list[float],
+        limit: int,
+    ) -> list[KnowledgeChunk]:
+        """Cosine top-k (D68) over the GIVEN (tenant-validated) dataset ids.
+        Raw SQL: the `<=>` operator rides the pgvector extension, the query
+        vector binds as the text form with an explicit CAST (dimension
+        mismatch surfaces as an honest Postgres error — the service
+        validates before calling)."""
+        if not dataset_ids:
+            return []
+        stmt = text(
+            "SELECT id, document_id, dataset_id, chunk_index, content,"
+            " embedding::text AS embedding_text, created_at"
+            " FROM knowledge_chunks WHERE dataset_id IN :ids"
+            " ORDER BY embedding <=> CAST(:q AS vector) LIMIT :limit"
+        ).bindparams(bindparam("ids", expanding=True))
+        async with self._sessionmaker() as session:
+            rows = (
+                (
+                    await session.execute(
+                        stmt,
+                        {"ids": dataset_ids, "q": render_vector(embedding), "limit": limit},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return [
+            KnowledgeChunk(
+                id=row["id"],
+                document_id=row["document_id"],
+                dataset_id=row["dataset_id"],
+                chunk_index=row["chunk_index"],
+                content=row["content"],
+                embedding=parse_vector(row["embedding_text"]) or [],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
+
+    # --- loaders -------------------------------------------------------------
+
+    @staticmethod
+    def _dataset(row: KnowledgeDatasetRow) -> KnowledgeDataset:
+        return KnowledgeDataset(
+            id=row.id,
+            name=row.name,
+            description=row.description,
+            embedding_config=EmbeddingConfig.model_validate(row.embedding_config),
+            chunk_config=ChunkConfig.model_validate(row.chunk_config),
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+    @staticmethod
+    def _document(row: KnowledgeDocumentRow) -> KnowledgeDocument:
+        return KnowledgeDocument(
+            id=row.id,
+            dataset_id=row.dataset_id,
+            name=row.name,
+            content=row.content,
+            status=cast(KnowledgeDocumentStatus, row.status),
+            error=row.error,
+            chunk_count=row.chunk_count,
+            created_at=row.created_at,
+        )
+
+
 class SqlTriggerRepo:
     """Trigger rules (S13, ADR 0019 §1, D57) — strictly tenant-owned rows,
     the McpServerRepo shape minus the shared tier: every call takes a
@@ -2460,6 +2763,7 @@ class SqlRunQueue:
 
 __all__ = [
     "SqlAgentRepo",
+    "SqlKnowledgeRepo",
     "SqlTriggerRepo",
     "SqlWorkflowRepo",
     "SqlAuthRepo",
