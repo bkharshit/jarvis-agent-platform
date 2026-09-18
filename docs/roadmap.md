@@ -538,13 +538,20 @@ ships independently, as the backend items do).
 
 ## S13 — Triggers
 
-> **Planning committed 2026-09-16** — `docs/adr/0019-triggers.md`
+> **Shipped 2026-09-18** (commits `88827c9`..`48a6b6a` + docs
+> closure; the joint manual session ran `docs/walkthrough-s13.md`
+> green on 2026-09-16 — receipts in its §6: 60 consecutive cron
+> fires over two days incl. catch-up-once after downtime, three
+> signed webhook ingests + rotate, an event watcher fired off a
+> deterministic terminal failure with the depth guard holding; the
+> demo rows stay in the dev DB as fixtures for a follow-up
+> test-case pass). Design pinned in `docs/adr/0019-triggers.md`
 > (D57–D62 in decisions.md), commit sequence in
-> `docs/implementation-plan-s13.md`. No S13 code exists. Scope
-> confirmed by Harshit: all three kinds in v1; cron rides **croniter +
-> a Postgres-truth loop** (APScheduler rejected — its job-store
-> paradigm fights the tenant/credential model; the "Postgres-cron
-> loop" option matches the `_sweep_loop` idiom). Key deltas from the
+> `docs/implementation-plan-s13.md`. Scope confirmed by Harshit: all
+> three kinds in v1; cron rides **croniter + a Postgres-truth loop**
+> (APScheduler rejected — its job-store paradigm fights the
+> tenant/credential model; the "Postgres-cron loop" option matches
+> the `_sweep_loop` idiom). Key deltas from the
 > sketch below, all verified against code before writing:
 >
 > - **A trigger is exactly the queue producer ADR 0008 pre-declared**
@@ -577,6 +584,11 @@ ships independently, as the backend items do).
 >   API-key pattern), never in GET; the ingest route takes no auth
 >   dependency (no middleware exists — the login precedent) and the
 >   trigger row is the trust boundary.
+>
+> Deferred with rationale (ADR 0019 §8): IANA timezones (UTC only in
+> v1), webhook replay protection, "tool emits Y" event conditions,
+> stable per-trigger sessions, pause notifications (S10's owed
+> webhooks), per-trigger backpressure.
 
 **Goal:** runs start without a human calling `/run` — schedules, webhooks,
 event watchers.

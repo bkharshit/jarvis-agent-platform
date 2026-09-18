@@ -217,6 +217,34 @@ uv run jarvis serve        # API on :8000
   `body["definition"]["versions"]` (cost two live KeyErrors; the
   agent LIST endpoint returns bare definitions with no versions at
   all).
+- **The mock provider never resolves `credential_ref`** (S13, found
+  live in the walkthrough): a mock agent with a missing env-var
+  credential SUCCEEDS — a mock agent cannot be made to fail that way.
+  A deterministic live failure needs `openai_compatible` + a dead
+  `base_url` (e.g. `http://127.0.0.1:9/v1`); the terminal state then
+  surfaces as `error_kind "strategy"` ("strategy 'function_calling'
+  raised ConnectError: …") because the strategy wraps the model call —
+  the failure is honest either way (D28 puts model resolution inside
+  the try).
+- **Trigger integration tests drive the scheduler directly** (S13):
+  fixtures start the worker but NOT the scheduler loop — tests call
+  `container.scheduler.fire_due()` themselves and backdate with raw
+  SQL (`UPDATE triggers SET next_fire_at = now() - interval …`).
+  `fire_due` returns SUCCESSFUL fires only: a failure stamps
+  `last_error` on the row and returns 0 — don't assert `== 1` on the
+  failure path.
+- **The event-trigger depth guard reads the PERSISTED row's metadata**
+  (S13, D61): `agent_runtime._result` builds the finalize RunResult
+  WITHOUT row metadata, and the observer rebuilds its payload from
+  the row — trusting the passed result would bypass the loop guard.
+  Fired runs carry `depth = incoming + 1`; sub-agent children and
+  handoff successors copy the parent's `metadata["trigger"]` verbatim
+  (the pre-declared S14 seam change, regression-gated).
+- **An error rendered in BOTH toast and inline alert breaks
+  `findByText`** (S13 web, found live): the same message in a toast
+  (`role="status"`) and the form's inline alert (`role="alert"`)
+  matches multiple elements and retries until timeout — assert
+  `findByRole("alert")` instead.
 
 ## Working agreement
 

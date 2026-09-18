@@ -82,7 +82,7 @@ uv run jarvis doctor --ping-model
 | GET | `/agents/{id}/versions` | Version history (append-only snapshots) |
 | POST | `/agents/{id}/run` | Blocking run (queued; waits for the worker) → final `RunResult` |
 | POST | `/agents/{id}/stream` | SSE stream of run events |
-| GET | `/executions` | List runs (`agent_id`, `status`, `session_id`, `parent_run_id`, `limit`, `offset`) |
+| GET | `/executions` | List runs (`agent_id`, `status`, `session_id`, `parent_run_id`, `trigger_id`, `limit`, `offset`) |
 | GET | `/executions/{run_id}` | Run + transcript + tool executions |
 | POST | `/executions/{run_id}/cancel` | Idempotent cancel — live token in-process, cross-process request row otherwise |
 | POST | `/executions/{run_id}/resume` | Answer a paused run (`{content}`, `{tool_approval: bool}`, or per-call `{decisions}`; blocking, mirrors `/run`) — 409 when not awaiting |
@@ -101,6 +101,10 @@ uv run jarvis doctor --ping-model
 | POST | `/evaluations/datasets/{id}/runs` | Run a dataset against an agent's latest published version — 202; one ORDINARY queue run per case |
 | GET | `/evaluations/runs/{id}` | Eval-run detail: derived status (no column), lazily-scored results persisted once (D49) |
 | GET | `/evaluations/compare?agent_id=` | Score aggregation across the agent's pinned versions |
+| GET/POST/PATCH/DELETE | `/triggers` | Trigger rules — `cron` / `webhook` / `event` (ADR 0019); PATCH is wholesale (full document), `enabled: false` stops firing without deleting history, delete keeps the runs it fired |
+| POST | `/triggers/{id}/rotate-secret` | Re-mint a webhook secret — plaintext returned exactly once, never in a GET |
+| POST | `/triggers/{id}/fire` | Fire now (202, run queued; 409 when disabled) — admin/owner |
+| POST | `/triggers/webhook/{id}` | UNAUTHENTICATED signed ingest: HMAC-SHA256 `X-Jarvis-Signature` over the raw body — 202 queued, 401 bad/missing signature, 404 absent-or-disabled, 413 oversized |
 
 Every error has one envelope shape: `{"error": {"kind", "message", "details"}}`.
 
@@ -436,6 +440,46 @@ The web **Agents** editor gets *Delegate to sub-agent* / *Hand off to
 agent* pickers (self excluded), and **Executions** detail pages link
 children ("Sub-agent runs") and the parent run both ways. A live
 walkthrough is in `docs/walkthrough-s14.md`.
+
+### Triggers (S13, ADR 0019)
+
+Runs start without a human calling `/run`. Three trigger kinds in one
+tenant-owned table: `cron` (five-field croniter schedule, UTC, fired
+by an embedded Postgres-truth scheduler loop), `webhook` (the ONE
+unauthenticated ingest — HMAC-SHA256-verified, the trigger row is the
+trust boundary), and `event` (watchers on run outcomes, evaluated once
+at every terminal path's finalize). A fired run is an ordinary durable
+run — same worker, same envelope — plus an indexed `trigger_id` column
+for provenance, so a deleted trigger's history stays filterable. Cron
+firing is claim-first at-most-once (`FOR UPDATE SKIP LOCKED`):
+downtime catches up as ONE fire, and a miss (target agent gone, no
+published version) is an honest `last_error` on the row, never a retry
+storm. Event chains are impossible by construction — fired runs carry
+`metadata.trigger.depth` and the finalize observer refuses to re-fire
+past `JARVIS_TRIGGER_MAX_DEPTH` (default 1), reading the persisted row.
+Webhook secrets are AES-GCM-stored (D30) and returned as plaintext
+EXACTLY ONCE (create/rotate), never in a GET.
+
+```bash
+# a cron trigger
+curl -X POST localhost:8000/v1/triggers -H 'content-type: application/json' -d '{
+  "name": "hourly-tick", "kind": "cron", "agent_id": "<agent-id>",
+  "version_policy": "latest", "input_template": "Hourly tick at {{now}}.",
+  "config": {"type": "cron", "schedule": "0 * * * *"}}'
+
+# a signed webhook ingest — no auth header; the signature IS the auth
+BODY='{"alert":"disk 91% on db-1"}'
+SIG="sha256=$(printf %s "$BODY" | openssl dgst -sha256 -hmac "$(cat /tmp/whsec)" | awk '{print $NF}')"
+curl -X POST localhost:8000/v1/triggers/webhook/<trigger-id> \
+  -H "X-Jarvis-Signature: $SIG" --data-binary "$BODY"   # → 202 {"run_id", "status": "queued"}
+```
+
+The web **Triggers** section manages all three kinds — create/edit/
+enable-toggle/fire-now/delete, the webhook ingest URL derived
+client-side, the secret shown once behind a dismiss banner, rotate
+re-mints it — and trigger-fired runs show a **Fired by** chip linking
+to the filtered executions list. A live walkthrough is in
+`docs/walkthrough-s13.md`.
 
 ### Queue-backed runs and distributed mode (S1, ADR 0008)
 
