@@ -26,6 +26,11 @@ from jarvis.domain.evaluation import (
 )
 from jarvis.domain.events import ExecutionEvent
 from jarvis.domain.execution import ExecutionStatus, RunResult
+from jarvis.domain.knowledge import (
+    KnowledgeChunk,
+    KnowledgeDataset,
+    KnowledgeDocument,
+)
 from jarvis.domain.mcp import McpServer
 from jarvis.domain.message import Message, Usage
 from jarvis.domain.tools import ToolResult
@@ -317,6 +322,75 @@ class TriggerRepo(Protocol):
         ...
 
 
+class KnowledgeRepo(Protocol):
+    """Knowledge datasets (S8, ADR 0020 §1, D63) — strictly tenant-owned
+    rows (the TriggerRepo shape: explicit REQUIRED `tenant_id` kwargs; D29:
+    a foreign id reads as absent, never leaked). Documents and chunks carry
+    NO tenant column — every document/chunk read joins through the
+    tenant-scoped dataset (the eval_results precedent), and `search_chunks`
+    trusts its caller to pass ONLY tenant-visible dataset ids (the
+    KnowledgeRetrieval service resolves them scoped first)."""
+
+    async def create_dataset(
+        self, dataset: KnowledgeDataset, *, tenant_id: str
+    ) -> KnowledgeDataset:
+        """Create the row; the returned dataset carries the stamped tenant."""
+        ...
+
+    async def get_dataset(self, dataset_id: str, *, tenant_id: str) -> KnowledgeDataset | None: ...
+
+    async def list_datasets(self, *, tenant_id: str) -> list[KnowledgeDataset]: ...
+
+    async def update_dataset(
+        self, dataset: KnowledgeDataset, *, tenant_id: str
+    ) -> KnowledgeDataset | None:
+        """Replace the mutable fields (name, description) of the existing
+        row — `embedding_config`/`chunk_config` are IMMUTABLE (dimension
+        pinned at create; the route 422s any config change before this)."""
+
+    async def delete_dataset(self, dataset_id: str, *, tenant_id: str) -> bool:
+        """False when an agent version snapshot references the dataset
+        (caller maps to 409 — the eval delete-with-runs precedent)."""
+        ...
+
+    async def count_dataset_references(self, dataset_id: str) -> int:
+        """How many agent_version snapshots carry the dataset id in
+        `snapshot #> '{knowledge,datasets}'` — the 409's receipt (and the
+        stale-binding lint's data)."""
+        ...
+
+    async def create_document(
+        self, document: KnowledgeDocument, chunks: list[KnowledgeChunk], *, tenant_id: str
+    ) -> KnowledgeDocument:
+        """Persist the document row and its chunks in ONE transaction
+        (D65: synchronous ingest is all-or-nothing — a ready document has
+        all its chunks). The chunks must carry the document's ids."""
+
+    async def list_documents(
+        self, dataset_id: str, *, tenant_id: str
+    ) -> list[KnowledgeDocument]: ...
+
+    async def get_document(
+        self, document_id: str, dataset_id: str, *, tenant_id: str
+    ) -> KnowledgeDocument | None: ...
+
+    async def delete_document(self, document_id: str, dataset_id: str, *, tenant_id: str) -> bool:
+        """Cascades the document's chunks (migration 0014 FK ON DELETE)."""
+        ...
+
+    async def search_chunks(
+        self,
+        dataset_ids: list[str],
+        embedding: list[float],
+        limit: int,
+    ) -> list[KnowledgeChunk]:
+        """Vector top-k (D68): cosine `ORDER BY embedding <=> :q LIMIT k`
+        over the GIVEN dataset ids (tenant-validated by the caller), best
+        first. The query vector's dimension must match the datasets' pinned
+        config — the service validates before calling; the SQL refuses a
+        mismatch honestly (pgvector dimension error)."""
+
+
 class EvalRepo(Protocol):
     """Evaluation datasets, runs, and results (S11, ADR 0017 §3, D48) —
     tenant-scoped via explicit `tenant_id` kwargs (the McpServerRepo
@@ -406,6 +480,7 @@ __all__ = [
     "ConversationRepo",
     "EvalRepo",
     "ExecutionRepo",
+    "KnowledgeRepo",
     "McpServerRepo",
     "ScratchpadRepo",
     "TriggerRepo",

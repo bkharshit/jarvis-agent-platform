@@ -35,6 +35,19 @@ class ModelResponse(_Model):
     model: str = ""
 
 
+class EmbeddingRequest(_Model):
+    """S8 (ADR 0020 §2, D64): one batched embeddings call — `input` are
+    the texts (chunk batch during ingest, a single query at retrieval)."""
+
+    model: str
+    input: list[str]
+
+
+class EmbeddingResponse(_Model):
+    vectors: list[list[float]]
+    usage: Usage | None = None
+
+
 class TextDelta(_Model):
     type: Literal["text"] = "text"
     text: str
@@ -65,6 +78,8 @@ StreamDelta = Annotated[
 ]
 
 __all__ = [
+    "EmbeddingRequest",
+    "EmbeddingResponse",
     "FinishDelta",
     "ModelRequest",
     "ModelResponse",

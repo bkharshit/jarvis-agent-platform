@@ -14,7 +14,13 @@ from jarvis.domain.auth import Principal
 from jarvis.domain.execution import CancellationToken
 from jarvis.models.capabilities import ModelCapabilities
 from jarvis.models.errors import ModelError
-from jarvis.models.types import ModelRequest, ModelResponse, StreamDelta
+from jarvis.models.types import (
+    EmbeddingRequest,
+    EmbeddingResponse,
+    ModelRequest,
+    ModelResponse,
+    StreamDelta,
+)
 
 
 @runtime_checkable
@@ -61,6 +67,19 @@ class ModelClient(Protocol):
     ) -> AsyncIterator[StreamDelta]: ...
 
 
+@runtime_checkable
+class EmbeddingClient(Protocol):
+    """S8 (ADR 0020 §2, D64): embeddings are a NEW port, deliberately NOT a
+    `ModelClient` extension — `ModelClient` is what strategies receive, and
+    embeddings are not part of the strategy loop's contract; extending it
+    would break every implementer and test-double. One method, one shape.
+
+    Raises `ModelError` (auth/rate-limit/bad-request/connection idioms) on
+    failure — an embedder that cannot embed says so, never pretends."""
+
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse: ...
+
+
 class ModelProviderFactory(Protocol):
     """Resolves a ModelRef to a bound client. Raises ModelError on unknown
     provider or unresolvable credential (ADR 0006: the factory holds the
@@ -87,6 +106,7 @@ class ModelProviderFactory(Protocol):
 
 
 __all__ = [
+    "EmbeddingClient",
     "ModelError",
     "ModelClient",
     "ModelProvider",

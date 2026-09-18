@@ -55,7 +55,21 @@ class MemoryConfig(_Model):
     # D45: "window" is exactly today's flat last-N slice (byte-identical,
     # the default for every pre-S12 snapshot); "summarize" compacts the
     # evicted prefix into a rolling conversation summary (ADR 0016 §2).
+    # "vector" stays closed out — S8's RAG covered the recall need via
+    # knowledge datasets (the ADR 0020 recorded deferral).
     strategy: Literal["window", "summarize"] = "window"
+
+
+class KnowledgeBinding(_Model):
+    """S8 (ADR 0020 §4, D66): the auto-injected retrieval binding. All
+    bound datasets must share ONE embedding model + dimension (save-time
+    422 — one query embedding serves every dataset); identity is dataset
+    ID, never the name. `min_score` filters rendered blocks (cosine
+    similarity 0..1) when set."""
+
+    datasets: list[str] = Field(min_length=1)
+    top_k: int = Field(default=4, ge=1, le=20)
+    min_score: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class ConversationMemoryState(_Model):
@@ -100,6 +114,10 @@ class AgentDefinition(_Model):
     tools: list[ToolBinding] = Field(default_factory=list)
     strategy: StrategyConfig
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    # S8 (ADR 0020 §4, D66): the knowledge binding — additive optional, so
+    # every pre-S8 snapshot parses unchanged (extra="forbid" + None
+    # default) and rides the D1 snapshot with zero extra work.
+    knowledge: KnowledgeBinding | None = None
     max_iterations: int = Field(default=8, ge=1, le=32)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     output_schema: dict[str, Any] | None = None

@@ -8,6 +8,7 @@ from jarvis.domain.agent import (
     AgentVersion,
     ConversationMemoryState,
     EnvCredentialRef,
+    KnowledgeBinding,
     MemoryConfig,
     ModelRef,
     StoredCredentialRef,
@@ -80,6 +81,29 @@ class TestAgentDefinition:
         assert agent.temperature == 0.7
         assert agent.memory.enabled is False
         assert agent.tools == []
+        assert agent.knowledge is None  # S8 (D66): additive optional
+
+    def test_knowledge_binding_round_trips(self):
+        # S8 (D66): the binding rides the D1 snapshot — additive optional
+        # so every pre-S8 snapshot parses unchanged.
+        agent = self._definition(
+            knowledge=KnowledgeBinding(datasets=["ds-1"], top_k=6, min_score=0.5)
+        )
+        assert agent.knowledge is not None
+        assert agent.knowledge.datasets == ["ds-1"]
+        assert KnowledgeBinding.model_validate(agent.knowledge.model_dump()) == agent.knowledge
+
+    def test_knowledge_binding_requires_at_least_one_dataset(self):
+        with pytest.raises(ValidationError):
+            KnowledgeBinding(datasets=[])
+
+    def test_knowledge_binding_bounds(self):
+        with pytest.raises(ValidationError):
+            KnowledgeBinding(datasets=["ds-1"], top_k=0)
+        with pytest.raises(ValidationError):
+            KnowledgeBinding(datasets=["ds-1"], top_k=21)
+        with pytest.raises(ValidationError):
+            KnowledgeBinding(datasets=["ds-1"], min_score=1.5)
 
     def test_blank_name_rejected(self):
         with pytest.raises(ValidationError):
@@ -129,8 +153,10 @@ class TestMemoryConfig:
         assert memory.strategy == "window"
 
     def test_strategy_literal_closed(self):
+        # "vector" stays closed out (ADR 0020 recorded deferral — S8's RAG
+        # covers recall via knowledge datasets, not a memory strategy).
         with pytest.raises(ValidationError):
-            MemoryConfig(enabled=True, strategy="vector")  # S8, not yet
+            MemoryConfig(enabled=True, strategy="vector")
         with pytest.raises(ValidationError):
             MemoryConfig(enabled=True, strategy="summarize ")  # no trailing space
 
