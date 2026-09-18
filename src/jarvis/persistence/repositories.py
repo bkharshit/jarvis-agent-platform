@@ -1932,10 +1932,15 @@ class SqlKnowledgeRepo:
         if not dataset_ids:
             return []
         stmt = text(
-            "SELECT id, document_id, dataset_id, chunk_index, content,"
-            " embedding::text AS embedding_text, created_at"
-            " FROM knowledge_chunks WHERE dataset_id IN :ids"
-            " ORDER BY embedding <=> CAST(:q AS vector) LIMIT :limit"
+            "SELECT c.id, c.document_id, c.dataset_id, c.chunk_index, c.content,"
+            " c.embedding::text AS embedding_text, c.created_at,"
+            " d.name AS document_name,"
+            " c.embedding <=> CAST(:q AS vector) AS distance"
+            " FROM knowledge_chunks c JOIN knowledge_documents d ON d.id = c.document_id"
+            " WHERE c.dataset_id IN :ids"
+            # Ties (equidistant chunks) are broken by meaningful columns —
+            # result ids are random uuid4s, never ORDER BY them (S11).
+            " ORDER BY distance, dataset_id, document_id, chunk_index LIMIT :limit"
         ).bindparams(bindparam("ids", expanding=True))
         async with self._sessionmaker() as session:
             rows = (
@@ -1956,6 +1961,9 @@ class SqlKnowledgeRepo:
                 chunk_index=row["chunk_index"],
                 content=row["content"],
                 embedding=parse_vector(row["embedding_text"]) or [],
+                document_name=row["document_name"],
+                # cosine distance → similarity in [0, 1] (D68's min_score filter).
+                score=1.0 - float(row["distance"]),
                 created_at=row["created_at"],
             )
             for row in rows

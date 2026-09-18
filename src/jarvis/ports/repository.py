@@ -386,7 +386,10 @@ class KnowledgeRepo(Protocol):
     ) -> list[KnowledgeChunk]:
         """Vector top-k (D68): cosine `ORDER BY embedding <=> :q LIMIT k`
         over the GIVEN dataset ids (tenant-validated by the caller), best
-        first. The query vector's dimension must match the datasets' pinned
+        first. Search-only projections ride each hit — `document_name`
+        (joined from the owning document, for the rendered context) and
+        `score` (cosine similarity in [0, 1], the D68 min_score input).
+        The query vector's dimension must match the datasets' pinned
         config — the service validates before calling; the SQL refuses a
         mismatch honestly (pgvector dimension error)."""
 

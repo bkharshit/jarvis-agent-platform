@@ -86,7 +86,10 @@ class KnowledgeDocument(_Model):
 
 class KnowledgeChunk(_Model):
     """One chunk: its embedding is the pinned dimension's vector (validated
-    against the dataset's config at WRITE time)."""
+    against the dataset's config at WRITE time). `document_name` and
+    `score` are SEARCH-ONLY projections — the retrieval query joins the
+    document's name and computes the similarity; a persisted chunk row
+    leaves them None."""
 
     id: str
     document_id: str
@@ -94,6 +97,8 @@ class KnowledgeChunk(_Model):
     chunk_index: int = Field(ge=0)
     content: str
     embedding: list[float]
+    document_name: str | None = None
+    score: float | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
