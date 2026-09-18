@@ -349,6 +349,58 @@ keyed by the already-persisted `trace_id`).
 
 ## S8 — RAG / knowledge
 
+> **Planning committed 2026-09-18** — `docs/adr/0020-knowledge-rag.md`
+> (D63–D70 in decisions.md), commit sequence in
+> `docs/implementation-plan-s8.md`. No S8 code exists. Scope
+> confirmed by Harshit 2026-09-18: pgvector vector store (Homebrew
+> install on this machine's Postgres — verified no Docker here — plus
+> a `pgvector/pgvector:pg17` compose image so the migration is
+> Docker-correct too); text-document ingestion only (no multipart,
+> no PDF — client-side file reads); a local Ollama embedding provider
+> with a dedicated model (`qwen3-embedding:0.6b` nominated) behind a
+> provider-agnostic `EmbeddingClient` port, with provider/model/
+> dimension PERSISTED with the dataset; BOTH the knowledge binding
+> (auto-inject) and the `retriever__` tool family; and a retrieval
+> abstraction that admits hybrid retrieval / reranking / metadata
+> filtering later WITHOUT changing the agent runtime. Key deltas from
+> the sketch below, all verified against code before writing:
+>
+> - **Embeddings are a NEW port, not a ModelClient extension** —
+>   `EmbeddingClient` Protocol + provider-layer `POST
+>   {base_url}/embeddings` + `resolve_embedder` on the existing
+>   factory (the D28/D47 pattern); a deterministic hash-vector mock
+>   keeps tests hermetic. Nothing existed (verified by grep).
+> - **The dataset's embedding config is IMMUTABLE and
+>   dimension-pinned** — "change the embedding model" = new dataset;
+>   the pgvector column is dimension-free with write-time
+>   enforcement, and ALL datasets bound to one agent must share the
+>   embedding model (a query embedding serves them all — mixed
+>   bindings are a save-time 422).
+> - **Injection rides `PromptContext` exactly like `memory_summary`**
+>   (the seam D47 predicted): a system message between the summary
+>   and history, MIRRORED in `_rebuild_messages` (resumes don't call
+>   `build()` — the asymmetry that would drop the context);
+>   retrieval failure is a persisted terminal `error_kind="tool"`
+>   (D38, fifth application); `render_system` byte-identical (golden
+>   gates).
+> - **The retriever__ family reuses the frozen catch-site promise**:
+>   `RetrieverResolutionError(ToolResolutionError)` means the three
+>   runtime catch sites change ZERO lines; the one structural seam is
+>   `_resolve_tooling`'s two-family merge generalizing to three,
+>   byte-identical when no `retriever__` bindings exist.
+> - **Ingestion is a synchronous route** (chunk → one batched embed →
+>   one-tx persist → 201 `ready`), not a queue producer — provider
+>   failure persists the document as `status="error"` and answers
+>   `502 embedding_unavailable`. A dataset DELETE is 409-refused
+>   while agent snapshots reference it (loose ids, no FK — the D57
+>   provenance pattern one layer over).
+> - **Environment prerequisite (verified):** this machine has no
+>   Docker and its Homebrew Postgres 16.15 lacks pgvector —
+>   `brew install pgvector` is build commit 1 and the integration
+>   suite (which self-migrates `jarvis_test`) cannot run migration
+>   0014 without it. The local Ollama daemon serves OpenAI-compatible
+>   `/v1/embeddings` but has NO embedding model pulled yet.
+
 **Goal:** retrieval-augmented agents.
 
 **Rides on:** `ContentPart` is already a union (text/image reserved) and

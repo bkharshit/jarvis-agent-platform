@@ -786,6 +786,117 @@ the code.
   a finish_run state, needs its own observer semantics); per-trigger
   backpressure.
 
+- **D63 (2026-09-18, S8 planning) — Knowledge data model: three
+  tables, immutable embedding config, dimension pinning (ADR 0020
+  §1).** `knowledge_datasets` (strict-tenant, TriggerRepo kwargs
+  shape) own a typed `EmbeddingConfig` (provider/model/base_url/
+  credential_ref/dimension/distance) + `ChunkConfig` in JSONB; the
+  config is IMMUTABLE after create (a changed config PATCH is a 422 —
+  the wholesale-PATCH lesson means the full document round-trips
+  with config byte-identical) — "change the embedding model" = new
+  dataset. Documents and chunks carry no tenant_id (scoped via the
+  parent dataset join — the eval_results precedent); the pgvector
+  column is dimension-free and the PINNED dimension is enforced at
+  write time. Dataset DELETE is 409-refused while any agent version
+  snapshot references it (JSONB containment over
+  `snapshot.knowledge.datasets`); document DELETE cascades chunks.
+
+- **D64 (2026-09-18, S8 planning) — Embeddings: a NEW EmbeddingClient
+  port, never a ModelClient extension (ADR 0020 §2).** `ModelClient`
+  is what strategies receive; extending it breaks every implementer
+  and test double and would bypass `TracedModelClient`. Instead:
+  pure-pydantic `EmbeddingRequest`/`EmbeddingResponse`, one
+  `EmbeddingClient` Protocol in `ports/model.py` (pre-declared),
+  `embed()` on the PROVIDER layer (`OpenAICompatibleProvider` →
+  POST `{base_url}/embeddings`; a deterministic hash-vector
+  `MockEmbeddingProvider` for hermetic tests), and
+  `resolve_embedder(ref, principal)` on the existing factory — the
+  D28/D47 pattern transposed (stored credentials REQUIRE principal,
+  material per-call, never cached). The DATASET carries its embedding
+  `ModelRef` (BYOK credential_ref reused); the platform pins nothing
+  — settings carry only caps/defaults. JARVIS_LLM_TRACE does not wrap
+  embeddings in v1 (recorded deferral).
+
+- **D65 (2026-09-18, S8 planning) — Ingestion: text-only, synchronous,
+  honest per-document state (ADR 0020 §3).** A document is JSON
+  `{name, content}` — the web editor reads files CLIENT-SIDE and posts
+  text (zero multipart machinery; file upload + PDF parsing are
+  recorded deferrals). Chunking is one pure paragraph-aware packing
+  function over `(content, ChunkConfig)` (chunk_chars default 1200,
+  overlap 150 — a swappable seam, no token-counting dep). Ingest is a
+  ROUTE, not a queue: chunk → one batched embed → single-tx persist →
+  201 `ready`; provider failure persists the row as `status="error"` +
+  error text and answers `502 embedding_unavailable` (retryable by
+  delete + re-post; a reindex endpoint is deferred). Content cap
+  (`JARVIS_KNOWLEDGE_MAX_DOC_CHARS`, default 200_000) is a 422.
+
+- **D66 (2026-09-18, S8 planning) — Knowledge binding: injected
+  through PromptContext exactly like the summary, terminal-tool
+  failure semantics (ADR 0020 §4).** `AgentDefinition` gains ONE
+  optional field `knowledge` (`{datasets, top_k, min_score?}`) —
+  additive, rides the D1 snapshot automatically. ALL bound datasets
+  must share one embedding model + dimension (a query embedding
+  serves them all — mixed bindings are a save-time 422, drift later
+  is a detail lint; the 409 delete-refusal keeps the set stable).
+  Retrieval slots in `_run_segment` between `_load_memory` and
+  `build()` — inside the try — and rides a new
+  `PromptContext.knowledge_context` rendered as a system message
+  between the memory summary and history (the `memory_summary`
+  parallel, `engine.py:51-61`), MIRRORED in `_rebuild_messages` for
+  resumed segments. Failure (embedder, dataset gone, dimension drift)
+  is a persisted terminal `run.failed` with the EXISTING
+  `error_kind="tool"` naming the resource (D38, fifth application);
+  `render_system` stays byte-identical (golden gates); no binding →
+  byte-identical path.
+
+- **D67 (2026-09-18, S8 planning) — The retriever__ family: the
+  sub-agent provider pattern, zero catch-site changes (ADR 0020
+  §5).** Bindings named `retriever__<dataset>` with identity ALWAYS
+  from `config.dataset_id` (never parsed from the name — the S14
+  rule); a ctx-capturing provider in `tools/knowledge/` (ToolContext
+  has no principal — `ExecutionContext` is captured at resolve,
+  SubAgentToolProvider precedent). Resolution failure is a new
+  `RetrieverResolutionError(ToolResolutionError)` — the frozen
+  promise in `tools/mcp/errors.py` means the three runtime catch
+  sites change ZERO lines; call-time failures stay recoverable error
+  ToolResults under the unchanged ToolRuntime envelope (default
+  timeout applies — a seconds-scale embed+search needs no `-1`
+  sentinel). `_resolve_tooling`'s two-family merge generalizes to
+  three; no `retriever__` bindings → byte-identical tooling. Workflow
+  TOOL nodes stay MCP-only (as for sub-agents); workflow agent nodes
+  get the family for free via `_run_segment`.
+
+- **D68 (2026-09-18, S8 planning) — The retrieval contract: the
+  runtime sees one call (ADR 0020 §6).** The runtime and the tool
+  know only `retrieve(config, query, tenant, principal) -> rendered
+  context` over one internal `KnowledgeRetrieval` service (embed →
+  cosine top-k `<=>` over tenant-visible datasets → render). Hybrid
+  retrieval, reranking, and metadata filtering extend the SERVICE and
+  a future versioned SearchConfig WITHOUT touching `agent_runtime`,
+  the tool, the envelope, or `ports/` (Harshit's scope condition,
+  2026-09-18). v1 ships exactly one strategy: vector top-k.
+
+- **D69 (2026-09-18, S8 planning) — API + capabilities: same-commit
+  derived detail, immutable-config PATCH (ADR 0020 §7).**
+  `/v1/knowledge` follows the mcp/eval route precedent (D29 404s,
+  wholesale full-document PATCH, 409 delete-while-referenced,
+  save-time binding validation 422). The `knowledge` capability flag
+  flips WITH a derived detail (dataset + document counts) in the SAME
+  commit as migration 0014's first usage — the S4 capabilities-500
+  lesson; unit stub containers move in lockstep. Route error kinds
+  gain `embedding_unavailable` (route-level kind strings, not the
+  frozen `RunFailed.error_kind`).
+
+- **D70 (2026-09-18, S8 planning) — Web: the placeholder route
+  activates; ingestion needs no upload machinery (ADR 0020 §7).**
+  The existing `/knowledge` placeholder route swaps for a Knowledge
+  section (datasets list → detail with documents table, paste +
+  read-file-as-text create via client-side FileReader, status chips,
+  409 toasts — the Evaluations structure); the agent editor gains a
+  capability-gated knowledge picker (multi-select datasets, top-k
+  input, omit-empty discipline). gen-api regen + msw fixture flips in
+  the same web commit, per the S11/S13 pattern.
+
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 
 Redis/queues · plugins & marketplace · multi-tenancy/auth · RAG · workflow
