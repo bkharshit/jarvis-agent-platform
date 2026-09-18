@@ -1,6 +1,9 @@
 services:
   postgres:
-    image: postgres:17-alpine
+    # S8 (ADR 0020): the pgvector image so migration 0014's
+    # `CREATE EXTENSION vector` works wherever Docker IS used. (Local
+    # development on this machine is Homebrew Postgres, no Docker.)
+    image: pgvector/pgvector:pg17
     environment:
       POSTGRES_USER: jarvis
       POSTGRES_PASSWORD: jarvis

@@ -31,6 +31,9 @@ EXPECTED_TABLES = {
     "mcp_servers",
     "workflows",
     "workflow_versions",
+    "knowledge_datasets",
+    "knowledge_documents",
+    "knowledge_chunks",
 }
 
 

@@ -64,6 +64,19 @@ class Settings(BaseSettings):
     # characters before rendering (§2).
     trigger_event_max_output_chars: int = 8_000
 
+    # --- knowledge / RAG (S8, ADR 0020) -----------------------------------
+    # Caps and defaults ONLY — the embedding model itself rides each
+    # dataset's immutable config, nothing platform-level pins it.
+    knowledge_chunk_chars: int = 1_200
+    knowledge_overlap_chars: int = 150
+    # A document larger than this is refused 422 at the ingest boundary.
+    knowledge_max_doc_chars: int = 200_000
+    knowledge_default_top_k: int = 4
+    # Batched embedding: texts per /embeddings request during ingest.
+    knowledge_embed_batch: int = 32
+    # The embed call's HTTP budget (ingest + query — both seconds-scale).
+    knowledge_embed_timeout: float = 30.0
+
     # --- MCP tool providers (S4, ADR 0012) --------------------------------
     # Per-server connect + tools/list budget. Per-CALL timeouts ride binding
     # config through the ToolRuntime envelope — this is the one new knob.
