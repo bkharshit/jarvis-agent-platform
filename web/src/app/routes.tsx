@@ -20,6 +20,8 @@ import { EvalDatasetDetail } from "@/sections/evaluations/EvalDatasetDetail";
 import { EvalRunDetail } from "@/sections/evaluations/EvalRunDetail";
 import { EvaluationsList } from "@/sections/evaluations/EvaluationsList";
 import { TriggersPage } from "@/sections/triggers/TriggersPage";
+import KnowledgePage from "@/sections/knowledge/KnowledgePage";
+import KnowledgeDatasetDetail from "@/sections/knowledge/KnowledgeDatasetDetail";
 
 import { SectionGate } from "@/capabilities/SectionGate";
 import type { SectionKey } from "@/capabilities/sectionRegistry";
@@ -69,7 +71,11 @@ export function sectionRoutes() {
     { path: "/workflows/new", element: gated("workflows", <WorkflowEditorPage />) },
     { path: "/workflows/:workflowId/run", element: gated("workflows", <WorkflowRunConsole />) },
     { path: "/workflows/:workflowId", element: gated("workflows", <WorkflowEditorPage />) },
-    { path: "/knowledge", element: gated("knowledge") },
+    { path: "/knowledge", element: gated("knowledge", <KnowledgePage />) },
+    {
+      path: "/knowledge/:datasetId",
+      element: gated("knowledge", <KnowledgeDatasetDetail />),
+    },
     { path: "/evaluations", element: gated("evaluations", <EvaluationsList />) },
     { path: "/evaluations/compare", element: gated("evaluations", <EvalCompare />) },
     {

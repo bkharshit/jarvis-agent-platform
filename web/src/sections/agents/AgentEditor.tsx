@@ -4,6 +4,7 @@ import { useNavigate, useParams } from "react-router";
 import { ApiError, fieldErrors } from "@/api/errors";
 import { useAgent, useAgents, useCreateAgent, useUpdateAgent } from "@/api/queries/agents";
 import { useModelList } from "@/api/queries/models";
+import { useKnowledgeDatasets } from "@/api/queries/knowledge";
 import { useCredentials } from "@/api/queries/settings";
 import {
   builtinTools,
@@ -130,6 +131,11 @@ function AgentEditorForm() {
   // carries only `agent_id`: the version pin is SERVER-STAMPED at save
   // (never trusted from the client), so nothing else is sent.
   const agentList = useAgents();
+
+  // S8 (D66): the knowledge picker — datasets by ID from the live listing
+  // (never the name, the S14 rule). Hidden while the list is empty/loading;
+  // a mixed-embedding selection is a backend 422 the banner relays.
+  const knowledgeDatasets = useKnowledgeDatasets();
 
   function bindFamilyBinding(prefix: "sub__" | "handoff__", targetId: string) {
     if (targetId === "") return;
@@ -708,6 +714,63 @@ function AgentEditorForm() {
             </div>
           </div>
         </fieldset>
+
+        {knowledgeDatasets.data !== undefined && knowledgeDatasets.data.length > 0 && (
+          <fieldset className="rounded border border-neutral-800 p-4" data-testid="knowledge-picker">
+            <legend className="px-1 text-xs font-medium text-neutral-400">Knowledge</legend>
+            <p className="text-xs text-neutral-500">
+              Datasets retrieved and injected before each turn (D66) — every
+              bound dataset must share one embedding model.
+            </p>
+            <div className="mt-2 space-y-1">
+              {knowledgeDatasets.data.map((dataset) => {
+                const bound = draft.knowledge.datasets.includes(dataset.id);
+                return (
+                  <label key={dataset.id} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={bound}
+                      onChange={(e) =>
+                        update({
+                          knowledge: {
+                            ...draft.knowledge,
+                            datasets: e.target.checked
+                              ? [...draft.knowledge.datasets, dataset.id]
+                              : draft.knowledge.datasets.filter((id) => id !== dataset.id),
+                          },
+                        })
+                      }
+                    />
+                    <span className="text-neutral-200">{dataset.name}</span>
+                    <span className="text-xs text-neutral-500">
+                      {dataset.embedding_config.provider}/{dataset.embedding_config.model}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            {draft.knowledge.datasets.length > 0 && (
+              <div className="mt-2 w-40">
+                <label htmlFor="knowledge-top-k" className={labelClass}>
+                  Top K (1–20)
+                </label>
+                <input
+                  id="knowledge-top-k"
+                  type="number"
+                  min={1}
+                  max={20}
+                  className={inputClass}
+                  value={draft.knowledge.top_k}
+                  onChange={(e) =>
+                    update({
+                      knowledge: { ...draft.knowledge, top_k: Number(e.target.value) },
+                    })
+                  }
+                />
+              </div>
+            )}
+          </fieldset>
+        )}
 
         <div className="grid grid-cols-2 gap-4">
           <div>

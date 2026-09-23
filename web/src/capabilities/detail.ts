@@ -223,3 +223,32 @@ export function pluginListing(capabilities: Capabilities | undefined): PluginLis
     allowlist: stringList(detail.allowlist),
   };
 }
+
+// --- knowledge (S8, ADR 0020 §6) ---------------------------------------------
+
+export interface KnowledgeFacts {
+  datasets: number;
+  documents: { id: string; name: string; count: number }[];
+}
+
+/** S8: the knowledge section is live — the derived facts the backend
+ * reports (dataset count with per-dataset document counts). */
+export function knowledgeFacts(capabilities: Capabilities | undefined): KnowledgeFacts {
+  const detail = asRecord(capabilities?.sections.knowledge?.detail);
+  if (!detail) return { datasets: 0, documents: [] };
+  const documents = Array.isArray(detail.documents)
+    ? detail.documents.flatMap((entry) => {
+        const record = asRecord(entry);
+        return record && typeof record.id === "string"
+          ? [
+              {
+                id: record.id,
+                name: typeof record.name === "string" ? record.name : "",
+                count: typeof record.count === "number" ? record.count : 0,
+              },
+            ]
+          : [];
+      })
+    : [];
+  return { datasets: typeof detail.datasets === "number" ? detail.datasets : 0, documents };
+}

@@ -500,6 +500,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/knowledge/datasets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Datasets */
+        get: operations["list_datasets_v1_knowledge_datasets_get"];
+        put?: never;
+        /** Create Dataset */
+        post: operations["create_dataset_v1_knowledge_datasets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/knowledge/datasets/{dataset_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Dataset */
+        get: operations["get_dataset_v1_knowledge_datasets__dataset_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Dataset */
+        delete: operations["delete_dataset_v1_knowledge_datasets__dataset_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Dataset */
+        patch: operations["update_dataset_v1_knowledge_datasets__dataset_id__patch"];
+        trace?: never;
+    };
+    "/v1/knowledge/datasets/{dataset_id}/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Documents */
+        get: operations["list_documents_v1_knowledge_datasets__dataset_id__documents_get"];
+        put?: never;
+        /**
+         * Create Document
+         * @description Synchronous ingest (D65): chunk → embed → persist document + chunks
+         *     in ONE transaction. An embedder failure persists an honest `error` row
+         *     and answers 502 — never a silent 201.
+         */
+        post: operations["create_document_v1_knowledge_datasets__dataset_id__documents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/knowledge/datasets/{dataset_id}/documents/{document_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Document */
+        get: operations["get_document_v1_knowledge_datasets__dataset_id__documents__document_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Document */
+        delete: operations["delete_document_v1_knowledge_datasets__dataset_id__documents__document_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/api-keys": {
         parameters: {
             query?: never;
@@ -865,6 +943,7 @@ export interface components {
             tools?: components["schemas"]["ToolBinding"][];
             strategy: components["schemas"]["StrategyConfig"];
             memory?: components["schemas"]["MemoryConfig"];
+            knowledge?: components["schemas"]["KnowledgeBinding"] | null;
             /**
              * Max Iterations
              * @default 8
@@ -937,6 +1016,7 @@ export interface components {
             tools?: components["schemas"]["ToolBinding"][] | null;
             strategy?: components["schemas"]["StrategyConfig"] | null;
             memory?: components["schemas"]["MemoryConfig"] | null;
+            knowledge?: components["schemas"]["KnowledgeBinding"] | null;
             /** Max Iterations */
             max_iterations?: number | null;
             /** Temperature */
@@ -1036,6 +1116,23 @@ export interface components {
             sections: {
                 [key: string]: components["schemas"]["SectionCapability"];
             };
+        };
+        /**
+         * ChunkConfig
+         * @description Paragraph-aware packing parameters (D65): chunks pack to
+         *     `chunk_chars` with an `overlap_chars` tail carry.
+         */
+        ChunkConfig: {
+            /**
+             * Chunk Chars
+             * @default 1200
+             */
+            chunk_chars: number;
+            /**
+             * Overlap Chars
+             * @default 150
+             */
+            overlap_chars: number;
         };
         /**
          * ConditionNodeConfig
@@ -1148,6 +1245,31 @@ export interface components {
             cursor: number;
             /** Event */
             event: components["schemas"]["RunStarted"] | components["schemas"]["IterationStarted"] | components["schemas"]["ModelInvocationStarted"] | components["schemas"]["TextDelta"] | components["schemas"]["ModelInvocationCompleted"] | components["schemas"]["ToolCallRequested"] | components["schemas"]["ToolCallStarted"] | components["schemas"]["ToolCallCompleted"] | components["schemas"]["ToolCallFailed"] | components["schemas"]["ToolCallDeclined"] | components["schemas"]["NodeStarted"] | components["schemas"]["NodeCompleted"] | components["schemas"]["IterationCompleted"] | components["schemas"]["RunAwaitingInput"] | components["schemas"]["RunCompleted"] | components["schemas"]["RunFailed"] | components["schemas"]["RunCancelled"];
+        };
+        /**
+         * EmbeddingConfig
+         * @description The dataset's pinned embedding model — provider/model/base_url/
+         *     credential_ref/dimension/distance all persisted WITH the index. A
+         *     PATCH that changes any of it is refused (the wholesale-PATCH lesson:
+         *     round-trip byte-identical or 422).
+         */
+        EmbeddingConfig: {
+            /** Provider */
+            provider: string;
+            /** Model */
+            model: string;
+            /** Base Url */
+            base_url?: string | null;
+            /** Credential Ref */
+            credential_ref?: (components["schemas"]["EnvCredentialRef"] | components["schemas"]["StoredCredentialRef"]) | null;
+            /** Dimension */
+            dimension: number;
+            /**
+             * Distance
+             * @default cosine
+             * @constant
+             */
+            distance: "cosine";
         };
         /**
          * EnvCredentialRef
@@ -1491,6 +1613,143 @@ export interface components {
             type: "iteration.started";
             /** Iteration */
             iteration: number;
+        };
+        /**
+         * KnowledgeBinding
+         * @description S8 (ADR 0020 §4, D66): the auto-injected retrieval binding. All
+         *     bound datasets must share ONE embedding model + dimension (save-time
+         *     422 — one query embedding serves every dataset); identity is dataset
+         *     ID, never the name. `min_score` filters rendered blocks (cosine
+         *     similarity 0..1) when set.
+         */
+        KnowledgeBinding: {
+            /** Datasets */
+            datasets: string[];
+            /**
+             * Top K
+             * @default 4
+             */
+            top_k: number;
+            /** Min Score */
+            min_score?: number | null;
+        };
+        /** KnowledgeDataset */
+        KnowledgeDataset: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            embedding_config: components["schemas"]["EmbeddingConfig"];
+            chunk_config?: components["schemas"]["ChunkConfig"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at?: string;
+        };
+        /**
+         * KnowledgeDatasetCreate
+         * @description POST /knowledge/datasets — the embedding config is pinned AT CREATE
+         *     (S8, ADR 0020 §1, D63): the dimension is load-bearing for every stored
+         *     vector, so config is immutable afterwards (a PATCH carrying it 422s at
+         *     the schema boundary).
+         */
+        KnowledgeDatasetCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            embedding_config: components["schemas"]["EmbeddingConfig"];
+            chunk_config?: components["schemas"]["ChunkConfig"];
+        };
+        /**
+         * KnowledgeDatasetList
+         * @description GET /knowledge/datasets — responses reuse the domain model.
+         */
+        KnowledgeDatasetList: {
+            /** Items */
+            items: components["schemas"]["KnowledgeDataset"][];
+        };
+        /**
+         * KnowledgeDatasetUpdate
+         * @description PATCH /knowledge/datasets/{id} — the mutable fields wholesale (the
+         *     PATCH discipline). No config field exists on this schema: extra=
+         *     "forbid" turns any embedding_config/chunk_config change into a 422
+         *     (config immutability, D63).
+         */
+        KnowledgeDatasetUpdate: {
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+        };
+        /**
+         * KnowledgeDocument
+         * @description One text document. `content` is the re-chunk/re-embed source of
+         *     truth (kept verbatim); `status='error'` carries the ingest failure
+         *     honestly (the document row persists, the route answers 502).
+         */
+        KnowledgeDocument: {
+            /** Id */
+            id: string;
+            /** Dataset Id */
+            dataset_id: string;
+            /** Name */
+            name: string;
+            /** Content */
+            content: string;
+            /**
+             * Status
+             * @default ready
+             * @enum {string}
+             */
+            status: "ready" | "error";
+            /** Error */
+            error?: string | null;
+            /**
+             * Chunk Count
+             * @default 0
+             */
+            chunk_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at?: string;
+        };
+        /**
+         * KnowledgeDocumentCreate
+         * @description POST /knowledge/datasets/{id}/documents — synchronous ingest (D65).
+         */
+        KnowledgeDocumentCreate: {
+            /** Name */
+            name: string;
+            /** Content */
+            content: string;
+        };
+        /**
+         * KnowledgeDocumentList
+         * @description GET /knowledge/datasets/{id}/documents.
+         */
+        KnowledgeDocumentList: {
+            /** Items */
+            items: components["schemas"]["KnowledgeDocument"][];
         };
         /**
          * LlmTraceEntry
@@ -4031,6 +4290,282 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["McpProbeResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_datasets_v1_knowledge_datasets_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeDatasetList"];
+                };
+            };
+        };
+    };
+    create_dataset_v1_knowledge_datasets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeDatasetCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeDataset"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_dataset_v1_knowledge_datasets__dataset_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeDataset"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_dataset_v1_knowledge_datasets__dataset_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_dataset_v1_knowledge_datasets__dataset_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeDatasetUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeDataset"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_documents_v1_knowledge_datasets__dataset_id__documents_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeDocumentList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_document_v1_knowledge_datasets__dataset_id__documents_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeDocumentCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeDocument"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_document_v1_knowledge_datasets__dataset_id__documents__document_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeDocument"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_document_v1_knowledge_datasets__dataset_id__documents__document_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

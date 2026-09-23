@@ -319,6 +319,47 @@ function triggerIdOf(r: { metadata?: object }): string | null {
   return typeof id === "string" ? id : null;
 }
 
+/** S8 (ADR 0020): a knowledge dataset with its pinned embedding config. */
+export const knowledgeDatasetFixture = {
+  id: "kb-ds-1",
+  name: "Product notes",
+  description: "internal docs",
+  embedding_config: {
+    provider: "mock",
+    model: "mock-embedder",
+    dimension: 8,
+    distance: "cosine" as const,
+  },
+  chunk_config: { chunk_chars: 1200, overlap_chars: 150 },
+  created_at: "2026-09-20T12:00:00Z",
+  updated_at: "2026-09-20T12:00:00Z",
+};
+
+export const knowledgeDatasetsFixture = [knowledgeDatasetFixture];
+
+export const knowledgeDocumentsFixture = [
+  {
+    id: "kb-doc-1",
+    dataset_id: "kb-ds-1",
+    name: "pricing.md",
+    content: "Pro costs 20 per seat.",
+    status: "ready" as const,
+    error: null,
+    chunk_count: 1,
+    created_at: "2026-09-20T12:01:00Z",
+  },
+  {
+    id: "kb-doc-2",
+    dataset_id: "kb-ds-1",
+    name: "broken.md",
+    content: "never embedded",
+    status: "error" as const,
+    error: "ModelConnectionError: connect ECONNREFUSED",
+    chunk_count: 0,
+    created_at: "2026-09-20T12:02:00Z",
+  },
+];
+
 export const handlers = [
   http.get("/v1/agents", () => HttpResponse.json({ items: agentsFixture })),
   http.post("/v1/agents", () => HttpResponse.json({ definition: agentFixture, versions: [] }, { status: 201 })),
@@ -617,6 +658,80 @@ export const handlers = [
   }),
   http.patch("/v1/credentials/:credential_id", () => HttpResponse.json(credentialFixture)),
   http.delete("/v1/credentials/:credential_id", () => new HttpResponse(null, { status: 204 })),
+  // --- knowledge (S8, ADR 0020) -----------------------------------------------
+  http.get("/v1/knowledge/datasets", () =>
+    HttpResponse.json({ items: knowledgeDatasetsFixture }),
+  ),
+  http.post("/v1/knowledge/datasets", async ({ request }) => {
+    const body = (await request.json()) as Partial<typeof knowledgeDatasetFixture>;
+    return HttpResponse.json(
+      {
+        ...knowledgeDatasetFixture,
+        ...body,
+        embedding_config: {
+          ...knowledgeDatasetFixture.embedding_config,
+          ...(body.embedding_config ?? {}),
+        },
+        id: "kb-ds-new",
+      },
+      { status: 201 },
+    );
+  }),
+  http.get("/v1/knowledge/datasets/:dataset_id", ({ params }) => {
+    const { dataset_id } = params as { dataset_id: string };
+    if (dataset_id === knowledgeDatasetFixture.id) {
+      return HttpResponse.json(knowledgeDatasetFixture);
+    }
+    return HttpResponse.json(
+      envelope("not_found", `knowledge dataset ${dataset_id} not found`),
+      { status: 404 },
+    );
+  }),
+  http.patch("/v1/knowledge/datasets/:dataset_id", ({ params }) => {
+    const { dataset_id } = params as { dataset_id: string };
+    if (dataset_id !== knowledgeDatasetFixture.id) {
+      return HttpResponse.json(
+        envelope("not_found", `knowledge dataset ${dataset_id} not found`),
+        { status: 404 },
+      );
+    }
+    return HttpResponse.json(knowledgeDatasetFixture);
+  }),
+  http.delete("/v1/knowledge/datasets/:dataset_id", ({ params }) => {
+    const { dataset_id } = params as { dataset_id: string };
+    if (dataset_id === "kb-ds-409") {
+      return HttpResponse.json(
+        envelope(
+          "conflict",
+          `knowledge dataset ${dataset_id} is referenced by 1 agent version snapshot(s); delete refused`,
+        ),
+        { status: 409 },
+      );
+    }
+    return new HttpResponse(null, { status: 204 });
+  }),
+  http.get("/v1/knowledge/datasets/:dataset_id/documents", () =>
+    HttpResponse.json({ items: knowledgeDocumentsFixture }),
+  ),
+  http.post("/v1/knowledge/datasets/:dataset_id/documents", async ({ request }) => {
+    const body = (await request.json()) as { name?: string; content?: string };
+    return HttpResponse.json(
+      {
+        id: "kb-doc-new",
+        dataset_id: "kb-ds-1",
+        name: body.name ?? "untitled",
+        content: body.content ?? "",
+        status: "ready" as const,
+        error: null,
+        chunk_count: 1,
+        created_at: "2026-09-20T12:03:00Z",
+      },
+      { status: 201 },
+    );
+  }),
+  http.delete("/v1/knowledge/datasets/:dataset_id/documents/:document_id", () =>
+    new HttpResponse(null, { status: 204 }),
+  ),
   // --- triggers (S13, ADR 0019) ---------------------------------------------
   http.get("/v1/triggers", () =>
     HttpResponse.json({ items: [triggerFixture, webhookTriggerFixture] }),

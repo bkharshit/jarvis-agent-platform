@@ -44,6 +44,9 @@ export interface AgentDraft {
   max_iterations: number;
   temperature: number;
   output_schema: string; // JSON text; "" = unset
+  // S8 (D66): the knowledge binding — datasets by ID (never the name) and
+  // the top_k knob; empty datasets = no binding (omitted from the payload).
+  knowledge: { datasets: string[]; top_k: number };
 }
 
 interface EditorState {
@@ -100,6 +103,10 @@ function draftFromDefinition(definition: AgentDefinition): AgentDraft {
       definition.output_schema === undefined || definition.output_schema === null
         ? ""
         : JSON.stringify(definition.output_schema, null, 2),
+    knowledge: {
+      datasets: definition.knowledge?.datasets ?? [],
+      top_k: definition.knowledge?.top_k ?? 4,
+    },
   };
 }
 
@@ -130,6 +137,7 @@ function draftForCreate(defaults?: ModelDefaultsInput | null): AgentDraft {
     max_iterations: 8,
     temperature: 0.7,
     output_schema: null,
+    knowledge: null,
   });
 }
 
@@ -238,6 +246,11 @@ export function toSavePayload(draft: AgentDraft): SavePayload {
     temperature: draft.temperature,
     ...(outputSchema.value !== undefined
       ? { output_schema: outputSchema.value as Record<string, unknown> }
+      : {}),
+    // S8 (D66): no datasets selected → the key is OMITTED (never null —
+    // the PATCH hazard); a binding needs datasets (min_length 1).
+    ...(draft.knowledge.datasets.length > 0
+      ? { knowledge: { datasets: draft.knowledge.datasets, top_k: draft.knowledge.top_k } }
       : {}),
   };
   return { body };

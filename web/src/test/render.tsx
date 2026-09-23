@@ -65,7 +65,15 @@ export const TEST_CAPABILITIES: Capabilities = {
       stage: "S6",
       summary: "DAG runs reusing the same event model",
     },
-    knowledge: { enabled: false, stage: "S8", summary: "Datasets and retrieval" },
+    knowledge: {
+      enabled: true,
+      summary: "Datasets, documents, and retrieval",
+      detail: {
+        datasets: 1,
+        documents: [{ id: "kb-ds-1", name: "Product notes", count: 2 }],
+        agents_can_bind: true,
+      },
+    },
     evaluations: { enabled: true, summary: "Datasets, runs, and scores" },
     observability: { enabled: false, stage: "S7", summary: "Traces and spans" },
     plugins: {

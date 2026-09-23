@@ -321,3 +321,68 @@ describe("<AgentEditor/> sub-agent picker (S14, ADR 0018)", () => {
     expect(screen.queryByLabelText("Delegate to sub-agent")).not.toBeInTheDocument();
   });
 });
+
+describe("<AgentEditor/> knowledge picker (S8, ADR 0020)", () => {
+  it("binds selected datasets by id and sends the binding on save", async () => {
+    const user = userEvent.setup();
+    const posted = capturePost();
+    posted.capture();
+
+    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    await user.type(await screen.findByLabelText("Name"), "Knowledgeable");
+    await screen.findByLabelText("Model");
+
+    const picker = await screen.findByTestId("knowledge-picker");
+    const checkbox = within(picker).getByRole("checkbox");
+    await user.click(checkbox);
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(posted.state.body).not.toBeNull());
+    const raw = JSON.parse(JSON.stringify(posted.state.body));
+    // the binding carries the DATASET ID (never the name — the S14 rule)
+    expect(raw.knowledge).toEqual({ datasets: ["kb-ds-1"], top_k: 4 });
+  });
+
+  it("omits the knowledge key entirely when nothing is selected", async () => {
+    const user = userEvent.setup();
+    const posted = capturePost();
+    posted.capture();
+
+    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    await user.type(await screen.findByLabelText("Name"), "Plain agent");
+    await screen.findByLabelText("Model");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(posted.state.body).not.toBeNull());
+    expect(posted.state.body).not.toHaveProperty("knowledge");
+  });
+
+  it("collects a custom top_k alongside the binding", async () => {
+    const user = userEvent.setup();
+    const posted = capturePost();
+    posted.capture();
+
+    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    await user.type(await screen.findByLabelText("Name"), "Narrow");
+    await screen.findByLabelText("Model");
+    const picker = await screen.findByTestId("knowledge-picker");
+    await user.click(within(picker).getByRole("checkbox"));
+    const topK = screen.getByLabelText("Top K (1–20)");
+    await user.clear(topK);
+    await user.type(topK, "2");
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(posted.state.body).not.toBeNull());
+    const raw = JSON.parse(JSON.stringify(posted.state.body));
+    expect(raw.knowledge).toEqual({ datasets: ["kb-ds-1"], top_k: 2 });
+  });
+
+  it("is hidden while the tenant has no datasets", async () => {
+    server.use(
+      http.get("/v1/knowledge/datasets", () => HttpResponse.json({ items: [] })),
+    );
+    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    expect(await screen.findByLabelText("Name")).toBeInTheDocument();
+    expect(screen.queryByTestId("knowledge-picker")).not.toBeInTheDocument();
+  });
+});
