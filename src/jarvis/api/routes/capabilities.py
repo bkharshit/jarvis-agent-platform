@@ -47,7 +47,7 @@ _SECTION_FLAGS: dict[str, dict[str, Any]] = {
         "enabled": True,
         "summary": "DAG runs reusing the same event model",
     },
-    "knowledge": {"enabled": False, "stage": "S8", "summary": "Datasets and retrieval"},
+    "knowledge": {"enabled": True, "summary": "Datasets, documents, and retrieval"},
     "evaluations": {"enabled": True, "summary": "Datasets, runs, and scores"},
     "observability": {"enabled": False, "stage": "S7", "summary": "Traces and spans"},
     "plugins": {"enabled": True, "summary": "Strategy plugins and discovery"},
@@ -132,6 +132,24 @@ async def _evaluations_detail(container: AppContainer, *, tenant_id: str | None)
     }
 
 
+async def _knowledge_detail(container: AppContainer, *, tenant_id: str | None) -> dict[str, Any]:
+    """S8 (ADR 0020 §6): the Knowledge section is live — the derived fact is
+    the tenant's dataset count with per-dataset document counts (the S4
+    derived-facts pattern; documents list metadata only, never content)."""
+    datasets = await container.knowledge.list_datasets(tenant_id=tenant_id or DEFAULT_TENANT)
+    documents: list[dict[str, Any]] = []
+    for dataset in datasets:
+        docs = await container.knowledge.list_documents(
+            dataset.id, tenant_id=tenant_id or DEFAULT_TENANT
+        )
+        documents.append({"id": dataset.id, "name": dataset.name, "count": len(docs)})
+    return {
+        "datasets": len(datasets),
+        "documents": documents,
+        "agents_can_bind": True,
+    }
+
+
 async def _workflows_detail(container: AppContainer) -> dict[str, Any]:
     """S6 (ADR 0015 §6): the Workflows section is live — the derived fact is
     the repo's workflow count plus the backend's node-type set (v1)."""
@@ -190,6 +208,8 @@ async def build_capabilities(
             detail = await _workflows_detail(container)
         elif key == "evaluations":
             detail = await _evaluations_detail(container, tenant_id=tenant_id)
+        elif key == "knowledge":
+            detail = await _knowledge_detail(container, tenant_id=tenant_id)
         elif key == "triggers":
             detail = await _triggers_detail(container, tenant_id=tenant_id)
         elif key == "models":

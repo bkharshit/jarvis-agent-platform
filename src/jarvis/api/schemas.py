@@ -23,6 +23,12 @@ from jarvis.domain.agent import (
 from jarvis.domain.evaluation import EvalCase, EvalDataset, EvalResult, ScorerConfig
 from jarvis.domain.events import ExecutionEvent
 from jarvis.domain.execution import RunResult
+from jarvis.domain.knowledge import (
+    ChunkConfig,
+    EmbeddingConfig,
+    KnowledgeDataset,
+    KnowledgeDocument,
+)
 from jarvis.domain.mcp import MCP_NAME_SLUG, McpServer, McpServerConfig
 from jarvis.domain.message import Message
 from jarvis.domain.tools import ToolDescriptor, ToolResult
@@ -470,6 +476,47 @@ class WebhookIngestResponse(_Model):
 
     run_id: str
     status: str
+
+
+class KnowledgeDatasetCreate(_Model):
+    """POST /knowledge/datasets — the embedding config is pinned AT CREATE
+    (S8, ADR 0020 §1, D63): the dimension is load-bearing for every stored
+    vector, so config is immutable afterwards (a PATCH carrying it 422s at
+    the schema boundary)."""
+
+    name: str = Field(min_length=1)
+    description: str = ""
+    embedding_config: EmbeddingConfig
+    chunk_config: ChunkConfig = Field(default_factory=ChunkConfig)
+
+
+class KnowledgeDatasetUpdate(_Model):
+    """PATCH /knowledge/datasets/{id} — the mutable fields wholesale (the
+    PATCH discipline). No config field exists on this schema: extra=
+    "forbid" turns any embedding_config/chunk_config change into a 422
+    (config immutability, D63)."""
+
+    name: str = Field(min_length=1)
+    description: str = ""
+
+
+class KnowledgeDatasetList(_Model):
+    """GET /knowledge/datasets — responses reuse the domain model."""
+
+    items: list[KnowledgeDataset]
+
+
+class KnowledgeDocumentCreate(_Model):
+    """POST /knowledge/datasets/{id}/documents — synchronous ingest (D65)."""
+
+    name: str = Field(min_length=1)
+    content: str = Field(min_length=1)
+
+
+class KnowledgeDocumentList(_Model):
+    """GET /knowledge/datasets/{id}/documents."""
+
+    items: list[KnowledgeDocument]
 
 
 class EvalDatasetUpsert(_Model):

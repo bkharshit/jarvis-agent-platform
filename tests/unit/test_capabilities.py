@@ -38,6 +38,8 @@ def _stub_container(
     llm_trace: bool = False,
     workflows: list = None,  # type: ignore[assignment]
     triggers: list = None,  # type: ignore[assignment]
+    knowledge_datasets: list = None,  # type: ignore[assignment]
+    knowledge_documents: list = None,  # type: ignore[assignment]
 ) -> SimpleNamespace:
     caps = capabilities or ModelCapabilities()
 
@@ -60,6 +62,12 @@ def _stub_container(
     async def _list_triggers(*, tenant_id: str | None = None) -> list:
         return triggers or []
 
+    async def _list_knowledge_datasets(*, tenant_id: str | None = None) -> list:
+        return knowledge_datasets or []
+
+    async def _list_knowledge_documents(dataset_id: str, *, tenant_id: str | None = None) -> list:
+        return knowledge_documents or []
+
     return SimpleNamespace(
         settings=Settings(
             _env_file=None, strategy_plugin_allowlist=allowlist or [], llm_trace=llm_trace
@@ -72,6 +80,10 @@ def _stub_container(
         workflows=SimpleNamespace(list_workflows=_list_workflows),
         evaluations=SimpleNamespace(list_datasets=_list_eval_datasets, list_runs=_list_eval_runs),
         triggers=SimpleNamespace(list_triggers=_list_triggers),
+        knowledge=SimpleNamespace(
+            list_datasets=_list_knowledge_datasets,
+            list_documents=_list_knowledge_documents,
+        ),
     )
 
 
@@ -202,3 +214,27 @@ async def test_plugins_section_enabled_with_derived_detail() -> None:
     assert section.detail["failed"][0]["name"] == "broken"
     assert section.detail["missing"] == ["ghost"]
     assert section.detail["allowlist"] == ["plan_execute", "ghost", "broken"]
+
+
+async def test_knowledge_section_enabled_with_derived_detail() -> None:
+    # S8 (ADR 0020 §6): the section is live and its detail mirrors the repo —
+    # the tenant's dataset count with per-dataset document counts, never
+    # content (the S4 derived-facts pattern).
+    from types import SimpleNamespace as _NS
+
+    datasets = [_NS(id="ds1", name="notes"), _NS(id="ds2", name="docs")]
+    response = await build_capabilities(
+        _stub_container(
+            strategies=[],
+            builtins=[],
+            knowledge_datasets=datasets,
+        )
+    )
+    section = response.sections["knowledge"]
+    assert section.enabled is True
+    assert section.detail is not None
+    assert section.detail["datasets"] == 2
+    assert section.detail["documents"] == [
+        {"id": "ds1", "name": "notes", "count": 0},
+        {"id": "ds2", "name": "docs", "count": 0},
+    ]
