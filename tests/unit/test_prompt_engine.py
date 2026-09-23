@@ -96,6 +96,59 @@ class TestHistory:
         assert [m.content for m in messages] == ["You are helpful.", "m8", "m9", "now"]
 
 
+class TestKnowledgeContext:
+    """S8 (ADR 0020 §4, D66): the rendered retrieval rides as a system
+    message between the memory summary and the windowed history. No
+    binding → byte-identical prompt (the golden gate)."""
+
+    def test_no_knowledge_is_byte_identical(self):
+        # The pre-S8 message list — no knowledge system message, exactly.
+        messages = PromptEngine().build(
+            PromptContext(
+                agent=_agent(memory=MemoryConfig(enabled=True, max_messages=2)),
+                input="now",
+                history=[Message(role="user", content="m1")],
+            )
+        )
+        assert [m.content for m in messages] == ["You are helpful.", "m1", "now"]
+
+    def test_knowledge_message_rides_between_summary_and_history(self):
+        messages = PromptEngine().build(
+            PromptContext(
+                agent=_agent(memory=MemoryConfig(enabled=True, max_messages=2)),
+                input="now",
+                memory_summary="earlier discussion",
+                knowledge_context="[doc.md] some excerpt",
+                history=[Message(role="user", content="m1")],
+            )
+        )
+        roles = [(m.role, m.content) for m in messages]
+        assert roles == [
+            ("system", "You are helpful."),
+            ("system", "Summary of the earlier conversation:\n" + "earlier discussion"),
+            ("system", "Relevant knowledge base excerpts:\n\n[doc.md] some excerpt"),
+            ("user", "m1"),
+            ("user", "now"),
+        ]
+
+    def test_knowledge_omitted_when_none(self):
+        messages = PromptEngine().build(
+            PromptContext(
+                agent=_agent(memory=MemoryConfig(enabled=True, max_messages=2)),
+                input="now",
+                memory_summary="summary",
+                knowledge_context=None,
+                history=[Message(role="user", content="m1")],
+            )
+        )
+        assert [m.content for m in messages] == [
+            "You are helpful.",
+            "Summary of the earlier conversation:\nsummary",
+            "m1",
+            "now",
+        ]
+
+
 class TestToolSections:
     def test_react_gets_tool_section_and_format(self):
         agent = _agent(

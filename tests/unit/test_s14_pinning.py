@@ -18,6 +18,16 @@ from jarvis.domain.agent import AgentDefinition, AgentVersion, ModelRef, Strateg
 # --- the doubles ---------------------------------------------------------------
 
 
+def _knowledge_stub():
+    """The S8 repo seam — no S14 definition carries a knowledge binding,
+    so the stub's dataset is never fetched."""
+
+    async def _missing(dataset_id, *, tenant_id):
+        return None
+
+    return SimpleNamespace(get_dataset=_missing)
+
+
 class _RepoView:
     """The TenantScopedAgents slice the pin helpers read."""
 
@@ -33,7 +43,9 @@ class _RepoView:
 
 
 def _auth(versions: list[AgentVersion]):
-    return SimpleNamespace(agents=_RepoView(versions))
+    # principal.tenant_id rides the S8 knowledge lints (unreached here —
+    # no S14 definition carries a knowledge binding).
+    return SimpleNamespace(agents=_RepoView(versions), principal=SimpleNamespace(tenant_id="t1"))
 
 
 def _version(
@@ -202,7 +214,7 @@ class TestCycleWalk:
 
 class TestLints:
     async def test_no_family_bindings_no_lints(self):
-        lints = await _lints(_auth([]), _definition("a", [_CALC]))
+        lints = await _lints(_auth([]), _definition("a", [_CALC]), _knowledge_stub())
         assert lints == []
 
     async def test_stale_pin_is_a_lint_never_a_failure(self):
@@ -217,7 +229,9 @@ class TestLints:
             "a",
             [ToolBinding(name="sub__b", config={"agent_id": "b", "agent_version_id": "ver-b-old"})],
         )
-        lints = await _lints(_auth([stale, _version("b", [], version_id="ver-b-new")]), definition)
+        lints = await _lints(
+            _auth([stale, _version("b", [], version_id="ver-b-new")]), definition, _knowledge_stub()
+        )
         assert len(lints) == 1
         assert "stale" in lints[0] and "sub__b" in lints[0]
 
@@ -230,7 +244,7 @@ class TestLints:
                 )
             ],
         )
-        lints = await _lints(_auth([]), definition)
+        lints = await _lints(_auth([]), definition, _knowledge_stub())
         assert len(lints) == 1
         assert "ghost" in lints[0]
 
@@ -246,7 +260,7 @@ class TestLints:
         definition = _definition(
             "a", [ToolBinding(name="sub__b", config={"agent_id": "b", "agent_version_id": "ver-b"})]
         )
-        lints = await _lints(_auth([version]), definition)
+        lints = await _lints(_auth([version]), definition, _knowledge_stub())
         assert lints == [
             "tool 'sub__b' pins memory-enabled agent 'b' — children run "
             "memory-less (no shared session)"
@@ -256,10 +270,10 @@ class TestLints:
         definition = _definition(
             "a", [ToolBinding(name="sub__b", config={"agent_id": "b", "agent_version_id": "ver-b"})]
         )
-        lints = await _lints(_auth([_version("b", [])]), definition)
+        lints = await _lints(_auth([_version("b", [])]), definition, _knowledge_stub())
         assert lints == []
 
     async def test_binding_without_agent_id_is_a_lint(self):
         definition = _definition("a", [ToolBinding(name="sub__b")])
-        lints = await _lints(_auth([]), definition)
+        lints = await _lints(_auth([]), definition, _knowledge_stub())
         assert lints == ["tool 'sub__b' carries no agent_id in its config"]

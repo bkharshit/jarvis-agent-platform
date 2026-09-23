@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from jarvis.domain.agent import (
     AgentDefinition,
+    KnowledgeBinding,
     MemoryConfig,
     ModelRef,
     StrategyConfig,
@@ -58,6 +59,9 @@ class AgentUpsertRequest(_Model):
     tools: list[ToolBinding] | None = None
     strategy: StrategyConfig | None = None
     memory: MemoryConfig | None = None
+    # S8 (ADR 0020 §4, D66): additive optional — create/PATCH fall back to
+    # the definition default (None) when unset, exactly like the rest.
+    knowledge: KnowledgeBinding | None = None
     max_iterations: int | None = Field(default=None, ge=1, le=32)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     output_schema: dict[str, Any] | None = None

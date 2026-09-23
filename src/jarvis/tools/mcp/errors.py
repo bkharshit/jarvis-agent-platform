@@ -39,4 +39,20 @@ class SubAgentResolutionError(ToolResolutionError):
         self.agent_ref = agent_ref
 
 
-__all__ = ["McpResolutionError", "SubAgentResolutionError", "ToolResolutionError"]
+class RetrieverResolutionError(ToolResolutionError):
+    """A bound `retriever__*` dataset is missing or invisible to the
+    tenant (S8, ADR 0020 §5 — D29: a foreign dataset reads as absent), or
+    knowledge retrieval itself failed (D66: the same terminal `tool`
+    kind, no new catch site)."""
+
+    def __init__(self, dataset_ref: str, detail: str) -> None:
+        super().__init__(f"retriever {dataset_ref!r}: {detail}")
+        self.dataset_ref = dataset_ref
+
+
+__all__ = [
+    "McpResolutionError",
+    "RetrieverResolutionError",
+    "SubAgentResolutionError",
+    "ToolResolutionError",
+]

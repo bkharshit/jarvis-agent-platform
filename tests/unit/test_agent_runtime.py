@@ -14,6 +14,7 @@ from jarvis.domain.agent import (
     AgentDefinition,
     AgentVersion,
     ConversationMemoryState,
+    KnowledgeBinding,
     MemoryConfig,
     ModelRef,
     StrategyConfig,
@@ -26,18 +27,27 @@ from jarvis.domain.events import (
     validate_event_sequence,
 )
 from jarvis.domain.execution import ExecutionContext, RunResult
+from jarvis.domain.knowledge import EmbeddingConfig, KnowledgeChunk, KnowledgeDataset
 from jarvis.domain.message import Message, ToolCall, Usage
 from jarvis.domain.tools import ToolDescriptor
 from jarvis.events.bus import InProcessEventSink
 from jarvis.models.errors import ModelBadRequestError, ModelError
 from jarvis.models.factory import DefaultModelProviderFactory
-from jarvis.models.mock import MockModelProvider, turn
+from jarvis.models.mock import (
+    MockEmbeddingProvider,
+    MockModelProvider,
+    turn,
+)
 from jarvis.ports.queue import ResumeRequest
 from jarvis.ports.strategy import AskHumanStep, FinishStep
 from jarvis.runtime.agent_runtime import AgentRuntime
+from jarvis.runtime.knowledge.retrieval import KnowledgeRetrieval
 from jarvis.runtime.limits import RunLimits
 from jarvis.strategies.registry import DefaultStrategyRegistry
 from jarvis.tools.base import BaseTool
+from jarvis.tools.knowledge.provider import RetrieverToolProvider
+from jarvis.tools.mcp.errors import RetrieverResolutionError
+from jarvis.tools.mcp.provider import McpTooling
 from jarvis.tools.registry import InMemoryToolRegistry
 from jarvis.tools.runtime import ToolRuntime
 
@@ -1289,3 +1299,210 @@ class TestStrategyFailureKind:
         assert len(terminal) == 1
         assert terminal[0].type == "run.failed"
         assert terminal[0].error_kind == "strategy"
+
+
+# --- S8: the knowledge binding + the retriever family (ADR 0020) ----------------
+
+
+class _FakeKnowledgeRepo:
+    """The KnowledgeRepo slice the runtime reads — dataset resolution and
+    vector search over fixed fixtures, recording every search."""
+
+    def __init__(self, datasets=(), chunks=()):
+        self._datasets = {d.id: d for d in datasets}
+        self._chunks = list(chunks)
+        self.searched: list[tuple[list[str], int]] = []
+
+    async def get_dataset(self, dataset_id, *, tenant_id):
+        return self._datasets.get(dataset_id)
+
+    async def search_chunks(self, dataset_ids, embedding, limit):
+        self.searched.append((list(dataset_ids), limit))
+        hits = [c for c in self._chunks if c.dataset_id in dataset_ids]
+        return hits[:limit]
+
+
+def _knowledge_fixtures():
+    """Dataset + chunk over fake storage. The mock embedder's hashed bag
+    of words makes the ranking real."""
+    dataset = KnowledgeDataset(
+        id="ds-1",
+        name="Notes",
+        embedding_config=EmbeddingConfig(provider="mock", model="mock-embed", dimension=8),
+    )
+    chunk = KnowledgeChunk(
+        id="ch-1",
+        document_id="doc-1",
+        dataset_id="ds-1",
+        chunk_index=0,
+        content="the capital of France is Paris",
+        embedding=[1.0] * 8,
+        document_name="capitals.md",
+        score=0.9,
+    )
+    return _FakeKnowledgeRepo([dataset], [chunk]), dataset
+
+
+def _knowledge_runtime(
+    provider, repo, *, wire_retrievers=True, wire_retrieval=True, executions=None
+):
+    embedder = MockEmbeddingProvider()
+    factory = DefaultModelProviderFactory(mock_provider=provider, mock_embedding_provider=embedder)
+    retrieval = KnowledgeRetrieval(repo=repo, models=factory)
+    registry = InMemoryToolRegistry()
+    kw = dict(
+        strategies=DefaultStrategyRegistry(),
+        tools=registry,
+        tool_runtime=ToolRuntime(registry),
+        models=factory,
+        executions=executions if executions is not None else _RecordingRepo(),
+    )
+    if wire_retrieval:
+        kw.update(retrieval=retrieval, knowledge_repo=repo)
+    if wire_retrievers:
+        kw["retrievers"] = RetrieverToolProvider(repo=repo, retrieval=retrieval)
+    return AgentRuntime(**kw), embedder
+
+
+class TestKnowledge:
+    async def test_no_binding_prompt_is_byte_identical(self):
+        """The golden gate (ADR 0020 §4): no knowledge binding → the model
+        sees EXACTLY the pre-S8 prompt, even on a fully wired runtime."""
+        provider = MockModelProvider([turn("Hello there")])
+        repo, _ = _knowledge_fixtures()
+        runtime, _ = _knowledge_runtime(provider, repo)
+        agent = _agent()
+
+        result = await runtime.run(_version(agent), "hi", _ctx("run-k0"))
+
+        assert result.status == "succeeded"
+        messages = provider.requests[0].messages
+        assert [(m.role, m.text) for m in messages] == [
+            ("system", "You are a test agent."),
+            ("user", "hi"),
+        ]
+
+    async def test_knowledge_context_rides_in_the_prompt(self):
+        provider = MockModelProvider([turn("Paris.")])
+        repo, _ = _knowledge_fixtures()
+        runtime, _ = _knowledge_runtime(provider, repo)
+        agent = _agent(knowledge=KnowledgeBinding(datasets=["ds-1"], top_k=2))
+
+        result = await runtime.run(_version(agent), "what is the capital?", _ctx("run-k1"))
+
+        assert result.status == "succeeded"
+        messages = provider.requests[0].messages
+        assert messages[1].role == "system"
+        assert messages[1].text == (
+            "Relevant knowledge base excerpts:\n\n[capitals.md] the capital of France is Paris"
+        )
+        assert messages[2].role == "user"
+        # the binding's top_k reached the search
+        assert repo.searched == [(["ds-1"], 2)]
+
+    async def test_retriever_tool_call_renders_context(self):
+        provider = MockModelProvider(
+            [
+                turn(
+                    tool_calls=[
+                        ToolCall(
+                            id="c1",
+                            name="retriever__ds-1",
+                            arguments={"query": "france capital"},
+                        )
+                    ]
+                ),
+                turn("Paris is the capital of France"),
+            ]
+        )
+        repo, _ = _knowledge_fixtures()
+        runtime, _ = _knowledge_runtime(provider, repo)
+        agent = _agent(
+            tools=[ToolBinding(name="retriever__ds-1", config={"dataset_id": "ds-1", "top_k": 1})]
+        )
+
+        result = await runtime.run(_version(agent), "lookup", _ctx("run-k2"))
+
+        assert result.status == "succeeded"
+        assert result.final_message == "Paris is the capital of France"
+        assert repo.searched == [(["ds-1"], 1)]
+        completed = [e for e in runtime.bus.get("run-k2").events if e.type == "tool.call.completed"]
+        assert completed[0].output == "[capitals.md] the capital of France is Paris"
+
+    async def test_gone_dataset_is_terminal_tool_failure(self):
+        """D29: a foreign (or deleted) dataset reads as absent — the run
+        terminal-fails with the EXISTING `tool` kind, naming the dataset."""
+        provider = MockModelProvider([turn("never reached")])
+        repo = _FakeKnowledgeRepo()
+        runtime, _ = _knowledge_runtime(provider, repo)
+        agent = _agent(knowledge=KnowledgeBinding(datasets=["ds-gone"]))
+
+        result = await runtime.run(_version(agent), "hi", _ctx("run-k3"))
+
+        assert result.status == "failed"
+        assert result.error_kind == "tool"
+        assert "ds-gone" in (result.error or "")
+
+    async def test_unwired_runtime_is_terminal_tool_failure(self):
+        provider = MockModelProvider([turn("never reached")])
+        runtime, _ = _knowledge_runtime(provider, None, wire_retrieval=False, wire_retrievers=False)
+        agent = _agent(knowledge=KnowledgeBinding(datasets=["ds-1"]))
+
+        result = await runtime.run(_version(agent), "hi", _ctx("run-k4"))
+
+        assert result.status == "failed"
+        assert result.error_kind == "tool"
+
+    async def test_resume_retrieves_against_the_row_input(self):
+        """A resumed segment retrieves against the run's ORIGINAL input
+        (the row carries it) — same per-segment contract, not the resume
+        payload."""
+        provider = MockModelProvider()
+        repo, _ = _knowledge_fixtures()
+        executions = _RecordingRepo()
+        executions.runs["run-k5"] = SimpleNamespace(input="original question")
+        runtime, embedder = _knowledge_runtime(provider, repo, executions=executions)
+        agent = _agent(knowledge=KnowledgeBinding(datasets=["ds-1"]))
+
+        rendered = await runtime._retrieve_knowledge(agent, _ctx("run-k5"), None)
+
+        assert rendered == "[capitals.md] the capital of France is Paris"
+        assert embedder.requests[0].input == ["original question"]
+
+    async def test_retriever_failure_closes_sibling_tooling(self):
+        """The merge's cleanup discipline: a retriever resolution failure
+        closes the MCP tooling already resolved in the same segment."""
+        closed = []
+
+        async def _mcp_resolve(bindings, *, tenant_id, principal):
+            async def _close():
+                closed.append("mcp")
+
+            return McpTooling(
+                registry=InMemoryToolRegistry(),
+                tool_runtime=ToolRuntime(InMemoryToolRegistry()),
+                aclose=_close,
+            )
+
+        async def _boom(bindings, agent, ctx):
+            raise RetrieverResolutionError("retriever__ds-1", "boom")
+
+        provider = MockModelProvider([turn("never reached")])
+        runtime, _ = _knowledge_runtime(
+            provider, _FakeKnowledgeRepo(), wire_retrieval=True, wire_retrievers=False
+        )
+        runtime._retrievers = SimpleNamespace(resolve=_boom)
+        runtime._mcp = SimpleNamespace(resolve=_mcp_resolve)
+        agent = _agent(
+            tools=[
+                ToolBinding(name="mcp__server"),
+                ToolBinding(name="retriever__ds-1", config={"dataset_id": "ds-1"}),
+            ]
+        )
+
+        result = await runtime.run(_version(agent), "hi", _ctx("run-k6"))
+
+        assert result.status == "failed"
+        assert result.error_kind == "tool"
+        assert "retriever__ds-1" in (result.error or "")
+        assert closed == ["mcp"]

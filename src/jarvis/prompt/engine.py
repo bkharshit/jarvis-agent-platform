@@ -31,6 +31,8 @@ class PromptContext:
     # S12 (D45): the rolling conversation summary (summarize strategy) —
     # injected between the system section and the windowed history.
     memory_summary: str | None = None
+    # S8 (D66): the rendered knowledge retrieval, riding the same seam.
+    knowledge_context: str | None = None
 
     @property
     def substitutions(self) -> dict[str, Any]:
@@ -57,6 +59,17 @@ class PromptEngine:
                 Message(
                     role="system",
                     content="Summary of the earlier conversation:\n" + context.memory_summary,
+                )
+            )
+
+        if context.knowledge_context:
+            # S8 (D66): the segment's knowledge retrieval rides as a system
+            # message — after the summary, before the windowed history.
+            # None (no binding) → byte-identical prompt (ADR 0020 §4).
+            messages.append(
+                Message(
+                    role="system",
+                    content="Relevant knowledge base excerpts:\n\n" + context.knowledge_context,
                 )
             )
 

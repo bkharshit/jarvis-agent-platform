@@ -38,13 +38,14 @@ from jarvis.domain.events import (
     ToolCallStarted,
 )
 from jarvis.domain.execution import ExecutionCancelled, ExecutionContext, RunResult
+from jarvis.domain.knowledge import KnowledgeDataset
 from jarvis.domain.message import Message, ToolCall, Usage
 from jarvis.domain.tools import ToolContext, ToolDescriptor, ToolResult
 from jarvis.events.bus import InProcessEventBus, InProcessEventSink
 from jarvis.models.errors import ModelAbortedError, ModelError
 from jarvis.ports.model import ModelClient, ModelProviderFactory
 from jarvis.ports.queue import ResumeRequest
-from jarvis.ports.repository import ConversationRepo, ExecutionRepo
+from jarvis.ports.repository import ConversationRepo, ExecutionRepo, KnowledgeRepo
 from jarvis.ports.strategy import (
     AskHumanStep,
     FinishStep,
@@ -54,14 +55,27 @@ from jarvis.ports.strategy import (
 )
 from jarvis.ports.tools import ToolRegistry
 from jarvis.prompt.engine import PromptContext, PromptEngine
+from jarvis.runtime.knowledge.retrieval import KnowledgeRetrieval
 from jarvis.runtime.limits import RunLimits
 from jarvis.runtime.llm_trace import LlmTraceBuffer, TracedModelClient
 from jarvis.runtime.memory import ConversationMemory, MemoryView
-from jarvis.tools.mcp.errors import SubAgentResolutionError, ToolResolutionError
+from jarvis.tools.knowledge.provider import (
+    RetrieverToolProvider,
+    is_retriever_binding,
+)
+from jarvis.tools.mcp.errors import (
+    RetrieverResolutionError,
+    SubAgentResolutionError,
+    ToolResolutionError,
+)
 from jarvis.tools.mcp.provider import McpTooling, McpToolProvider
 from jarvis.tools.registry import InMemoryToolRegistry
 from jarvis.tools.runtime import ToolRuntime
-from jarvis.tools.subagents.provider import FAMILY_PREFIXES, SubAgentToolProvider
+from jarvis.tools.subagents.provider import (
+    FAMILY_PREFIXES,
+    SubAgentTooling,
+    SubAgentToolProvider,
+)
 
 ErrorKind = Literal["max_iterations", "timeout", "model", "tool", "output_schema", "strategy"]
 
@@ -132,6 +146,11 @@ class AgentRuntime:
         limits: RunLimits | None = None,
         mcp: McpToolProvider | None = None,
         sub_agents: SubAgentToolProvider | None = None,
+        # S8 (ADR 0020 §5, D67): the retriever family beside MCP and
+        # sub-agents; the D68 service for the prompt injection.
+        retrievers: RetrieverToolProvider | None = None,
+        retrieval: KnowledgeRetrieval | None = None,
+        knowledge_repo: KnowledgeRepo | None = None,
         trace_llm: bool = False,
         trace_buffer: LlmTraceBuffer | None = None,
     ) -> None:
@@ -146,6 +165,9 @@ class AgentRuntime:
         self._limits = limits
         self._mcp = mcp
         self._sub_agents = sub_agents
+        self._retrievers = retrievers
+        self._retrieval = retrieval
+        self._knowledge_repo = knowledge_repo
         self._trace_llm = trace_llm
         self.trace_buffer = trace_buffer
         self._live_tokens: dict[str, ExecutionContext] = {}
@@ -293,6 +315,11 @@ class AgentRuntime:
         tooling = await self._resolve_tooling(agent, ctx)
         try:
             memory_view = await self._load_memory(ctx, agent, client)
+            # S8 (D66): the binding's datasets are retrieved ONCE per
+            # segment, before the first prompt build; the rendered context
+            # rides as a system message. Failure → RetrieverResolutionError
+            # → run()'s catch → terminal "tool" (no new catch site, D67).
+            knowledge_context = await self._retrieve_knowledge(agent, ctx, input)
 
             messages = self._prompt_engine.build(
                 PromptContext(
@@ -301,6 +328,7 @@ class AgentRuntime:
                     variables=ctx.variables,
                     history=memory_view.history,
                     memory_summary=memory_view.summary,
+                    knowledge_context=knowledge_context,
                     tools=self._bound_descriptors(agent, tooling.registry),
                     schema_in_prompt=(
                         agent.output_schema is not None
@@ -866,7 +894,9 @@ class AgentRuntime:
         tooling: McpTooling,
     ) -> RunResult:
         try:
-            outcome = await self._resume_loop(ctx, sink, client, agent, resume, tooling)
+            outcome = await self._resume_loop(
+                ctx, sink, client, agent, resume, tooling, run_input=run_input
+            )
             return await self._after_loop(ctx, sink, outcome, started_at, run_input)
         finally:
             # S4 (D38): the resumed segment's MCP connections close with the
@@ -920,6 +950,7 @@ class AgentRuntime:
         resume: ResumeRequest,
         tooling: McpTooling,
         open_iteration: int | None = None,
+        run_input: str = "",
     ) -> LoopOutcome:
         """The resumed segment's loop entry: counter re-seed from the durable
         log, message rebuild, batch/answer entry decision, then the loop.
@@ -945,9 +976,19 @@ class AgentRuntime:
                     pause_event = event
         ctx.iteration = open_iteration
 
+        # S8 (D66): the resumed segment retrieves against the run's
+        # ORIGINAL input (the row carries it) — same per-segment contract.
+        knowledge_context = await self._retrieve_knowledge(agent, ctx, None)
+
         conversation_id = await self._resume_conversation(ctx, agent)
         messages = await self._rebuild_messages(
-            agent, ctx, client, ctx.run_id, conversation_id, tooling.registry
+            agent,
+            ctx,
+            client,
+            ctx.run_id,
+            conversation_id,
+            tooling.registry,
+            knowledge_context=knowledge_context,
         )
 
         entry = "answer"
@@ -1001,6 +1042,49 @@ class AgentRuntime:
         )
         return outcome
 
+    async def _retrieve_knowledge(
+        self, agent: AgentDefinition, ctx: ExecutionContext, query: str | None
+    ) -> str | None:
+        """The D66 knowledge injection: the binding's datasets resolve
+        tenant-scoped ONCE per segment, the query embeds, the rendered
+        `[doc name] content` context rides into the prompt as a system
+        message. No binding → None (byte-identical prompt). Failures raise
+        RetrieverResolutionError — a ToolResolutionError — so run()/resume()'s
+        EXISTING catch persists the terminal `tool` state (D67: no new
+        catch site); the caller maps the same failure onto 502."""
+        binding = agent.knowledge
+        if binding is None:
+            return None
+        if self._retrieval is None or self._knowledge_repo is None:
+            raise RetrieverResolutionError(
+                ", ".join(binding.datasets), "no knowledge retrieval is wired into this runtime"
+            )
+        if query is None:
+            # A resumed segment retrieves against the run's ORIGINAL input
+            # (the row carries it) — same per-segment contract.
+            row = await self._executions.get(ctx.run_id) if self._executions is not None else None
+            query = row.input if row is not None else ""
+        datasets: list[KnowledgeDataset] = []
+        for dataset_id in binding.datasets:
+            dataset = await self._knowledge_repo.get_dataset(
+                dataset_id, tenant_id=ctx.tenant_id or ""
+            )
+            if dataset is None:
+                # D29: a foreign (or deleted) dataset reads as absent — the
+                # binding names an unrunnable resource, honestly terminal.
+                raise RetrieverResolutionError(
+                    f"retriever__{dataset_id}", "dataset not found in this tenant"
+                )
+            datasets.append(dataset)
+        return await self._retrieval.retrieve(
+            datasets,
+            query,
+            tenant_id=ctx.tenant_id or "",
+            principal=ctx.principal,
+            top_k=binding.top_k,
+            min_score=binding.min_score,
+        )
+
     async def _resume_conversation(
         self, ctx: ExecutionContext, agent: AgentDefinition
     ) -> str | None:
@@ -1018,6 +1102,7 @@ class AgentRuntime:
         run_id: str,
         conversation_id: str | None,
         registry: ToolRegistry | None = None,
+        knowledge_context: str | None = None,
     ) -> list[Message]:
         """Reconstruct the model's context for a resumed segment: the system
         prompt plus the run transcript. With memory on, the conversation
@@ -1051,12 +1136,22 @@ class AgentRuntime:
                     agent.output_schema is not None
                     and client.capabilities.structured_output != "json_schema"
                 ),
+                knowledge_context=knowledge_context,
             )
         )
         messages = [Message(role="system", content=system)] if system else []
         if summary:
             messages.append(
                 Message(role="system", content="Summary of the earlier conversation:\n" + summary)
+            )
+        # S8 (D66): the retrieval's system message mirrors build()'s seam —
+        # a resumed segment's context matches what a fresh segment saw.
+        if knowledge_context:
+            messages.append(
+                Message(
+                    role="system",
+                    content="Relevant knowledge base excerpts:\n\n" + knowledge_context,
+                )
             )
         messages.extend(transcript)
         return messages
@@ -1235,38 +1330,78 @@ class AgentRuntime:
         family (`sub__*` AND `handoff__*`) resolves through the sub-agent
         provider and merges into ONE registry view — one ToolRuntime, one
         aclose for mcp__ + family together; no family bindings leaves the
-        MCP path byte-identical."""
+        MCP path byte-identical. S8 (D67): the `retriever__<dataset>`
+        family joins the merge the same way."""
         bindings = agent.enabled_tools()
         sub_bindings = [b for b in bindings if b.enabled and b.name.startswith(FAMILY_PREFIXES)]
-        if not sub_bindings:
+        # S8 (ADR 0020 §5, D67): the retriever family merges the same way —
+        # one registry view, one ToolRuntime, one aclose for all families.
+        retriever_bindings = [b for b in bindings if b.enabled and is_retriever_binding(b.name)]
+        if not sub_bindings and not retriever_bindings:
             if self._mcp is None:
                 return self._default_tooling()
             return await self._mcp.resolve(
                 bindings, tenant_id=ctx.tenant_id, principal=ctx.principal
             )
-        if self._sub_agents is None:
-            raise SubAgentResolutionError(
-                sub_bindings[0].name, "no sub-agent provider is wired into this runtime"
+        if retriever_bindings and self._retrievers is None:
+            raise RetrieverResolutionError(
+                retriever_bindings[0].name, "no retriever provider is wired into this runtime"
             )
         mcp_tooling = (
             await self._mcp.resolve(bindings, tenant_id=ctx.tenant_id, principal=ctx.principal)
             if self._mcp is not None
             else self._default_tooling()
         )
+        # S8: with the third family in the merge, a retriever-only agent
+        # reaches this block with EMPTY sub_bindings — the provider is
+        # optional per family, so the guard lives inside the bindings'
+        # block (an unconditional raise here would IndexError on
+        # sub_bindings[0] and escape as a non-ToolResolutionError).
+        sub_tooling: SubAgentTooling | None = None
+        sub_provider = self._sub_agents
         try:
-            sub_tooling = await self._sub_agents.resolve(sub_bindings, ctx)
+            if sub_bindings:
+                if sub_provider is None:
+                    raise SubAgentResolutionError(
+                        sub_bindings[0].name, "no sub-agent provider is wired into this runtime"
+                    )
+                sub_tooling = await sub_provider.resolve(sub_bindings, ctx)
         except Exception:
             await mcp_tooling.aclose()
+            raise
+        retriever_tooling: McpTooling | None = None
+        try:
+            retriever_provider = self._retrievers
+            if retriever_bindings:
+                if retriever_provider is None:
+                    raise RetrieverResolutionError(
+                        retriever_bindings[0].name,
+                        "no retriever provider is wired into this runtime",
+                    )
+                retriever_tooling = await retriever_provider.resolve(retriever_bindings, agent, ctx)
+        except Exception:
+            await mcp_tooling.aclose()
+            if sub_tooling is not None:
+                await sub_tooling.aclose()
             raise
         view = InMemoryToolRegistry()
         for descriptor in mcp_tooling.registry.descriptors():
             view.register(mcp_tooling.registry.get(descriptor.name))
-        for tool in sub_tooling.tools:
-            view.register(tool)
+        if sub_tooling is not None:
+            for tool in sub_tooling.tools:
+                view.register(tool)
+        if retriever_tooling is not None:
+            for descriptor in retriever_tooling.registry.descriptors():
+                view.register(retriever_tooling.registry.get(descriptor.name))
+        closes = [mcp_tooling.aclose]
+        if sub_tooling is not None:
+            closes.append(sub_tooling.aclose)
+        if retriever_tooling is not None:
+            closes.append(retriever_tooling.aclose)
         return McpTooling(
             registry=view,
             tool_runtime=ToolRuntime(view),
-            aclose=_merged_close(mcp_tooling.aclose, sub_tooling.aclose),
+            aclose=_merged_close(*closes),
         )
 
     def _default_tooling(self) -> McpTooling:
@@ -1323,15 +1458,14 @@ async def _no_op_close() -> None:
     """The default tooling's aclose — builtins hold no connections."""
 
 
-def _merged_close(
-    close_a: Callable[[], Awaitable[None]], close_b: Callable[[], Awaitable[None]]
-) -> Callable[[], Awaitable[None]]:
-    """The merged toolset's aclose: both segments' closes run exactly once,
-    first-error tolerant (the MCP _Close pattern, two families)."""
+def _merged_close(*closes: Callable[[], Awaitable[None]]) -> Callable[[], Awaitable[None]]:
+    """The merged toolset's aclose: every family's close runs exactly once,
+    first-error tolerant (the MCP _Close pattern; variadic since S8's
+    retriever family joined — S14 two, S8 three)."""
 
     async def _close() -> None:
         errors: list[Exception] = []
-        for close in (close_a, close_b):
+        for close in closes:
             try:
                 await close()
             except Exception as exc:  # noqa: BLE001 — never block the other close

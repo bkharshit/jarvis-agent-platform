@@ -23,11 +23,13 @@ class RetrievalError(Exception):
     """A retrieval precondition failed (embedding-model mismatch)."""
 
 
-def _embedder_signature(config: EmbeddingConfig) -> tuple[str | None, ...]:
+def embedder_signature(config: EmbeddingConfig) -> tuple[str | None, ...]:
     """Identity of an embedding setup: provider + model + base_url +
     dimension. Credential refs are deliberately EXCLUDED — the same
     model reachable through different credentials is still the same
-    embedding space."""
+    embedding space. Public: the agents route's save-time 422 checks
+    the SAME signature (ADR 0020 §4 — one query embedding serves the
+    whole binding)."""
     return (config.provider, config.model, config.base_url, str(config.dimension))
 
 
@@ -82,7 +84,7 @@ class KnowledgeRetrieval:
         """The one-embedding-model invariant (ADR 0020 §4, D66): a mixed
         binding cannot search — the vectors live in different spaces.
         Definition save refuses the mix (422); this is defense-in-depth."""
-        signatures = {_embedder_signature(dataset.embedding_config) for dataset in datasets}
+        signatures = {embedder_signature(dataset.embedding_config) for dataset in datasets}
         if len(signatures) > 1:
             raise RetrievalError(
                 "a knowledge binding may only reference datasets sharing one "
@@ -96,4 +98,4 @@ def _render(hits: list[KnowledgeChunk]) -> str:
     return "\n\n".join(f"[{hit.document_name}] {hit.content}" for hit in hits)
 
 
-__all__ = ["KnowledgeRetrieval", "RetrievalError"]
+__all__ = ["KnowledgeRetrieval", "RetrievalError", "embedder_signature"]

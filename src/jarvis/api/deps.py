@@ -36,6 +36,7 @@ from jarvis.persistence.repositories import (
     SqlWorkflowRepo,
 )
 from jarvis.runtime.agent_runtime import AgentRuntime
+from jarvis.runtime.knowledge.retrieval import KnowledgeRetrieval
 from jarvis.runtime.limits import RunLimits
 from jarvis.runtime.llm_trace import LlmTraceBuffer
 from jarvis.runtime.scheduler import TriggerScheduler
@@ -49,6 +50,7 @@ from jarvis.tools.builtin.calculator import CalculatorTool
 from jarvis.tools.builtin.current_time import CurrentTimeTool
 from jarvis.tools.builtin.http_get import HttpGetTool
 from jarvis.tools.builtin.memory import MemoryDeleteTool, MemoryGetTool, MemoryPutTool
+from jarvis.tools.knowledge.provider import RetrieverToolProvider
 from jarvis.tools.mcp.provider import McpToolProvider
 from jarvis.tools.registry import InMemoryToolRegistry
 from jarvis.tools.runtime import ToolRuntime
@@ -76,6 +78,8 @@ class AppContainer:
     mcp_servers: SqlMcpServerRepo
     mcp: McpToolProvider
     sub_agents: SubAgentToolProvider
+    retriever_tools: RetrieverToolProvider
+    retrieval: KnowledgeRetrieval
     models: DefaultModelProviderFactory
     strategies: DefaultStrategyRegistry
     strategy_plugins: PluginLoadResult
@@ -137,6 +141,14 @@ class AppContainer:
             mock_provider=mock_provider,
             credential_resolver=credential_resolver,
         )
+        # S8 (ADR 0020, D66/D67): the D68 retrieval service + the retriever
+        # tool family provider — both ride the same knowledge repo and the
+        # same model factory; the embedder resolves per call from each
+        # dataset's frozen config.
+        retrieval = KnowledgeRetrieval(
+            repo=knowledge, models=models, default_top_k=settings.knowledge_default_top_k
+        )
+        retriever_tools = RetrieverToolProvider(repo=knowledge, retrieval=retrieval)
         # S4 (ADR 0012): MCP servers resolve per segment through the runtime's
         # provider seam; the same provider serves the API's probe route.
         # Stored header/env refs decrypt through the shared resolver.
@@ -188,6 +200,9 @@ class AppContainer:
             limits=limits,
             mcp=mcp,
             sub_agents=sub_agents,
+            retrievers=retriever_tools,
+            retrieval=retrieval,
+            knowledge_repo=knowledge,
             trace_llm=settings.llm_trace,
             trace_buffer=LlmTraceBuffer(),
         )
@@ -258,6 +273,8 @@ class AppContainer:
             mcp_servers=mcp_servers,
             mcp=mcp,
             sub_agents=sub_agents,
+            retriever_tools=retriever_tools,
+            retrieval=retrieval,
             models=models,
             strategies=strategies,
             strategy_plugins=strategy_plugins,

@@ -45,6 +45,9 @@ from jarvis.api.schemas import (
 from jarvis.api.sse import SSE_HEADERS, parse_last_event_id
 from jarvis.domain.agent import AgentDefinition, AgentVersion, ToolBinding
 from jarvis.domain.execution import RunResult
+from jarvis.persistence.repositories import SqlKnowledgeRepo
+from jarvis.runtime.knowledge.retrieval import embedder_signature
+from jarvis.tools.knowledge.provider import is_retriever_binding
 from jarvis.tools.subagents.provider import is_family_binding
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -66,7 +69,9 @@ async def _require_version(auth: AuthContext, agent_id: str) -> AgentVersion:
     return version
 
 
-async def _detail(auth: AuthContext, definition: AgentDefinition) -> AgentDetail:
+async def _detail(
+    auth: AuthContext, definition: AgentDefinition, container: AppContainer
+) -> AgentDetail:
     versions = await auth.agents.list_versions(definition.id)
     return AgentDetail(
         definition=definition,
@@ -74,7 +79,7 @@ async def _detail(auth: AuthContext, definition: AgentDefinition) -> AgentDetail
             VersionSummary(version=v.version, id=v.id, label=v.label, created_at=v.created_at)
             for v in versions
         ],
-        lints=await _lints(auth, definition),
+        lints=await _lints(auth, definition, container.knowledge),
     )
 
 
@@ -170,13 +175,42 @@ async def _ensure_acyclic(auth: AuthContext, definition: AgentDefinition) -> Non
     await visit(definition.id, definition.tools)
 
 
-async def _lints(auth: AuthContext, definition: AgentDefinition) -> list[str]:
+async def _lints(
+    auth: AuthContext, definition: AgentDefinition, knowledge: SqlKnowledgeRepo
+) -> list[str]:
     """Publish lints (ADR 0018 §5) — stale sub-agent pins (a newer version
     exists, or the pinned target has no published version at all) and
     memory-enabled children (children run memory-less — session_id=None).
-    Warnings, never failures: versions are immutable, a stale pin still
-    replays exactly what it pinned (D1)."""
+    S8 (ADR 0020 §4/§5): knowledge references that no longer resolve —
+    the delete route refuses while the auto-inject binding references a
+    dataset, but a `retriever__*` tool binding names its dataset in
+    config, OUTSIDE that guard, so its dataset can go missing under an
+    old snapshot. Warnings, never failures: versions are immutable, a
+    stale pin still replays exactly what it pinned (D1)."""
     lints: list[str] = []
+    tenant_id = auth.principal.tenant_id
+    knowledge_binding = definition.knowledge
+    if knowledge_binding is not None:
+        for dataset_id in knowledge_binding.datasets:
+            dataset = await knowledge.get_dataset(dataset_id, tenant_id=tenant_id)
+            if dataset is None:
+                lints.append(
+                    f"knowledge binding references dataset {dataset_id!r}, which "
+                    "no longer exists in this tenant"
+                )
+    for tool_binding in definition.enabled_tools():
+        if not is_retriever_binding(tool_binding.name):
+            continue
+        pinned_id = tool_binding.config.get("dataset_id")
+        if not isinstance(pinned_id, str) or not pinned_id:
+            lints.append(f"tool {tool_binding.name!r} carries no dataset_id in its config")
+            continue
+        dataset = await knowledge.get_dataset(pinned_id, tenant_id=tenant_id)
+        if dataset is None:
+            lints.append(
+                f"tool {tool_binding.name!r} pins dataset {pinned_id!r}, which no "
+                "longer exists in this tenant"
+            )
     for binding in _family_bindings(definition):
         name = binding.name
         target_id = binding.config.get("agent_id")
@@ -224,6 +258,62 @@ def _definition_from_create(req: AgentUpsertRequest, agent_id: str) -> AgentDefi
     return AgentDefinition(id=agent_id, **payload)
 
 
+async def _validate_knowledge(
+    container: AppContainer, auth: AuthContext, definition: AgentDefinition
+) -> None:
+    """S8 (ADR 0020 §4/§5, D66/D67): publish-time 422s so an unrunnable
+    snapshot never publishes — a knowledge binding naming a dataset
+    missing or foreign to this tenant (D29: the same read), a binding
+    mixing embedding setups (one query embedding must serve every bound
+    dataset — provider/model/base_url/dimension, credential excluded),
+    and `retriever__*` bindings whose config carries no resolvable
+    dataset_id."""
+    knowledge = container.knowledge
+    tenant_id = auth.principal.tenant_id
+    binding = definition.knowledge
+    if binding is not None:
+        first_signature: tuple[str | None, ...] | None = None
+        first_dataset: str | None = None
+        for dataset_id in binding.datasets:
+            dataset = await knowledge.get_dataset(dataset_id, tenant_id=tenant_id)
+            if dataset is None:
+                raise ApiError(
+                    422,
+                    "validation",
+                    f"knowledge binding references dataset {dataset_id!r}, which "
+                    "does not exist in this tenant",
+                )
+            signature = embedder_signature(dataset.embedding_config)
+            if first_signature is not None and signature != first_signature:
+                raise ApiError(
+                    422,
+                    "validation",
+                    f"knowledge binding mixes embedding setups: dataset "
+                    f"{first_dataset!r} and {dataset_id!r} differ in "
+                    "provider/model/base_url/dimension",
+                )
+            first_signature, first_dataset = signature, dataset_id
+    for tool_binding in definition.enabled_tools():
+        if not is_retriever_binding(tool_binding.name):
+            continue
+        pinned_id = tool_binding.config.get("dataset_id")
+        if not isinstance(pinned_id, str) or not pinned_id:
+            raise ApiError(
+                422,
+                "validation",
+                f"tool {tool_binding.name!r} carries no dataset_id in its config — "
+                "the retriever identity is the config's dataset_id, never the name",
+            )
+        dataset = await knowledge.get_dataset(pinned_id, tenant_id=tenant_id)
+        if dataset is None:
+            raise ApiError(
+                422,
+                "validation",
+                f"tool {tool_binding.name!r} pins dataset {pinned_id!r}, which "
+                "does not exist in this tenant",
+            )
+
+
 def _validate_strategy_type(container: AppContainer, strategy_type: str | None) -> None:
     """D36: `strategy.type` is a free string in the domain; the create
     boundary validates it against the *live* registry (plugins included) so
@@ -261,13 +351,14 @@ async def create_agent(
 ) -> AgentDetail:
     definition = _definition_from_create(req, agent_id=str(uuid4()))
     _validate_strategy_type(container, definition.strategy.type)
+    await _validate_knowledge(container, auth, definition)
     definition = await _pin_family_bindings(auth, definition.id, definition)
     await _ensure_acyclic(auth, definition)
     try:
         await auth.agents.create(definition)
     except IntegrityError:
         raise ApiError(409, "conflict", f"agent name {definition.name!r} already exists") from None
-    return await _detail(auth, definition)
+    return await _detail(auth, definition, container)
 
 
 @router.get("")
@@ -277,9 +368,13 @@ async def list_agents(limit: int = 50, offset: int = 0, auth: AuthContext = Auth
 
 
 @router.get("/{agent_id}")
-async def get_agent(agent_id: str, auth: AuthContext = AuthDep) -> AgentDetail:
+async def get_agent(
+    agent_id: str,
+    auth: AuthContext = AuthDep,
+    container: AppContainer = ContainerDep,
+) -> AgentDetail:
     definition = await _require_definition(auth, agent_id)
-    return await _detail(auth, definition)
+    return await _detail(auth, definition, container)
 
 
 @router.get("/{agent_id}/versions/{version}")
@@ -303,7 +398,7 @@ async def update_agent(
     definition = await _require_definition(auth, agent_id)
     payload = req.model_dump(exclude_unset=True)
     if not payload:
-        return await _detail(auth, definition)
+        return await _detail(auth, definition, container)
     _validate_strategy_type(container, req.strategy.type if req.strategy else None)
     # Rebuild through model_validate: model_dump deep-dumps nested models
     # (model/strategy/memory → dicts), and model_copy does not re-validate —
@@ -311,13 +406,14 @@ async def update_agent(
     updated = AgentDefinition.model_validate(
         {**definition.model_dump(), **payload, "updated_at": datetime.now(UTC)}
     )
+    await _validate_knowledge(container, auth, updated)
     updated = await _pin_family_bindings(auth, updated.id, updated)
     await _ensure_acyclic(auth, updated)
     try:
         version = await auth.agents.update_and_publish(updated)
     except IntegrityError:
         raise ApiError(409, "conflict", f"agent name {updated.name!r} already exists") from None
-    return await _detail(auth, version.snapshot)
+    return await _detail(auth, version.snapshot, container)
 
 
 @router.delete("/{agent_id}", status_code=204)
