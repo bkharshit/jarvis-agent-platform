@@ -897,6 +897,65 @@ the code.
   input, omit-empty discipline). gen-api regen + msw fixture flips in
   the same web commit, per the S11/S13 pattern.
 
+- **D71 (2026-09-24, S7 planning) — Spans cross the runtime only as a
+  `SpanSink` port; the runtime imports no opentelemetry (ADR 0021 §1).**
+  `SpanRecord` (domain, pydantic: span/trace/parent ids, run_id, name,
+  kind, timings, status, attributes) + `SpanSink` Protocol
+  (`export(spans)`); instrumentation wraps existing seams, never the
+  strategies. Instrumenting via `opentelemetry-api` directly was
+  REJECTED: a third-party API on the orchestrator's critical path,
+  tracer global state in unit tests, ProxyTracer no-op semantics we
+  don't control. The real SDK does the wire work at the adapter edge.
+- **D72 (2026-09-24, S7 planning) — Postgres persistence is ALWAYS
+  on; OTLP export is additive (ADR 0021 §1/§5).** `SqlSpanRepo`
+  implements the same `SpanSink` port and is always installed — the
+  Observability UI reads the spans table and works with zero exporter
+  config. `JARVIS_OTEL_*` gates the real-SDK exporter
+  (TracerProvider + BatchSpanProcessor + OTLPSpanExporter HTTP),
+  default off; `JARVIS_SPANS_ENABLED` is the kill-switch (default
+  true); `otel_headers_env` names an env var (the D18 secrets
+  pattern). The container fans records out to both sinks.
+- **D73 (2026-09-24, S7 planning) — The OTel trace_id IS the run's
+  trace_id (ADR 0021 §2).** `uuid4().hex` is 32 hex = a valid OTel
+  trace_id verbatim; children and handoff successors already copy the
+  parent's trace_id, so multi-agent conversations are one OTel trace
+  with zero new plumbing. span_id minted per span; cross-process
+  parentage rides `parent_run_id` attributes (the D57 pattern), not
+  OTel parent links (v1).
+- **D74 (2026-09-24, S7 planning) — Five span kinds at seams that
+  already exist; instrumentation is failure-isolated (ADR 0021 §3/§4).**
+  `run.segment` / `iteration` / `llm.call` (TracingModelClient — the
+  TracedModelClient pattern, covers plugins) / `tool.call` /
+  `knowledge.retrieve`; declined tool calls get NO span (they never
+  executed — the S14 no-tool-row fact); event-cursor attributes tie
+  spans to replay positions. Buffered recorder flushes at iteration /
+  pause / terminal in a finally; sink exceptions are logged and
+  swallowed (D5 transposed — observability never touches a run's
+  outcome). Spans are written on END only.
+- **D75 (2026-09-24, S7 planning) — Settings and deps (ADR 0021 §5).**
+  `spans_enabled=true`, `otel_export_enabled=false`,
+  `otel_endpoint=http://localhost:4318/v1/traces`,
+  `otel_service_name=jarvis`, `otel_headers_env=""`;
+  `opentelemetry-sdk` + `opentelemetry-exporter-otlp-proto-http` join
+  the regular dependencies, lazily imported in the adapter.
+- **D76 (2026-09-24, S7 planning) — W3C traceparent: one hop in, one
+  hop out (ADR 0021 §6).** Webhook ingest parses `traceparent` (any
+  version, valid nonzero 32-hex trace id) and passes it to
+  `fire(trace_id=...)` — the fired run joins the caller's trace;
+  absent/invalid mints fresh as today. `ToolContext` gains additive
+  `trace_id: str = ""`; `HttpGetTool` sends `traceparent` outbound
+  (context propagation, no client spans in v1).
+- **D77 (2026-09-24, S7 planning) — Traces API + the Observability
+  section activate (ADR 0021 §7/§8).** Migration `0015_spans` (loose
+  run_id, no FK — D57; indexes trace_id / run_id / tenant+started_at);
+  `GET /v1/traces` (tenant-scoped summaries by trace_id) +
+  `GET /v1/traces/{trace_id}` (spans by started_at); capabilities
+  `observability` flips WITH the routes in the SAME commit (the S4
+  lesson), detail `{otel_export, service_name}` from Settings; web
+  `/observability` (trace list) + `/observability/:traceId` (span
+  waterfall) replace the placeholder, msw fixtures + gen-api regen in
+  the same web commit.
+
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 
 Redis/queues · plugins & marketplace · multi-tenancy/auth · RAG · workflow

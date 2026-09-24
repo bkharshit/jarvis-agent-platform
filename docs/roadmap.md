@@ -332,6 +332,38 @@ stripped at save (Dify lessons, `docs/reference/dify-map.md`).
 
 ## S7 — OTel tracing
 
+> **Planning committed 2026-09-24** — `docs/adr/0021-otel-tracing.md`
+> (D71–D77 in decisions.md), commit sequence in
+> `docs/implementation-plan-s7.md`. No S7 code exists. Scope
+> confirmed by Harshit 2026-09-24: the REAL OpenTelemetry SDK with an
+> OTLP exporter behind `JARVIS_OTEL_*` settings, off by default; spans
+> ALWAYS persisted in Postgres behind a `SpanSink` port (the UI reads
+> the spans table, so Observability works with zero exporter config);
+> OTel trace_id == the run's persisted `trace_id` (children included —
+> one trace per multi-agent conversation); five span kinds at existing
+> runtime seams (segment/iteration/llm/tool/retrieve) with
+> event-cursor attributes; W3C `traceparent` one hop in (webhook
+> ingest → the fired run joins the caller's trace) and one hop out
+> (`http_get`). Key deltas from the sketch below, all verified against
+> code before writing:
+>
+> - **The runtime imports NO opentelemetry anything** — `SpanRecord`
+>   (domain) + `SpanSink` (port); the real SDK lives in the adapter
+>   (`observability/otel.py`), converting records to real SDK spans
+>   with explicit SpanContext. Instrumenting via `opentelemetry-api`
+>   directly was rejected (third-party API on the orchestrator's
+>   critical path, tracer global state in tests).
+> - **Postgres persistence is always on** (`JARVIS_SPANS_ENABLED`
+>   kill-switch, default true) — not exporter-conditional; OTLP is a
+>   pure opt-in.
+> - **Instrumentation is failure-isolated both ways** — inside the
+>   runtime's try (D5) AND a broken sink/exporter never changes a
+>   run's outcome (flush in a finally, errors logged and swallowed);
+>   spans are written on END only, byte-identical runtime when the
+>   sink is None (golden gates).
+> - **Declined tool calls get NO span** — they never executed (the S14
+>   no-tool-execution-row fact).
+
 **Goal:** distributed traces for runs.
 
 **Rides on:** `trace_id` is already generated, plumbed, and persisted on
