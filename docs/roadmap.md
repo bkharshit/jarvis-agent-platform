@@ -450,6 +450,13 @@ binding in the agent editor.
 
 ## S9 — Small hardening items (grab-bag, any time)
 
+**SHIPPED (2026-09-24):** parallel tool calls (`AgentDefinition.parallel_tool_calls`
+behind `ModelCapabilities.parallel_tool_calls`, D78 — sequential default,
+deterministic ordering, no mid-flight sibling cancellation), the template
+sandbox (jinja2 never adopted; the closed regex substitutor is the sandbox,
+D79), the Redis-bus deferral (D80), and the Docker-free integration path
+documented in the README (the conftest self-bootstraps `jarvis_test`).
+
 | Item | Seam | Note |
 | --- | --- | --- |
 | Parallel tool calls | capability flag exists on the model layer | runtime executes sequentially today; flip per-agent |

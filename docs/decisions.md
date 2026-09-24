@@ -986,6 +986,17 @@ the code.
   if jinja2 is ever adopted for real templating, it must be a
   `SandboxedEnvironment`, and this test class is the gate that decides.
 
+- **D80 (2026-09-24, S9) — The Redis event bus stays deferred.** The
+  roadmap's own condition ("only if S1's Postgres fan-out proves
+  insufficient") never fired: S1's queue-backed runs and the Postgres
+  event log serve the multi-process shape, `Last-Event-ID` resume
+  survives restarts, and no deployment on the roadmap needs higher
+  fan-out throughput than one Postgres. Revisit triggers: cross-process
+  SSE fan-out latency visibly degrading the console, or a multi-node
+  API deployment whose stream resume starts thrashing the DB. The seam
+  is unchanged — `ports/events.py` (`EventSink`/`EventStream`), so a
+  Redis adapter slots in without touching the runtime.
+
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 
 Redis/queues · plugins & marketplace · multi-tenancy/auth · RAG · workflow

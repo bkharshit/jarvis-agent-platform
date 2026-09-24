@@ -575,8 +575,13 @@ make typecheck     # mypy src
 Integration tests use a dedicated `jarvis_test` database (created and
 migrated by the test session itself) and are marked `db` (deselected by
 default). Without Docker, run a local Postgres with a `jarvis`/`jarvis`
-role and `CREATE DATABASE jarvis_test`, then
-`uv run pytest tests/integration -m db`.
+role (the conftest self-bootstraps `jarvis_test` over
+`postgresql://jarvis:jarvis@localhost:5432/jarvis` — no manual
+CREATE DATABASE), then:
+
+```bash
+uv run pytest tests/integration -m db        # S9: the no-Docker path is the tested one
+```
 
 ## Layout
 
