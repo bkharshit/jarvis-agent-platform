@@ -31,6 +31,7 @@ from jarvis.domain.knowledge import (
 )
 from jarvis.domain.mcp import MCP_NAME_SLUG, McpServer, McpServerConfig
 from jarvis.domain.message import Message
+from jarvis.domain.spans import SpanRecord
 from jarvis.domain.tools import ToolDescriptor, ToolResult
 from jarvis.domain.trigger import Trigger, TriggerConfig, TriggerKind, TriggerVersionPolicy
 from jarvis.domain.workflow import WorkflowDefinition, WorkflowEdge, WorkflowNode
@@ -167,6 +168,31 @@ class LlmTraceEntry(_Model):
 class LlmTraceResponse(_Model):
     run_id: str
     entries: list[LlmTraceEntry]
+
+
+class TraceSummary(_Model):
+    """One grouped trace for GET /v1/traces (S7, D77) — the spans table's
+    group view, newest first, spans ordered chronologically in the detail."""
+
+    trace_id: str
+    run_ids: list[str]
+    span_count: int
+    statuses: list[str]
+    kinds: list[str]
+    started_at: datetime
+    ended_at: datetime
+
+
+class TraceList(_Model):
+    traces: list[TraceSummary]
+
+
+class TraceDetail(_Model):
+    """One trace's spans for GET /v1/traces/{trace_id} — the waterfall's
+    data (chronological; parentage rides parent_span_id)."""
+
+    trace_id: str
+    spans: list[SpanRecord]
 
 
 class MessageList(_Model):

@@ -49,7 +49,7 @@ _SECTION_FLAGS: dict[str, dict[str, Any]] = {
     },
     "knowledge": {"enabled": True, "summary": "Datasets, documents, and retrieval"},
     "evaluations": {"enabled": True, "summary": "Datasets, runs, and scores"},
-    "observability": {"enabled": False, "stage": "S7", "summary": "Traces and spans"},
+    "observability": {"enabled": True, "summary": "Traces and spans"},
     "plugins": {"enabled": True, "summary": "Strategy plugins and discovery"},
     "triggers": {"enabled": True, "summary": "Cron, webhook, and event rules"},
     "settings": {"enabled": True, "summary": "Auth, tenants, API keys, BYOK credentials"},
@@ -212,6 +212,15 @@ async def build_capabilities(
             detail = await _knowledge_detail(container, tenant_id=tenant_id)
         elif key == "triggers":
             detail = await _triggers_detail(container, tenant_id=tenant_id)
+        elif key == "observability":
+            # S7 (ADR 0021 §7, D77): live with the routes in the SAME commit
+            # (the S4 lesson). `spans` reports the persistence kill-switch —
+            # False means the routes 503 honestly, never fake an empty list.
+            detail = {
+                "spans": container.spans is not None,
+                "otel_export": container.settings.otel_export_enabled,
+                "service_name": container.settings.otel_service_name,
+            }
         elif key == "models":
             detail = await _model_providers_detail(container)
         elif key == "plugins":

@@ -40,6 +40,7 @@ def _stub_container(
     triggers: list = None,  # type: ignore[assignment]
     knowledge_datasets: list = None,  # type: ignore[assignment]
     knowledge_documents: list = None,  # type: ignore[assignment]
+    spans: object | None = None,  # the S7 read side; None = persistence off
 ) -> SimpleNamespace:
     caps = capabilities or ModelCapabilities()
 
@@ -84,6 +85,7 @@ def _stub_container(
             list_datasets=_list_knowledge_datasets,
             list_documents=_list_knowledge_documents,
         ),
+        spans=spans if spans is not None else SimpleNamespace(),
     )
 
 
@@ -214,6 +216,19 @@ async def test_plugins_section_enabled_with_derived_detail() -> None:
     assert section.detail["failed"][0]["name"] == "broken"
     assert section.detail["missing"] == ["ghost"]
     assert section.detail["allowlist"] == ["plan_execute", "ghost", "broken"]
+
+
+async def test_observability_section_enabled_with_derived_detail() -> None:
+    # S7 (ADR 0021 §7, D77): live with the routes in the same commit — the
+    # detail carries the persistence kill-switch and the OTel export facts.
+    response = await build_capabilities(
+        _stub_container(strategies=[], builtins=[], spans=SimpleNamespace())
+    )
+    section = response.sections["observability"]
+    assert section.enabled is True
+    assert section.stage is None
+    assert section.detail is not None
+    assert section.detail == {"spans": True, "otel_export": False, "service_name": "jarvis"}
 
 
 async def test_knowledge_section_enabled_with_derived_detail() -> None:
