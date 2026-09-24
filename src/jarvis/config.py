@@ -77,6 +77,18 @@ class Settings(BaseSettings):
     # The embed call's HTTP budget (ingest + query — both seconds-scale).
     knowledge_embed_timeout: float = 30.0
 
+    # --- observability (S7, ADR 0021) -------------------------------------
+    # Postgres span persistence is ALWAYS on (D72) — this is the kill-switch.
+    spans_enabled: bool = True
+    # OTLP export is additive and OFF by default (D75): the same finished
+    # spans also go to a collector over the SDK's OTLP/HTTP exporter.
+    otel_export_enabled: bool = False
+    otel_endpoint: str = "http://localhost:4318/v1/traces"
+    otel_service_name: str = "jarvis"
+    # Name of the env var holding the exporter's headers, SDK format
+    # ("api-key=secret,env=prod"); the values never enter config (D18).
+    otel_headers_env: str = ""
+
     # --- MCP tool providers (S4, ADR 0012) --------------------------------
     # Per-server connect + tools/list budget. Per-CALL timeouts ride binding
     # config through the ToolRuntime envelope — this is the one new knob.

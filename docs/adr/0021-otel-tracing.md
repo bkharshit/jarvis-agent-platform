@@ -59,10 +59,12 @@ all the wire work at the edge:
 
 - `observability/otel.py` converts `SpanRecord` → a real SDK span
   (explicit `SpanContext`: trace_id = the run's trace_id, span_id =
-  the record's), under a `TracerProvider` carrying
-  `Resource(service.name)` and a `BatchSpanProcessor(OTLPSpanExporter)`
-  (OTLP HTTP/protobuf). The SDK owns batching, retries, and OTLP
-  encoding.
+  the record's), under a `Resource(service.name)`, and hands the batch
+  straight to the SDK's `OTLPSpanExporter` (OTLP HTTP/protobuf). No
+  `TracerProvider`/`BatchSpanProcessor` is needed: spans arrive already
+  FINISHED (D74), and the recorder's own flush cadence IS the batching —
+  inserting the processor would only re-batch behind it. The SDK owns
+  retries, and OTLP encoding.
 - `SqlSpanRepo` implements the SAME port and is ALWAYS installed —
   spans land in Postgres whether or not any exporter is configured.
   The container fans a run's records out to both.

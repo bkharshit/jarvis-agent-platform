@@ -26,6 +26,8 @@ dependencies = [
     "cryptography>=44.0",
     "mcp>=2.0,<3",
     "croniter>=2.0",
+    "opentelemetry-sdk>=1.44.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.44.0",
 ]
 
 [project.optional-dependencies]

@@ -22,6 +22,7 @@ from jarvis.events.pg_notify import PgEventStream, PgNotifier
 from jarvis.models.credentials import DefaultCredentialResolver
 from jarvis.models.factory import DefaultModelProviderFactory
 from jarvis.models.stored import DatabaseStoredResolver
+from jarvis.observability.otel import OtelSpanSink
 from jarvis.persistence.repositories import (
     SqlAgentRepo,
     SqlAuthRepo,
@@ -32,9 +33,11 @@ from jarvis.persistence.repositories import (
     SqlMcpServerRepo,
     SqlRunQueue,
     SqlScratchpadRepo,
+    SqlSpanRepo,
     SqlTriggerRepo,
     SqlWorkflowRepo,
 )
+from jarvis.ports.spans import FanoutSpanSink, SpanSink
 from jarvis.runtime.agent_runtime import AgentRuntime
 from jarvis.runtime.knowledge.retrieval import KnowledgeRetrieval
 from jarvis.runtime.limits import RunLimits
@@ -71,6 +74,9 @@ class AppContainer:
     triggers: SqlTriggerRepo
     queue: SqlRunQueue
     auth: SqlAuthRepo
+    # S7 (ADR 0021): the spans repo is the read side for the traces routes;
+    # None exactly when spans are disabled — the routes then stay off.
+    spans: SqlSpanRepo | None
     notifier: PgNotifier
     streams: PgEventStream
     bus: InProcessEventBus
@@ -90,6 +96,7 @@ class AppContainer:
     firing: TriggerFireService
     trigger_events: TriggerService
     scheduler: TriggerScheduler
+    otel_span_sink: OtelSpanSink | None = field(default=None, repr=False)
     _worker_task: asyncio.Task[None] | None = field(default=None, repr=False)
     _scheduler_task: asyncio.Task[None] | None = field(default=None, repr=False)
 
@@ -111,6 +118,20 @@ class AppContainer:
         triggers = SqlTriggerRepo(sessionmaker)
         queue = SqlRunQueue(sessionmaker)
         auth = SqlAuthRepo(sessionmaker)
+        # S7 (ADR 0021 §5, D72): Postgres span persistence is ALWAYS on
+        # (kill-switch spans_enabled) — SqlSpanRepo is both a SpanSink
+        # (write) and the traces read side; OTLP export fans out beside it
+        # behind JARVIS_OTEL_* (D75). Disabled means fully off: no sink, no
+        # read side, the routes then report unavailable.
+        spans: SqlSpanRepo | None = SqlSpanRepo(sessionmaker) if settings.spans_enabled else None
+        span_sink: SpanSink | None = None
+        otel_sink: OtelSpanSink | None = None
+        if spans is not None:
+            span_sinks: list[SpanSink] = [spans]
+            otel_sink = OtelSpanSink.from_settings(settings)
+            if otel_sink is not None:
+                span_sinks.append(otel_sink)
+            span_sink = FanoutSpanSink(*span_sinks)
         notifier = PgNotifier(settings.database_url)
         # One LISTEN connection; the repo stays the sole SQL owner for
         # execution_events — the stream only tails through it.
@@ -205,6 +226,7 @@ class AppContainer:
             knowledge_repo=knowledge,
             trace_llm=settings.llm_trace,
             trace_buffer=LlmTraceBuffer(),
+            span_sink=span_sink,
         )
         # S6 (ADR 0015 §5): the sibling executor shares the agent runtime's
         # loop (its runner), bus, repos, limits and MCP provider.
@@ -266,6 +288,7 @@ class AppContainer:
             triggers=triggers,
             queue=queue,
             auth=auth,
+            spans=spans,
             notifier=notifier,
             streams=streams,
             bus=bus,
@@ -285,6 +308,7 @@ class AppContainer:
             firing=firing,
             trigger_events=trigger_events,
             scheduler=scheduler,
+            otel_span_sink=otel_sink,
         )
 
     # --- embedded worker lifecycle (S1, ADR 0008) ------------------------------
@@ -326,6 +350,8 @@ class AppContainer:
     async def aclose(self) -> None:
         await self.stop_worker()
         await self.stop_scheduler()
+        if self.otel_span_sink is not None:
+            self.otel_span_sink.aclose()
         await self.streams.aclose()
         await self.notifier.aclose()
         await self.engine.dispose()

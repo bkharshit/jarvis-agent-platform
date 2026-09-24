@@ -910,9 +910,11 @@ the code.
   on; OTLP export is additive (ADR 0021 §1/§5).** `SqlSpanRepo`
   implements the same `SpanSink` port and is always installed — the
   Observability UI reads the spans table and works with zero exporter
-  config. `JARVIS_OTEL_*` gates the real-SDK exporter
-  (TracerProvider + BatchSpanProcessor + OTLPSpanExporter HTTP),
-  default off; `JARVIS_SPANS_ENABLED` is the kill-switch (default
+  config. `JARVIS_OTEL_*` gates the real-SDK exporter (OTLPSpanExporter
+  HTTP under `Resource(service.name)` — no TracerProvider/
+  BatchSpanProcessor needed since spans arrive already FINISHED and the
+  recorder's flush cadence IS the batching), default off;
+  `JARVIS_SPANS_ENABLED` is the kill-switch (default
   true); `otel_headers_env` names an env var (the D18 secrets
   pattern). The container fans records out to both sinks.
 - **D73 (2026-09-24, S7 planning) — The OTel trace_id IS the run's
