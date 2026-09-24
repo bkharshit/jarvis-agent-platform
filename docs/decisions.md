@@ -973,6 +973,19 @@ the code.
   completed frames replay in call order. Sequential remains the default
   and shares the same helpers.
 
+- **D79 (2026-09-24, S9) — User-supplied prompt templates render ONLY
+  through the closed regex substitutor; jinja2 stays un-adopted.** The
+  roadmap's "Jinja2 sandboxing" item assumed a template engine behind
+  user-editable `system_prompt` / `user_prompt_template`. The codebase
+  never adopted jinja2: `PromptEngine.render` is a closed
+  `\{\{(\w+)\}\}` substitution — no eval, no Environment, no attribute
+  access (dots), no filters (pipes), no blocks (`{%`), no whitespace
+  forms (`{{ x }}`), and substituted values are str()'d, never
+  re-rendered. Hostile template syntax passes through inertly —
+  regression-gated in test_prompt_engine's TestTemplateSandbox. Rule:
+  if jinja2 is ever adopted for real templating, it must be a
+  `SandboxedEnvironment`, and this test class is the gate that decides.
+
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 
 Redis/queues · plugins & marketplace · multi-tenancy/auth · RAG · workflow

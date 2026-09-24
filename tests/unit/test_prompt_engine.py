@@ -239,3 +239,62 @@ class TestMemorySummary:
             )
         )
         assert messages[0].content == "Summary of the earlier conversation:\nprior talk"
+
+
+class TestTemplateSandbox:
+    """S9 (D79): user-supplied templates render ONLY through the closed
+    `{{var}}` regex substitutor — no eval, no jinja Environment, no
+    attribute access, no filters, no blocks. Hostile template syntax
+    passes through inertly; if jinja2 is ever adopted for real templating,
+    it must be a SandboxedEnvironment (this class is the regression gate)."""
+
+    def test_jinja_block_syntax_never_executes(self):
+        engine = PromptEngine()
+        template = "{% for x in range(10) %}{{input}}{% endfor %}"
+        agent = _agent(user_prompt_template=template)
+        messages = engine.build(PromptContext(agent=agent, input="hi"))
+        # A jinja Environment would render "hi" ten times; the closed
+        # substitutor leaves the block markers literal (they are not var
+        # tokens) — a loop never executes. The bare var token still
+        # substitutes, exactly once.
+        assert messages[-1].content == "{% for x in range(10) %}hi{% endfor %}"
+
+    def test_attribute_access_stays_literal(self):
+        engine = PromptEngine()
+        template = "{{input.__class__.__mro__}}"
+        messages = engine.build(
+            PromptContext(agent=_agent(user_prompt_template=template), input="hi")
+        )
+        assert messages[-1].content == template
+
+    def test_filters_and_pipes_stay_literal(self):
+        engine = PromptEngine()
+        template = "{{input|upper}}{{input.__globals__}}"
+        messages = engine.build(
+            PromptContext(agent=_agent(user_prompt_template=template), input="hi")
+        )
+        assert messages[-1].content == template
+
+    def test_whitespace_and_underscore_vars_do_not_match(self):
+        engine = PromptEngine()
+        template = "{{ input }}{{config.__init__.__globals__}}"
+        messages = engine.build(
+            PromptContext(agent=_agent(user_prompt_template=template), input="hi")
+        )
+        assert messages[-1].content == template
+
+    def test_substituted_values_do_not_recurse(self):
+        engine = PromptEngine()
+        agent = _agent(user_prompt_template="value: {{a}}")
+        messages = engine.build(PromptContext(agent=agent, input="x", variables={"a": "{{input}}"}))
+        # The substituted VALUE is str()'d, never re-rendered — a value that
+        # looks like a template can't escalate into a second pass.
+        assert messages[-1].content == "value: {{input}}"
+
+    def test_known_vars_still_substitute_alongside_hostile_syntax(self):
+        engine = PromptEngine()
+        template = "{% raw %}{{input}}{% endraw %} plain {{input}}"
+        messages = engine.build(
+            PromptContext(agent=_agent(user_prompt_template=template), input="hi")
+        )
+        assert messages[-1].content == "{% raw %}hi{% endraw %} plain hi"
