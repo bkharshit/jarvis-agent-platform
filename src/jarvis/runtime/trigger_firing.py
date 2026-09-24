@@ -48,6 +48,18 @@ class TriggerVersionResolver(Protocol):
     async def get_version_by_id(self, version_id: str) -> AgentVersion | None: ...
 
 
+def _valid_trace_id(trace_id: str | None) -> bool:
+    """D76: a caller-supplied trace id must be 32 hex, nonzero — anything
+    else falls back to a fresh mint (never an ingest error)."""
+    if not trace_id or len(trace_id) != 32:
+        return False
+    try:
+        int(trace_id, 16)
+    except ValueError:
+        return False
+    return any(c != "0" for c in trace_id)
+
+
 def _default_input(trigger: Trigger, values: dict[str, Any]) -> str:
     """The honest per-kind default for an EMPTY template (ADR 0019 §2)."""
     if trigger.kind == "cron":
@@ -82,14 +94,24 @@ class TriggerFireService:
         self._run_timeout_seconds = run_timeout_seconds
 
     async def fire(
-        self, trigger: Trigger, *, context_vars: dict[str, Any], incoming_depth: int = 0
+        self,
+        trigger: Trigger,
+        *,
+        context_vars: dict[str, Any],
+        incoming_depth: int = 0,
+        trace_id: str | None = None,
     ) -> str:
         """Resolve the target version, render the input, enqueue the run,
         and return its pre-generated run_id. `incoming_depth` is 0 for
         cron/webhook (a schedule/webhook is a root) and the finalized
         run's own depth for event triggers — the fired run carries
-        `incoming + 1` (§6's guard reads it)."""
+        `incoming + 1` (§6's guard reads it). `trace_id` is an optional
+        caller-supplied 32-hex trace id (D76: a webhook's W3C
+        `traceparent` joins the producer's trace) — invalid values are
+        ignored, never an error."""
         version = await self._resolve_version(trigger)
+        if not _valid_trace_id(trace_id):
+            trace_id = None
         now = datetime.now(UTC)
         values: dict[str, Any] = {
             "trigger_id": trigger.id,
@@ -109,7 +131,7 @@ class TriggerFireService:
             tenant_id=trigger.tenant_id,
             principal=Principal(tenant_id=trigger.tenant_id, mode="system"),
             session_id=None,
-            trace_id=uuid4().hex,  # D73: 32-hex = a valid OTel trace id
+            trace_id=trace_id or uuid4().hex,  # D73: 32-hex = a valid OTel trace id
             deadline=deadline_from_now(self._run_timeout_seconds),
             metadata={
                 "trigger": {

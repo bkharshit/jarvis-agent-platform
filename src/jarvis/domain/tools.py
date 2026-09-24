@@ -51,6 +51,7 @@ class ToolContext:
         config: dict[str, Any] | None = None,
         cancel: CancellationToken | None = None,
         result_metadata: dict[str, Any] | None = None,
+        trace_id: str | None = None,
     ) -> None:
         self.run_id = run_id
         self.agent_id = agent_id
@@ -68,6 +69,9 @@ class ToolContext:
         # them into the successful ToolResult.metadata (persisted in
         # tool_executions; the orchestrator folds `usage` into ctx.usage).
         self.result_metadata: dict[str, Any] = result_metadata or {}
+        # S7 (D76): the run's 32-hex trace_id — tools that make outbound
+        # HTTP calls (http_get) forward it as a W3C `traceparent`.
+        self.trace_id = trace_id
 
     def raise_if_cancelled(self) -> None:
         self.cancel.raise_if_triggered()

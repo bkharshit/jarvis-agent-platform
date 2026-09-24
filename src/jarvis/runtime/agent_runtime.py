@@ -772,6 +772,7 @@ class AgentRuntime:
                             config=dict(binding.config) if binding else {},
                             cancel=ctx.cancel,
                             tenant_id=ctx.tenant_id,
+                            trace_id=ctx.trace_id,
                         ),
                     )
                 except Exception as exc:

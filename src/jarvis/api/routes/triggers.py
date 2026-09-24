@@ -274,6 +274,26 @@ def _hmac_secret(trigger: Trigger, container: AppContainer) -> str:
         raise ApiError(401, "invalid_signature", "invalid signature") from None
 
 
+def _traceparent_trace_id(header: str | None) -> str | None:
+    """The W3C `traceparent`'s trace id (D76): `00-<32hex>-<16hex>-<flags>`.
+    A malformed header NEVER fails ingest — it just mints a fresh trace."""
+    if not header:
+        return None
+    parts = header.strip().split("-")
+    if len(parts) != 4:
+        return None
+    candidate = parts[1].lower()
+    if len(candidate) != 32:
+        return None
+    try:
+        int(candidate, 16)
+    except ValueError:
+        return None
+    if all(c == "0" for c in candidate):
+        return None
+    return candidate
+
+
 @router.post("/webhook/{trigger_id}", status_code=202)
 async def webhook_ingest(
     trigger_id: str, request: Request, container: AppContainer = ContainerDep
@@ -305,8 +325,13 @@ async def webhook_ingest(
         raise ApiError(401, "invalid_signature", "invalid signature")
     # UTF-8 with replacement: the payload is model input, never a protocol.
     payload = body.decode("utf-8", errors="replace")
+    # S7 (D76): a producer's `traceparent` joins the fired run to the
+    # caller's trace; anything else mints a fresh one (never an error).
+    inbound_trace = _traceparent_trace_id(request.headers.get("traceparent"))
     try:
-        run_id = await container.firing.fire(trigger, context_vars={"payload": payload})
+        run_id = await container.firing.fire(
+            trigger, context_vars={"payload": payload}, trace_id=inbound_trace
+        )
     except TriggerFireError as exc:
         # The caller is an authenticated-by-HMAC producer; an unfireable
         # target is honest to name, but it is a server-side config fault —

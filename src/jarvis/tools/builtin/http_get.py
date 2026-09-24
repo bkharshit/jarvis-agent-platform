@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 from urllib.parse import urlparse
 
@@ -37,8 +38,14 @@ class HttpGetTool(BaseTool):
         allowed = self.config.get("allowed_hosts") or context.config.get("allowed_hosts") or []
         if "*" not in allowed and parsed.hostname not in allowed:
             raise ValueError(f"host {parsed.hostname!r} is not in the allow-list {list(allowed)}")
+        # S7 (D76): forward the run's trace when the target may care — a W3C
+        # `traceparent` (version 00, sampled flag 01). The span id is minted
+        # here: the outbound request is its own hop in the caller's system.
+        headers: dict[str, str] | None = None
+        if context.trace_id and len(context.trace_id) == 32:
+            headers = {"traceparent": f"00-{context.trace_id}-{uuid.uuid4().hex[:16]}-01"}
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            response = await client.get(url)
+            response = await client.get(url, headers=headers)
         body = response.text
         limit = int(self.config.get("max_chars", 20_000))
         if len(body) > limit:
