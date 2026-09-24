@@ -14,6 +14,10 @@ import {
 import type { TriggerOut } from "@/api/queries/triggers";
 import { useWhoami } from "@/api/queries/auth";
 import { SectionGate } from "@/capabilities/SectionGate";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Textarea } from "@/components/ui/Textarea";
 import { toast } from "@/stores/toast";
 
 // Triggers (S13, ADR 0019 §6, D62): cron / webhook / event rules that fire
@@ -24,13 +28,13 @@ import { toast } from "@/stores/toast";
 const KINDS = ["cron", "webhook", "event"] as const;
 type Kind = (typeof KINDS)[number];
 
-const inputClass =
-  "w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm text-neutral-100";
+const selectClass =
+  "mt-1 w-full cursor-pointer rounded-md border border-neutral-800 bg-neutral-900/70 px-3 py-1.5 text-sm text-neutral-100 transition-colors focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
 
 const kindBadge: Record<Kind, string> = {
-  cron: "bg-sky-950 text-sky-300",
-  webhook: "bg-amber-950 text-amber-300",
-  event: "bg-violet-950 text-violet-300",
+  cron: "border border-sky-500/20 bg-sky-500/10 text-sky-300",
+  webhook: "border border-amber-500/20 bg-amber-500/10 text-amber-300",
+  event: "border border-violet-500/20 bg-violet-500/10 text-violet-300",
 };
 
 /** Display-once state for a secret plaintext (create / rotate). */
@@ -39,7 +43,7 @@ function SecretOnce({ secret, title }: { secret: string; title: string }) {
   if (dismissed) return null;
   return (
     <div
-      className="mt-2 rounded border border-amber-800 bg-amber-950/40 p-3 text-sm"
+      className="mt-2 rounded-xl border border-amber-500/30 bg-amber-950/40 p-3 text-sm shadow-lg backdrop-blur"
       data-testid="secret-once"
     >
       <p className="text-xs font-medium text-amber-300">{title}</p>
@@ -47,13 +51,14 @@ function SecretOnce({ secret, title }: { secret: string; title: string }) {
       <p className="mt-1 text-xs text-amber-300/80">
         This is the only time it is shown — copy it now.
       </p>
-      <button
-        type="button"
+      <Button
+        variant="secondary"
+        size="sm"
+        className="mt-2"
         onClick={() => setDismissed(true)}
-        className="mt-2 cursor-pointer rounded border border-neutral-700 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-900"
       >
         Dismiss
-      </button>
+      </Button>
     </div>
   );
 }
@@ -71,7 +76,7 @@ function WebhookUrl({ trigger }: { trigger: TriggerOut }) {
           void navigator.clipboard.writeText(url);
           setCopied(true);
         }}
-        className="cursor-pointer text-neutral-500 underline hover:text-neutral-300"
+        className="cursor-pointer text-neutral-500 underline underline-offset-2 hover:text-neutral-300"
       >
         {copied ? "copied" : "copy"}
       </button>
@@ -107,19 +112,26 @@ function TriggerRow({ trigger, canManage }: { trigger: TriggerOut; canManage: bo
     );
 
   return (
-    <li className="rounded border border-neutral-800 bg-neutral-900 p-4" data-testid="trigger-row">
+    <li
+      className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-4 shadow-sm transition-all hover:border-neutral-700/80"
+      data-testid="trigger-row"
+    >
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <h3 className="text-sm font-medium text-neutral-100">{trigger.name}</h3>
           <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-neutral-400">
-            <span className={`rounded px-1.5 py-0.5 font-mono ${kindBadge[trigger.kind]}`}>
+            <span
+              className={`inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[11px] font-medium ${kindBadge[trigger.kind]}`}
+            >
               {trigger.kind}
             </span>
             <span className="font-mono">{trigger.agent_id.slice(0, 8)}…</span>
             <span className="font-mono">{trigger.version_policy}</span>
-            <span className={trigger.enabled ? "text-green-400" : "text-neutral-500"}>
-              {trigger.enabled ? "enabled" : "disabled"}
-            </span>
+            {trigger.enabled ? (
+              <Badge variant="success" dot>enabled</Badge>
+            ) : (
+              <span className="text-neutral-500">disabled</span>
+            )}
           </p>
           {trigger.kind === "cron" && (
             <p className="mt-1 text-xs text-neutral-400">
@@ -156,8 +168,9 @@ function TriggerRow({ trigger, canManage }: { trigger: TriggerOut; canManage: bo
           </Link>
           {canManage && (
             <>
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="sm"
                 data-testid="fire-now"
                 disabled={fire.isPending}
                 onClick={() =>
@@ -166,13 +179,13 @@ function TriggerRow({ trigger, canManage }: { trigger: TriggerOut; canManage: bo
                     onError,
                   })
                 }
-                className="cursor-pointer text-neutral-400 hover:text-neutral-200 disabled:cursor-not-allowed disabled:text-neutral-600"
               >
                 Fire now
-              </button>
+              </Button>
               {trigger.kind === "webhook" && (
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="sm"
                   disabled={rotate.isPending}
                   onClick={() =>
                     rotate.mutate(trigger.id, {
@@ -180,20 +193,20 @@ function TriggerRow({ trigger, canManage }: { trigger: TriggerOut; canManage: bo
                       onError,
                     })
                   }
-                  className="cursor-pointer text-neutral-400 hover:text-neutral-200 disabled:cursor-not-allowed disabled:text-neutral-600"
                 >
                   Rotate secret
-                </button>
+                </Button>
               )}
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => patch(!trigger.enabled)}
-                className="cursor-pointer text-neutral-400 hover:text-neutral-200"
               >
                 {trigger.enabled ? "Disable" : "Enable"}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 disabled={remove.isPending}
                 onClick={() => {
                   // No-FK provenance (D57): past runs keep the trigger_id and
@@ -202,10 +215,10 @@ function TriggerRow({ trigger, canManage }: { trigger: TriggerOut; canManage: bo
                     return;
                   remove.mutate(trigger.id, { onError });
                 }}
-                className="cursor-pointer text-red-400 hover:text-red-300 disabled:cursor-not-allowed disabled:text-neutral-600"
+                className="text-red-400 hover:bg-rose-950/40 hover:text-red-300"
               >
                 Delete
-              </button>
+              </Button>
             </>
           )}
         </div>
@@ -271,31 +284,25 @@ function AddTriggerForm({
 
   if (!show) {
     return (
-      <button
-        type="button"
-        onClick={() => setShow(true)}
-        className="cursor-pointer rounded bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white"
-      >
-        Add trigger
-      </button>
+      <Button onClick={() => setShow(true)}>Add trigger</Button>
     );
   }
 
   return (
     <form
       onSubmit={submit}
-      className="mt-4 grid max-w-lg grid-cols-2 gap-3 rounded border border-neutral-800 bg-neutral-900 p-4"
+      className="mt-4 grid max-w-lg grid-cols-2 gap-3 rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-4 shadow-sm"
     >
       <label className="text-sm">
         <span className="text-neutral-400">Name</span>
-        <input value={name} onChange={(e) => setName(e.target.value)} className={`mt-1 ${inputClass}`} />
+        <Input value={name} onChange={(e) => setName(e.target.value)} className="mt-1" />
       </label>
       <label className="text-sm">
         <span className="text-neutral-400">Kind</span>
         <select
           value={kind}
           onChange={(e) => setKind(e.target.value as Kind)}
-          className={`mt-1 ${inputClass}`}
+          className={selectClass}
         >
           {KINDS.map((k) => (
             <option key={k} value={k}>
@@ -309,7 +316,7 @@ function AddTriggerForm({
         <select
           value={agentId}
           onChange={(e) => setAgentId(e.target.value)}
-          className={`mt-1 ${inputClass}`}
+          className={selectClass}
         >
           <option value="">— pick an agent —</option>
           {(agents ?? []).map((a) => (
@@ -324,7 +331,7 @@ function AddTriggerForm({
         <select
           value={versionPolicy}
           onChange={(e) => setVersionPolicy(e.target.value as "latest" | "pinned")}
-          className={`mt-1 ${inputClass}`}
+          className={selectClass}
         >
           <option value="latest">latest (follows republishes)</option>
           <option value="pinned">pinned (snapshot at save)</option>
@@ -333,11 +340,11 @@ function AddTriggerForm({
       {kind === "cron" && (
         <label className="text-sm">
           <span className="text-neutral-400">Cron schedule (UTC)</span>
-          <input
+          <Input
             value={schedule}
             onChange={(e) => setSchedule(e.target.value)}
             placeholder="0 3 * * *"
-            className={`mt-1 ${inputClass}`}
+            className="mt-1"
           />
         </label>
       )}
@@ -348,7 +355,7 @@ function AddTriggerForm({
             <select
               value={eventStatus}
               onChange={(e) => setEventStatus(e.target.value)}
-              className={`mt-1 ${inputClass}`}
+              className={selectClass}
             >
               {["any", "succeeded", "failed", "cancelled", "timed_out"].map((s) => (
                 <option key={s} value={s}>
@@ -359,11 +366,11 @@ function AddTriggerForm({
           </label>
           <label className="text-sm">
             <span className="text-neutral-400">Source agent (optional)</span>
-            <input
+            <Input
               value={eventSource}
               onChange={(e) => setEventSource(e.target.value)}
               placeholder="all agents"
-              className={`mt-1 ${inputClass}`}
+              className="mt-1"
             />
           </label>
         </>
@@ -376,27 +383,23 @@ function AddTriggerForm({
       )}
       <label className="col-span-2 text-sm">
         <span className="text-neutral-400">Input template (optional — {'{{now}}'}, {'{{payload}}'}, {'{{status}}'}, {'{{output}}'} vary by kind)</span>
-        <textarea
+        <Textarea
           value={inputTemplate}
           onChange={(e) => setInputTemplate(e.target.value)}
           rows={2}
-          className={`mt-1 ${inputClass}`}
+          className="mt-1"
         />
       </label>
-      <button
-        type="submit"
-        disabled={create.isPending}
-        className="cursor-pointer justify-self-start rounded bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:cursor-not-allowed disabled:text-neutral-500"
-      >
+      <Button type="submit" disabled={create.isPending} className="justify-self-start">
         {create.isPending ? "Creating…" : "Create trigger"}
-      </button>
-      <button
-        type="button"
+      </Button>
+      <Button
+        variant="secondary"
         onClick={() => setShow(false)}
-        className="cursor-pointer justify-self-start rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-950"
+        className="justify-self-start"
       >
         Cancel
-      </button>
+      </Button>
       {create.isError && (
         <p className="col-span-2 text-sm text-red-400" role="alert">
           {create.error.message}
@@ -431,7 +434,7 @@ function TriggersInner() {
       </div>
       <p className="mt-1 text-sm text-neutral-400">
         Rules that fire ordinary runs — a schedule (UTC cron), an authenticated
-        webhook, or another run's terminal status. Fired runs are ordinary
+        webhook, or another run&apos;s terminal status. Fired runs are ordinary
         executions and appear in Executions.
       </p>
 

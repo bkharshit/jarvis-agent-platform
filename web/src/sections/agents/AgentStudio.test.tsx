@@ -7,7 +7,7 @@ import { agentFixture, credentialFixture, envelope } from "@/test/handlers";
 import { server } from "@/test/msw";
 import { renderWithProviders, TEST_CAPABILITIES } from "@/test/render";
 
-import { AgentEditor } from "./AgentEditor";
+import { AgentStudio } from "./AgentStudio";
 
 type CapturedBody = Record<string, unknown>;
 
@@ -24,16 +24,16 @@ function capturePost() {
   return { state, capture };
 }
 
-describe("<AgentEditor/> creating", () => {
+describe("<AgentStudio/> creating", () => {
   it("prefills Model from the capabilities environment defaults (ADR 0007)", async () => {
-    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    renderWithProviders(<AgentStudio />, { initialEntries: ["/agents/new"] });
     const modelInput = await screen.findByLabelText("Model");
     await waitFor(() => expect(modelInput).toHaveValue("mock-agent"));
     expect(screen.getByLabelText("Provider")).toHaveValue("mock");
   });
 
   it("suggests the live model catalog in the Model datalist", async () => {
-    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    renderWithProviders(<AgentStudio />, { initialEntries: ["/agents/new"] });
     await screen.findByLabelText("Model");
     const datalist = await screen.findByRole("listbox", { hidden: true }, { timeout: 2000 });
     const options = within(datalist).getAllByRole("option", { hidden: true });
@@ -53,7 +53,7 @@ describe("<AgentEditor/> creating", () => {
       ),
     );
     const user = userEvent.setup();
-    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    renderWithProviders(<AgentStudio />, { initialEntries: ["/agents/new"] });
     const modelInput = await screen.findByLabelText("Model");
     expect(await screen.findByText(/Model listing unavailable \(connection refused\)/))
       .toBeInTheDocument();
@@ -67,7 +67,7 @@ describe("<AgentEditor/> creating", () => {
     const posted = capturePost();
     posted.capture();
 
-    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    renderWithProviders(<AgentStudio />, { initialEntries: ["/agents/new"] });
     await user.type(await screen.findByLabelText("Name"), "My new agent");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
@@ -84,7 +84,7 @@ describe("<AgentEditor/> creating", () => {
     const posted = capturePost();
     posted.capture();
 
-    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    renderWithProviders(<AgentStudio />, { initialEntries: ["/agents/new"] });
     await user.type(await screen.findByLabelText("Name"), "Parallel agent");
     await user.click(screen.getByTestId("parallel-tool-calls"));
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -105,7 +105,7 @@ describe("<AgentEditor/> creating", () => {
       ),
     );
     const user = userEvent.setup();
-    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    renderWithProviders(<AgentStudio />, { initialEntries: ["/agents/new"] });
     await user.type(await screen.findByLabelText("Name"), "Over the limit");
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("less than or equal to 32")).toBeInTheDocument();
@@ -118,20 +118,20 @@ describe("<AgentEditor/> creating", () => {
       ),
     );
     const user = userEvent.setup();
-    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    renderWithProviders(<AgentStudio />, { initialEntries: ["/agents/new"] });
     await user.type(await screen.findByLabelText("Name"), "Duplicate");
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("agent name already exists")).toBeInTheDocument();
   });
 });
 
-describe("<AgentEditor/> credential binding (S2)", () => {
+describe("<AgentStudio/> credential binding (S2)", () => {
   it("picks a stored credential by name and saves its id as the credential_ref", async () => {
     const user = userEvent.setup();
     const posted = capturePost();
     posted.capture();
 
-    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    renderWithProviders(<AgentStudio />, { initialEntries: ["/agents/new"] });
     await user.type(await screen.findByLabelText("Name"), "BYOK bound");
     await user.selectOptions(screen.getByLabelText("Credential (optional)"), "stored");
     // the dropdown lists the tenant's credentials — name + provider, value = id
@@ -152,7 +152,7 @@ describe("<AgentEditor/> credential binding (S2)", () => {
   it("points at Settings when the tenant has no stored credentials yet", async () => {
     server.use(http.get("/v1/credentials", () => HttpResponse.json({ items: [] })));
     const user = userEvent.setup();
-    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    renderWithProviders(<AgentStudio />, { initialEntries: ["/agents/new"] });
     await screen.findByLabelText("Name");
     await user.selectOptions(screen.getByLabelText("Credential (optional)"), "stored");
     expect(
@@ -167,7 +167,7 @@ describe("<AgentEditor/> credential binding (S2)", () => {
       ),
     );
     const user = userEvent.setup();
-    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    renderWithProviders(<AgentStudio />, { initialEntries: ["/agents/new"] });
     await screen.findByLabelText("Name");
     await user.selectOptions(screen.getByLabelText("Credential (optional)"), "stored");
     const fallback = screen.getByLabelText("Stored credential id");
@@ -176,7 +176,7 @@ describe("<AgentEditor/> credential binding (S2)", () => {
   });
 });
 
-describe("<AgentEditor/> editing", () => {
+describe("<AgentStudio/> editing", () => {
   it("loads the definition and PATCHes the saved body", async () => {
     const bodies: CapturedBody[] = [];
     server.use(
@@ -186,9 +186,9 @@ describe("<AgentEditor/> editing", () => {
       }),
     );
     const user = userEvent.setup();
-    renderWithProviders(<AgentEditor />, {
-      initialEntries: ["/agents/agent-1/edit"],
-      path: "/agents/:agentId/edit",
+    renderWithProviders(<AgentStudio />, {
+      initialEntries: ["/agents/agent-1"],
+      path: "/agents/:agentId",
     });
     await user.type(await screen.findByLabelText("Name"), " renamed");
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -198,17 +198,17 @@ describe("<AgentEditor/> editing", () => {
   });
 
   it("shows an honest not-found state for a missing agent", async () => {
-    renderWithProviders(<AgentEditor />, {
-      initialEntries: ["/agents/nope/edit"],
-      path: "/agents/:agentId/edit",
+    renderWithProviders(<AgentStudio />, {
+      initialEntries: ["/agents/nope"],
+      path: "/agents/:agentId",
     });
     expect(await screen.findByText("agent nope not found")).toBeInTheDocument();
   });
 });
-describe("<AgentEditor/> MCP tool picker (S4)", () => {
+describe("<AgentStudio/> MCP tool picker (S4)", () => {
   it("probes the picked server and binds a checked tool as an approval-gated row", async () => {
     const user = userEvent.setup();
-    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    renderWithProviders(<AgentStudio />, { initialEntries: ["/agents/new"] });
     await screen.findByLabelText("Model");
 
     await user.selectOptions(await screen.findByLabelText("Add MCP tool"), "mcp-1");
@@ -231,7 +231,7 @@ describe("<AgentEditor/> MCP tool picker (S4)", () => {
 
   it("toggling approval rewrites the binding config JSON", async () => {
     const user = userEvent.setup();
-    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    renderWithProviders(<AgentStudio />, { initialEntries: ["/agents/new"] });
     await screen.findByLabelText("Model");
 
     await user.selectOptions(await screen.findByLabelText("Add MCP tool"), "mcp-1");
@@ -254,7 +254,7 @@ describe("<AgentEditor/> MCP tool picker (S4)", () => {
       ),
     );
     const user = userEvent.setup();
-    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    renderWithProviders(<AgentStudio />, { initialEntries: ["/agents/new"] });
     await screen.findByLabelText("Model");
 
     await user.selectOptions(await screen.findByLabelText("Add MCP tool"), "mcp-1");
@@ -262,13 +262,13 @@ describe("<AgentEditor/> MCP tool picker (S4)", () => {
   });
 });
 
-describe("<AgentEditor/> sub-agent picker (S14, ADR 0018)", () => {
+describe("<AgentStudio/> sub-agent picker (S14, ADR 0018)", () => {
   it("binds a picked agent as a sub__ row carrying only the agent_id", async () => {
     const user = userEvent.setup();
     const posted = capturePost();
     posted.capture();
 
-    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    renderWithProviders(<AgentStudio />, { initialEntries: ["/agents/new"] });
     await user.type(await screen.findByLabelText("Name"), "Supervisor");
     await screen.findByLabelText("Model");
 
@@ -292,7 +292,7 @@ describe("<AgentEditor/> sub-agent picker (S14, ADR 0018)", () => {
     const posted = capturePost();
     posted.capture();
 
-    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    renderWithProviders(<AgentStudio />, { initialEntries: ["/agents/new"] });
     await user.type(await screen.findByLabelText("Name"), "Relay");
     await screen.findByLabelText("Model");
 
@@ -310,18 +310,20 @@ describe("<AgentEditor/> sub-agent picker (S14, ADR 0018)", () => {
   });
 
   it("excludes the agent being edited (self-binding is a 422)", async () => {
-    renderWithProviders(<AgentEditor />, {
-      initialEntries: ["/agents/agent-1/edit"],
-      path: "/agents/:agentId/edit",
+    renderWithProviders(<AgentStudio />, {
+      initialEntries: ["/agents/agent-1"],
+      path: "/agents/:agentId",
     });
     const picker = await screen.findByLabelText("Delegate to sub-agent");
     // the only tenant agent IS the edited one — placeholder option only
     expect(within(picker).getAllByRole("option")).toHaveLength(1);
-    expect(screen.queryByText("Research agent")).not.toBeInTheDocument();
+    // the picker never offers the edited agent (the Studio heading shows
+    // its name, so the check is scoped to the picker)
+    expect(within(picker).queryByText("Research agent")).not.toBeInTheDocument();
   });
 
   it("is hidden when the sub_agents capability flag is off", async () => {
-    renderWithProviders(<AgentEditor />, {
+    renderWithProviders(<AgentStudio />, {
       initialEntries: ["/agents/new"],
       capabilities: {
         ...TEST_CAPABILITIES,
@@ -336,13 +338,13 @@ describe("<AgentEditor/> sub-agent picker (S14, ADR 0018)", () => {
   });
 });
 
-describe("<AgentEditor/> knowledge picker (S8, ADR 0020)", () => {
+describe("<AgentStudio/> knowledge picker (S8, ADR 0020)", () => {
   it("binds selected datasets by id and sends the binding on save", async () => {
     const user = userEvent.setup();
     const posted = capturePost();
     posted.capture();
 
-    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    renderWithProviders(<AgentStudio />, { initialEntries: ["/agents/new"] });
     await user.type(await screen.findByLabelText("Name"), "Knowledgeable");
     await screen.findByLabelText("Model");
 
@@ -362,7 +364,7 @@ describe("<AgentEditor/> knowledge picker (S8, ADR 0020)", () => {
     const posted = capturePost();
     posted.capture();
 
-    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    renderWithProviders(<AgentStudio />, { initialEntries: ["/agents/new"] });
     await user.type(await screen.findByLabelText("Name"), "Plain agent");
     await screen.findByLabelText("Model");
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -376,7 +378,7 @@ describe("<AgentEditor/> knowledge picker (S8, ADR 0020)", () => {
     const posted = capturePost();
     posted.capture();
 
-    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    renderWithProviders(<AgentStudio />, { initialEntries: ["/agents/new"] });
     await user.type(await screen.findByLabelText("Name"), "Narrow");
     await screen.findByLabelText("Model");
     const picker = await screen.findByTestId("knowledge-picker");
@@ -395,8 +397,81 @@ describe("<AgentEditor/> knowledge picker (S8, ADR 0020)", () => {
     server.use(
       http.get("/v1/knowledge/datasets", () => HttpResponse.json({ items: [] })),
     );
-    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    renderWithProviders(<AgentStudio />, { initialEntries: ["/agents/new"] });
     expect(await screen.findByLabelText("Name")).toBeInTheDocument();
     expect(screen.queryByTestId("knowledge-picker")).not.toBeInTheDocument();
+  });
+});
+
+describe("<AgentStudio/> detail tabs", () => {
+  function renderDetail() {
+    return renderWithProviders(<AgentStudio />, {
+      initialEntries: ["/agents/agent-1"],
+      path: "/agents/:agentId",
+    });
+  }
+
+  it("shows the Configure tab by default with the editor as the definition", async () => {
+    renderDetail();
+    expect(await screen.findByRole("heading", { name: "Research agent" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Configure" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    // the editor IS the definition — the draft carries it
+    expect(await screen.findByLabelText("Name")).toHaveValue("Research agent");
+  });
+
+  it("lists versions from AgentDetail.versions and loads a snapshot on click", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(await screen.findByRole("tab", { name: "Versions" }));
+    const table = screen.getByRole("table");
+    expect(within(table).getByText("v1")).toBeInTheDocument();
+    expect(within(table).getByText("initial")).toBeInTheDocument();
+
+    // Snapshot loads into the side panel from the real endpoint.
+    await user.click(within(table).getByRole("button", { name: "v1" }));
+    expect(await screen.findByText(/Snapshot/)).toBeInTheDocument();
+    expect(screen.getByText(/immutable/)).toBeInTheDocument();
+    expect(screen.getByText(/"mock-agent"/)).toBeInTheDocument();
+  });
+
+  it("shows a 404 snapshot error honestly", async () => {
+    server.use(
+      http.get("/v1/agents/:agent_id/versions/:version", () =>
+        HttpResponse.json(
+          { error: { kind: "not_found", message: "version 1 not found" } },
+          { status: 404 },
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(await screen.findByRole("tab", { name: "Versions" }));
+    await user.click(screen.getByRole("button", { name: "v1" }));
+    expect(await screen.findByText("version 1 not found")).toBeInTheDocument();
+  });
+
+  it("links runs to the executions section filtered by agent", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(await screen.findByRole("tab", { name: "Runs" }));
+    expect(screen.getByRole("link", { name: "View runs →" })).toHaveAttribute(
+      "href",
+      "/executions?agent=agent-1",
+    );
+  });
+
+  it("renders the API access curl snippet", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(await screen.findByRole("tab", { name: "API access" }));
+    expect(screen.getByText(/\/v1\/agents\/agent-1\/run/)).toBeInTheDocument();
+    expect(screen.getByText(/no keys in the payload/)).toBeInTheDocument();
   });
 });

@@ -26,6 +26,11 @@ export function useWhoami() {
     },
     retry: false,
     refetchOnWindowFocus: false,
+    // The whoami fact is written by login/logout's setQueryData, never
+    // refetched behind them (a post-login refetch races the fresh session —
+    // see useLogin). staleTime keeps LATER-mounting observers (the shell's
+    // account menu) from immediately refetching and clobbering that fact.
+    staleTime: Number.POSITIVE_INFINITY,
   });
 }
 

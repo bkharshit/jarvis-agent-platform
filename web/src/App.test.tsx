@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "@/App";
 import { SectionGate } from "@/capabilities/SectionGate";
+import { SECTION_KEYS, SECTION_REGISTRY } from "@/capabilities/sectionRegistry";
 import { renderWithProviders, TEST_CAPABILITIES } from "@/test/render";
 import { whoamiFixture } from "@/test/handlers";
 import { server } from "@/test/msw";
@@ -18,6 +19,17 @@ describe("App shell", () => {
     expect(screen.getByRole("link", { name: /Executions/ })).toBeVisible();
     // disabled sections stay visible but carry their enabling stage
     expect(screen.getByTitle("enabled by stage S6")).toHaveTextContent("S6");
+  });
+
+  it("renders every IA section as a visible top-nav link", async () => {
+    renderWithProviders(<App />, { initialEntries: ["/agents"] });
+
+    await screen.findByRole("heading", { name: /agents/i });
+    for (const key of SECTION_KEYS) {
+      expect(
+        screen.getByRole("link", { name: SECTION_REGISTRY[key].title }),
+      ).toBeVisible();
+    }
   });
 
   it("routes a disabled section to the shared ComingSoon panel", async () => {

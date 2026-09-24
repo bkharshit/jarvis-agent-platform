@@ -9,19 +9,19 @@ import {
 } from "@/api/sse";
 import { EventTimeline } from "@/components/EventTimeline";
 import { PauseCard } from "@/components/PauseCard";
-import { SectionGate } from "@/capabilities/SectionGate";
 import {
   flushPending,
   useRunConsoleStore,
   type WireEvent,
 } from "@/stores/runConsole";
 
-// Run console: live SSE with cancel and Last-Event-ID resume (decision 3).
-// A stream end is never treated as completion — only a terminal event (or
-// an explicit Resume after `disconnected`) resolves the run. A pause (S10)
-// also ends the stream: the pause card collects the human's answer, POSTs
-// /executions/{id}/resume (blocking), then re-attaches the stream at the
-// last cursor so the resumed segment replays into the same timeline.
+// The Studio's run dock: live SSE with cancel and Last-Event-ID resume
+// (decision 3). A stream end is never treated as completion — only a
+// terminal event (or an explicit Resume after `disconnected`) resolves the
+// run. A pause (S10) also ends the stream: the pause card collects the
+// human's answer, POSTs /executions/{id}/resume (blocking), then
+// re-attaches the stream at the last cursor so the resumed segment replays
+// into the same timeline.
 
 const STATUS_LABEL: Record<string, string> = {
   connecting: "Connecting…",
@@ -32,7 +32,7 @@ const STATUS_LABEL: Record<string, string> = {
   error: "Error",
 };
 
-function RunConsoleInner() {
+export function RunDock() {
   const { agentId } = useParams();
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState("");
@@ -149,7 +149,7 @@ function RunConsoleInner() {
   const canResume = streamStatus?.status === "disconnected";
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-8">
+    <div className="px-6 py-8">
       <h1 className="text-xl font-semibold">Run agent</h1>
 
       <div className="mt-4 flex flex-col gap-3">
@@ -244,14 +244,6 @@ function RunConsoleInner() {
         </p>
       )}
     </div>
-  );
-}
-
-export function RunConsole() {
-  return (
-    <SectionGate sectionKey="agents">
-      <RunConsoleInner />
-    </SectionGate>
   );
 }
 

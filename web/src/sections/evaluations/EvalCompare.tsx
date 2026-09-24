@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { useAgents } from "@/api/queries/agents";
 import { useEvalCompare } from "@/api/queries/evaluations";
+import { Badge } from "@/components/ui/Badge";
 
 // Version comparison (S11, ADR 0017 §6) — "a query, not a feature":
 // eval runs + results aggregated per agent_version_id for one agent,
@@ -21,7 +22,7 @@ export function EvalCompare() {
       <select
         value={agentId}
         onChange={(event) => setAgentId(event.target.value)}
-        className="mt-4 rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-sm text-neutral-100"
+        className="mt-4 cursor-pointer rounded-md border border-neutral-800 bg-neutral-900/70 px-3 py-1.5 text-sm text-neutral-100 transition-colors focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
       >
         <option value="">Pick an agent…</option>
         {(agents ?? []).map((agent) => (
@@ -66,13 +67,10 @@ export function EvalCompare() {
                 <td className="py-2">
                   <div className="flex flex-wrap gap-1">
                     {version.scorers.map((scorer) => (
-                      <span
-                        key={scorer.scorer}
-                        className="rounded bg-neutral-800 px-2 py-0.5 font-mono text-xs text-neutral-300"
-                      >
+                      <Badge key={scorer.scorer} className="font-mono">
                         {scorer.scorer}: {scorer.passed}/{scorer.scored}
                         {scorer.mean != null ? ` (mean ${scorer.mean.toFixed(2)})` : ""}
-                      </span>
+                      </Badge>
                     ))}
                   </div>
                 </td>

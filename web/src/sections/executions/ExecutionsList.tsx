@@ -4,6 +4,7 @@ import {
   useExecutions,
   type ExecutionStatus,
 } from "@/api/queries/executions";
+import { Badge } from "@/components/ui/Badge";
 import { humanInTheLoop } from "@/capabilities/detail";
 import { useCapabilities } from "@/capabilities/useCapabilities";
 import { SectionGate } from "@/capabilities/SectionGate";
@@ -24,19 +25,20 @@ const STATUS_FILTERS: (ExecutionStatus | "all")[] = [
 ];
 
 function StatusBadge({ status }: { status: string }) {
-  const styles: Record<string, string> = {
-    queued: "bg-neutral-800 text-neutral-300",
-    running: "bg-amber-950 text-amber-300",
-    awaiting_input: "bg-violet-950 text-violet-300",
-    succeeded: "bg-green-950 text-green-300",
-    failed: "bg-red-950 text-red-300",
-    cancelled: "bg-neutral-800 text-neutral-300",
-    timed_out: "bg-red-950 text-red-300",
-  };
+  const variant =
+    status === "succeeded"
+      ? "success"
+      : status === "running"
+        ? "warning"
+        : status === "failed" || status === "timed_out"
+          ? "danger"
+          : status === "awaiting_input"
+            ? "brand"
+            : "neutral";
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs ${styles[status] ?? "bg-neutral-800 text-neutral-300"}`}>
+    <Badge variant={variant} className="font-mono">
       {status}
-    </span>
+    </Badge>
   );
 }
 
@@ -45,7 +47,7 @@ function AwaitingInputInbox() {
   const runs = data?.items;
   if (runs === undefined || runs.length === 0) return null;
   return (
-    <div className="mt-6 rounded border border-violet-900 bg-violet-950/30 p-4" data-testid="awaiting-input-inbox">
+    <div className="mt-6 rounded-xl border border-violet-900/70 bg-violet-950/30 p-4" data-testid="awaiting-input-inbox">
       <h2 className="text-sm font-medium text-violet-300">Awaiting input</h2>
       <ul className="mt-2 space-y-1">
         {runs.map((run) => (
@@ -101,10 +103,11 @@ function ExecutionsListInner() {
               key={s}
               type="button"
               onClick={() => setFilter("status", s)}
-              className={`cursor-pointer rounded px-2 py-1 text-xs ${
+              aria-pressed={(statusFilter ?? "all") === s}
+              className={`cursor-pointer rounded-md px-2.5 py-1 font-mono text-xs transition-colors ${
                 (statusFilter ?? "all") === s
-                  ? "bg-neutral-700 text-neutral-100"
-                  : "text-neutral-400 hover:bg-neutral-900"
+                  ? "bg-indigo-600 text-white"
+                  : "text-neutral-400 hover:bg-neutral-800/60 hover:text-neutral-100"
               }`}
             >
               {s}
@@ -123,7 +126,7 @@ function ExecutionsListInner() {
       ) : (
         <table className="mt-6 w-full text-left text-sm">
           <thead className="text-neutral-400">
-            <tr className="border-b border-neutral-800">
+            <tr className="border-b border-neutral-800/80">
               <th className="py-2 pr-4 font-medium">Run</th>
               <th className="py-2 pr-4 font-medium">Status</th>
               <th className="py-2 pr-4 font-medium">Agent</th>
@@ -133,7 +136,7 @@ function ExecutionsListInner() {
           </thead>
           <tbody>
             {runs.map((run) => (
-              <tr key={run.run_id} className="border-b border-neutral-900">
+              <tr key={run.run_id} className="border-b border-neutral-800/50 transition-colors hover:bg-neutral-900/40">
                 <td className="py-2 pr-4">
                   <Link
                     to={`/executions/${run.run_id}`}

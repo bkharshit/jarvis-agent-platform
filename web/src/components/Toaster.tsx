@@ -1,9 +1,9 @@
 import { useToastStore, type ToastKind } from "@/stores/toast";
 
 const KIND_STYLES: Record<ToastKind, string> = {
-  error: "border-red-800 bg-red-950 text-red-100",
-  success: "border-green-800 bg-green-950 text-green-100",
-  info: "border-neutral-700 bg-neutral-900 text-neutral-100",
+  error: "border-rose-500/30 bg-neutral-900/80 text-rose-200",
+  success: "border-emerald-500/30 bg-neutral-900/80 text-emerald-200",
+  info: "border-neutral-700/60 bg-neutral-900/80 text-neutral-200",
 };
 
 export function Toaster() {
@@ -21,14 +21,14 @@ export function Toaster() {
         <div
           key={t.id}
           role="status"
-          className={`flex items-start justify-between gap-3 rounded border px-3 py-2 text-sm shadow-lg ${KIND_STYLES[t.kind]}`}
+          className={`flex items-start justify-between gap-3 rounded-xl border px-3 py-2 text-sm shadow-lg backdrop-blur ${KIND_STYLES[t.kind]}`}
         >
           <span className="min-w-0 break-words">{t.message}</span>
           <button
             type="button"
             onClick={() => dismiss(t.id)}
             aria-label="Dismiss notification"
-            className="shrink-0 cursor-pointer text-current/60 hover:text-current"
+            className="shrink-0 cursor-pointer text-current/60 transition-colors hover:text-current"
           >
             ✕
           </button>

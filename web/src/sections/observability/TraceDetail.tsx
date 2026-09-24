@@ -1,6 +1,7 @@
 import { Link, useParams } from "react-router";
 
 import { useTrace } from "@/api/queries/traces";
+import { Badge } from "@/components/ui/Badge";
 
 import type { SpanRecord } from "@/api/queries/traces";
 
@@ -62,13 +63,13 @@ function SpanRow({
         : "text-emerald-400";
   const kindLabel = KIND_LABELS[span.kind] ?? span.kind;
   return (
-    <tr className="border-b border-neutral-900">
+    <tr className="border-b border-neutral-800/50 transition-colors hover:bg-neutral-900/40">
       <td className="py-2 pr-4">
         <div style={{ paddingLeft: `${depth * 16}px` }}>
           <span className="font-mono text-xs text-neutral-100">{span.name}</span>
-          <span className="ml-2 rounded bg-neutral-800 px-1.5 py-0.5 text-xs text-neutral-400">
+          <Badge variant="neutral" className="ml-2 font-mono">
             {kindLabel}
-          </span>
+          </Badge>
         </div>
       </td>
       <td className="py-2 pr-4">
@@ -88,7 +89,7 @@ function SpanRow({
       <td className="py-2" style={{ minWidth: "120px" }}>
         {traceMs > 0 && (
           <div
-            className="h-2 rounded bg-neutral-700"
+            className="h-2 rounded-full bg-indigo-500/70"
             style={{
               marginLeft: `${Math.min(100, (offsetMs / traceMs) * 100)}%`,
               width: `${Math.max(1, Math.min(100 - (offsetMs / traceMs) * 100, (span.duration_ms / traceMs) * 100))}%`,
@@ -143,7 +144,7 @@ export function TraceDetailPage() {
 
       <table className="mt-6 w-full text-left text-sm">
         <thead className="text-neutral-400">
-          <tr className="border-b border-neutral-800">
+          <tr className="border-b border-neutral-800/80">
             <th className="py-2 pr-4 font-medium">Span</th>
             <th className="py-2 pr-4 font-medium">Status</th>
             <th className="py-2 pr-4 font-medium">Offset</th>

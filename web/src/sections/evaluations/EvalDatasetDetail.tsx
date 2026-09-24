@@ -12,6 +12,11 @@ import {
   type ModelRef,
   type ScorerConfig,
 } from "@/api/queries/evaluations";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { Field } from "@/components/ui/Field";
+import { Input } from "@/components/ui/Input";
 import { toast } from "@/stores/toast";
 
 // Dataset detail (S11, ADR 0017 §6): the mutable fields PATCH wholesale
@@ -37,6 +42,9 @@ const SCORER_NAMES = [
 ] as const;
 
 type ScorerName = (typeof SCORER_NAMES)[number];
+
+const selectClass =
+  "cursor-pointer rounded-md border border-neutral-800 bg-neutral-900/70 px-3 py-1.5 text-sm text-neutral-100 transition-colors focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
 
 interface Draft {
   name: string;
@@ -135,36 +143,33 @@ export function EvalDatasetDetail() {
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-8">
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="sm"
+        className="self-start px-0 text-xs hover:bg-transparent"
         onClick={() => navigate("/evaluations")}
-        className="text-xs text-neutral-400 hover:text-neutral-200"
       >
         ← Evaluations
-      </button>
+      </Button>
       <h1 className="mt-2 text-xl font-semibold text-neutral-100">{dataset.name}</h1>
       <p className="mt-1 font-mono text-xs text-neutral-500">{dataset.id}</p>
 
       {/* --- mutable fields (wholesale PATCH) --- */}
-      <div className="mt-6 rounded border border-neutral-800 bg-neutral-900 p-4">
-        <label className="block text-sm text-neutral-300" htmlFor="ds-name">
-          Name
-        </label>
-        <input
-          id="ds-name"
-          value={draft.name}
-          onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-          className="mt-1 w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-sm text-neutral-100"
-        />
-        <label className="mt-3 block text-sm text-neutral-300" htmlFor="ds-description">
-          Description
-        </label>
-        <input
-          id="ds-description"
-          value={draft.description}
-          onChange={(event) => setDraft({ ...draft, description: event.target.value })}
-          className="mt-1 w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-sm text-neutral-100"
-        />
+      <Card className="mt-6 p-4">
+        <Field label="Name" htmlFor="ds-name">
+          <Input
+            id="ds-name"
+            value={draft.name}
+            onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+          />
+        </Field>
+        <Field label="Description" htmlFor="ds-description" className="mt-3">
+          <Input
+            id="ds-description"
+            value={draft.description}
+            onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+          />
+        </Field>
 
         <h2 className="mt-4 text-sm font-medium text-neutral-300">Cases</h2>
         <table className="mt-2 w-full text-left text-sm">
@@ -180,7 +185,7 @@ export function EvalDatasetDetail() {
             {draft.cases.map((evalCase, index) => (
               <tr key={index}>
                 <td className="py-1 pr-3">
-                  <input
+                  <Input
                     value={evalCase.id}
                     onChange={(event) =>
                       setDraft({
@@ -190,11 +195,11 @@ export function EvalDatasetDetail() {
                         ),
                       })
                     }
-                    className="w-24 rounded border border-neutral-700 bg-neutral-800 px-1 py-0.5 font-mono text-xs text-neutral-100"
+                    className="w-24 px-1 py-0.5 font-mono text-xs"
                   />
                 </td>
                 <td className="py-1 pr-3">
-                  <input
+                  <Input
                     value={evalCase.input}
                     onChange={(event) =>
                       setDraft({
@@ -204,11 +209,11 @@ export function EvalDatasetDetail() {
                         ),
                       })
                     }
-                    className="w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-xs text-neutral-100"
+                    className="px-1 py-0.5 text-xs"
                   />
                 </td>
                 <td className="py-1 pr-3">
-                  <input
+                  <Input
                     value={evalCase.expected ?? ""}
                     onChange={(event) =>
                       setDraft({
@@ -218,44 +223,46 @@ export function EvalDatasetDetail() {
                         ),
                       })
                     }
-                    className="w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-xs text-neutral-100"
+                    className="px-1 py-0.5 text-xs"
                   />
                 </td>
                 <td className="py-1">
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() =>
                       setDraft({
                         ...draft,
                         cases: draft.cases.filter((_, at) => at !== index),
                       })
                     }
-                    className="cursor-pointer text-xs text-red-400 hover:text-red-300"
+                    className="text-xs text-red-400 hover:bg-rose-950/40 hover:text-red-300"
                   >
                     Remove
-                  </button>
+                  </Button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="sm"
+          className="mt-2"
           onClick={() =>
             setDraft({
               ...draft,
               cases: [...draft.cases, { id: `c-${draft.cases.length + 1}`, input: "", expected: "" }],
             })
           }
-          className="mt-2 cursor-pointer rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
         >
           + Add case
-        </button>
+        </Button>
 
         <h2 className="mt-4 text-sm font-medium text-neutral-300">Scorers</h2>
         <ul className="mt-2 flex flex-col gap-2">
           {draft.scorers.map((scorer, index) => (
-            <li key={index} className="rounded border border-neutral-800 p-2">
+            <li key={index} className="rounded-lg border border-neutral-800/80 p-2">
               <div className="flex items-center gap-2">
                 <select
                   value={scorer.name}
@@ -269,7 +276,7 @@ export function EvalDatasetDetail() {
                       ),
                     })
                   }
-                  className="rounded border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-xs text-neutral-100"
+                  className="cursor-pointer rounded-md border border-neutral-800 bg-neutral-900/70 px-2 py-1 text-xs text-neutral-100 focus:border-indigo-500 focus:outline-none"
                 >
                   {SCORER_NAMES.map((name) => (
                     <option key={name} value={name}>
@@ -277,18 +284,19 @@ export function EvalDatasetDetail() {
                     </option>
                   ))}
                 </select>
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={() =>
                     setDraft({
                       ...draft,
                       scorers: draft.scorers.filter((_, where) => where !== index),
                     })
                   }
-                  className="cursor-pointer text-xs text-red-400 hover:text-red-300"
+                  className="text-xs text-red-400 hover:bg-rose-950/40 hover:text-red-300"
                 >
                   Remove
-                </button>
+                </Button>
               </div>
               <ScorerParamsHint scorerName={scorer.name} />
               {scorer.name === "llm_judge" && judgeModel === null && (
@@ -299,36 +307,38 @@ export function EvalDatasetDetail() {
             </li>
           ))}
         </ul>
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="sm"
+          className="mt-2"
           onClick={() => setDraft({ ...draft, scorers: [...draft.scorers, { name: "exact" }] })}
-          className="mt-2 cursor-pointer rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
         >
           + Add scorer
-        </button>
+        </Button>
 
         <h2 className="mt-4 text-sm font-medium text-neutral-300">Judge model (for llm_judge)</h2>
         <div className="mt-2 flex gap-2">
-          <input
+          <Input
             value={draft.judgeProvider}
             placeholder="provider (e.g. openai_compatible)"
             onChange={(event) => setDraft({ ...draft, judgeProvider: event.target.value })}
-            className="w-1/2 rounded border border-neutral-700 bg-neutral-800 px-2 py-0.5 font-mono text-xs text-neutral-100"
+            className="w-1/2 px-2 py-1 font-mono text-xs"
           />
-          <input
+          <Input
             value={draft.judgeModel}
             placeholder="model"
             onChange={(event) => setDraft({ ...draft, judgeModel: event.target.value })}
-            className="w-1/2 rounded border border-neutral-700 bg-neutral-800 px-2 py-0.5 font-mono text-xs text-neutral-100"
+            className="w-1/2 px-2 py-1 font-mono text-xs"
           />
           {judgeModel !== null && (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setDraft({ ...draft, judgeProvider: "", judgeModel: "" })}
-              className="cursor-pointer text-xs text-neutral-400 hover:text-neutral-200"
+              className="text-xs"
             >
               Clear
-            </button>
+            </Button>
           )}
         </div>
         {judgePreserved.length > 0 && (
@@ -337,27 +347,22 @@ export function EvalDatasetDetail() {
           </p>
         )}
 
-        <button
-          type="button"
-          onClick={save}
-          disabled={update.isPending}
-          className="mt-4 cursor-pointer rounded bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:opacity-50"
-        >
+        <Button onClick={save} disabled={update.isPending} className="mt-4">
           {update.isPending ? "Saving…" : "Save changes"}
-        </button>
-      </div>
+        </Button>
+      </Card>
 
       {/* --- run an evaluation --- */}
-      <div className="mt-6 rounded border border-neutral-800 bg-neutral-900 p-4">
+      <Card className="mt-6 p-4">
         <h2 className="text-sm font-medium text-neutral-300">Run evaluation</h2>
         <p className="mt-1 text-xs text-neutral-500">
-          One ordinary run per case, pinned to the agent's latest published version.
+          One ordinary run per case, pinned to the agent&apos;s latest published version.
         </p>
         <div className="mt-2 flex items-center gap-2">
           <select
             value={agentId}
             onChange={(event) => setAgentId(event.target.value)}
-            className="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-sm text-neutral-100"
+            className={selectClass}
           >
             <option value="">Pick an agent…</option>
             {(agents ?? []).map((agent) => (
@@ -366,8 +371,7 @@ export function EvalDatasetDetail() {
               </option>
             ))}
           </select>
-          <button
-            type="button"
+          <Button
             disabled={agentId === "" || createRun.isPending}
             onClick={() =>
               agentId !== "" &&
@@ -376,12 +380,11 @@ export function EvalDatasetDetail() {
                 onError: (err) => toast("error", err.message),
               })
             }
-            className="cursor-pointer rounded bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:opacity-50"
           >
             {createRun.isPending ? "Queuing…" : "Run"}
-          </button>
+          </Button>
         </div>
-      </div>
+      </Card>
 
       {/* --- this dataset's runs --- */}
       <div className="mt-6">
@@ -411,7 +414,9 @@ export function EvalDatasetDetail() {
                   <td className="py-1 pr-3 font-mono text-xs text-neutral-300">
                     {run.agent_version_id.slice(0, 8)}
                   </td>
-                  <td className="py-1 text-neutral-300">{run.status}</td>
+                  <td className="py-1 text-neutral-300">
+                    <Badge variant="neutral">{run.status}</Badge>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -419,8 +424,10 @@ export function EvalDatasetDetail() {
         )}
       </div>
 
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="sm"
+        className="mt-8 px-0 text-xs text-red-400 hover:bg-transparent hover:text-red-300"
         onClick={() => {
           if (!window.confirm(`Delete dataset "${dataset.name}"?`)) return;
           remove.mutate(dataset.id, {
@@ -428,10 +435,9 @@ export function EvalDatasetDetail() {
             onError: (err) => toast("error", err.message),
           });
         }}
-        className="mt-8 cursor-pointer text-xs text-red-400 hover:text-red-300"
       >
         Delete dataset
-      </button>
+      </Button>
     </div>
   );
 }

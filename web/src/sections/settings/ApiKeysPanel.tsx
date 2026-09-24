@@ -3,6 +3,9 @@ import type { FormEvent } from "react";
 
 import { useApiKeys, useCreateApiKey, useRevokeApiKey } from "@/api/queries/settings";
 import type { ApiKeyCreated } from "@/api/queries/settings";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
 import { toast } from "@/stores/toast";
 
 // API keys (S2) — the plaintext is returned exactly once, at create, held
@@ -42,26 +45,28 @@ export function ApiKeysPanel({ canCreate }: { canCreate: boolean }) {
         </div>
         {canCreate && (
           <form onSubmit={submit} className="flex items-center gap-2">
-            <input
+            <Input
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="key name"
-              className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm"
+              className="w-44"
             />
-            <button
+            <Button
               type="submit"
               disabled={create.isPending || name.trim() === ""}
-              className="cursor-pointer rounded bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:cursor-not-allowed disabled:text-neutral-500"
             >
               {create.isPending ? "Creating…" : "Create key"}
-            </button>
+            </Button>
           </form>
         )}
       </div>
 
       {created && (
-        <div className="mt-4 rounded border border-amber-700/50 bg-amber-950/30 p-4" role="status">
+        <div
+          className="mt-4 rounded-xl border border-amber-500/30 bg-amber-950/30 p-4 shadow-sm"
+          role="status"
+        >
           <p className="text-sm font-medium text-amber-200">
             Key “{created.name}” created — copy it now.
           </p>
@@ -72,13 +77,14 @@ export function ApiKeysPanel({ canCreate }: { canCreate: boolean }) {
             This is the only time the plaintext is shown. It is stored only as a
             hash and cannot be recovered.
           </p>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="sm"
+            className="mt-3 text-sm"
             onClick={() => setCreated(null)}
-            className="mt-3 cursor-pointer text-sm text-neutral-400 hover:text-neutral-200"
           >
             Done — I saved it
-          </button>
+          </Button>
         </div>
       )}
 
@@ -111,15 +117,16 @@ export function ApiKeysPanel({ canCreate }: { canCreate: boolean }) {
                 </td>
                 <td className="py-2 pr-4">
                   {key.revoked_at ? (
-                    <span className="text-red-400">revoked</span>
+                    <Badge variant="danger">revoked</Badge>
                   ) : (
-                    <span className="text-green-500">active</span>
+                    <Badge variant="success" dot>active</Badge>
                   )}
                 </td>
                 <td className="py-2 pr-4 text-right">
                   {canCreate && !key.revoked_at && (
-                    <button
-                      type="button"
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       disabled={revoke.isPending}
                       onClick={() => {
                         if (!window.confirm(`Revoke key "${key.name}"? Clients using it stop working.`))
@@ -128,10 +135,10 @@ export function ApiKeysPanel({ canCreate }: { canCreate: boolean }) {
                           onError: (err) => toast("error", err.message),
                         });
                       }}
-                      className="cursor-pointer text-red-400 hover:text-red-300 disabled:cursor-not-allowed disabled:text-neutral-600"
+                      className="text-red-400 hover:bg-rose-950/40 hover:text-red-300"
                     >
                       revoke
-                    </button>
+                    </Button>
                   )}
                 </td>
               </tr>

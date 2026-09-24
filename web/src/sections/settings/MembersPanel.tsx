@@ -8,10 +8,15 @@ import {
   useUpdateMember,
 } from "@/api/queries/settings";
 import type { MemberOut } from "@/api/queries/settings";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
 import { toast } from "@/stores/toast";
 
 // Tenant members (S2, ADR 0009 §8) — admin/owner only server-side; a 403
 // here is the API's own answer and is shown verbatim, never pre-gated.
+
+const selectClass =
+  "mt-1 w-full cursor-pointer rounded-md border border-neutral-800 bg-neutral-900/70 px-3 py-1.5 text-sm text-neutral-100 transition-colors focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
 
 function MemberRow({ member, canManage }: { member: MemberOut; canManage: boolean }) {
   const update = useUpdateMember();
@@ -30,11 +35,11 @@ function MemberRow({ member, canManage }: { member: MemberOut; canManage: boolea
       <td className="py-2 pr-4 text-neutral-100">{member.email}</td>
       <td className="py-2 pr-4">
         {editing ? (
-          <input
+          <Input
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
             aria-label={`Display name for ${member.email}`}
-            className="rounded border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-sm"
+            className="px-2 py-0.5"
           />
         ) : (
           <span className="text-neutral-400">{member.display_name}</span>
@@ -48,7 +53,7 @@ function MemberRow({ member, canManage }: { member: MemberOut; canManage: boolea
               patch({ role: e.target.value });
               setEditing(false);
             }}
-            className="rounded border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-sm"
+            className="cursor-pointer rounded-md border border-neutral-800 bg-neutral-900/70 px-2 py-1 text-sm text-neutral-100 focus:border-indigo-500 focus:outline-none"
           >
             {["owner", "admin", "member"].map((role) => (
               <option key={role} value={role}>
@@ -63,35 +68,34 @@ function MemberRow({ member, canManage }: { member: MemberOut; canManage: boolea
       <td className="py-2 pr-4 text-right">
         {editing ? (
           <>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => {
                 patch({ display_name: displayName });
                 setEditing(false);
               }}
-              className="cursor-pointer text-neutral-300 hover:text-neutral-100"
+              className="text-sm"
             >
               save
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setEditing(false)}
-              className="ml-3 cursor-pointer text-neutral-500 hover:text-neutral-300"
+              className="ml-2 text-sm text-neutral-500"
             >
               cancel
-            </button>
+            </Button>
           </>
         ) : canManage ? (
           <>
-            <button
-              type="button"
-              onClick={() => setEditing(true)}
-              className="cursor-pointer text-neutral-400 hover:text-neutral-200"
-            >
+            <Button variant="ghost" size="sm" onClick={() => setEditing(true)} className="text-sm">
               edit
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               disabled={remove.isPending}
               onClick={() => {
                 if (!window.confirm(`Remove ${member.email} from the tenant?`)) return;
@@ -99,10 +103,10 @@ function MemberRow({ member, canManage }: { member: MemberOut; canManage: boolea
                   onError: (err) => toast("error", err.message),
                 });
               }}
-              className="ml-3 cursor-pointer text-red-400 hover:text-red-300 disabled:cursor-not-allowed disabled:text-neutral-600"
+              className="ml-2 text-sm text-red-400 hover:bg-rose-950/40 hover:text-red-300"
             >
               remove
-            </button>
+            </Button>
           </>
         ) : null}
       </td>
@@ -149,37 +153,33 @@ export function MembersPanel({ canManage }: { canManage: boolean }) {
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">Members</h2>
         {canManage && (
-          <button
-            type="button"
-            onClick={() => setShowForm((v) => !v)}
-            className="cursor-pointer rounded bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white"
-          >
+          <Button onClick={() => setShowForm((v) => !v)}>
             {showForm ? "Cancel" : "Invite member"}
-          </button>
+          </Button>
         )}
       </div>
 
       {showForm && (
         <form
           onSubmit={submit}
-          className="mt-4 grid max-w-md grid-cols-2 gap-3 rounded border border-neutral-800 bg-neutral-900 p-4"
+          className="mt-4 grid max-w-md grid-cols-2 gap-3 rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-4 shadow-sm"
         >
           <label className="text-sm">
             <span className="text-neutral-400">Email</span>
-            <input
+            <Input
               type="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm"
+              className="mt-1"
             />
           </label>
           <label className="text-sm">
             <span className="text-neutral-400">Display name</span>
-            <input
+            <Input
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              className="mt-1 w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm"
+              className="mt-1"
             />
           </label>
           <label className="text-sm">
@@ -187,7 +187,7 @@ export function MembersPanel({ canManage }: { canManage: boolean }) {
             <select
               value={role}
               onChange={(e) => setRole(e.target.value)}
-              className="mt-1 w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm"
+              className={selectClass}
             >
               {["member", "admin", "owner"].map((r) => (
                 <option key={r} value={r}>
@@ -198,21 +198,17 @@ export function MembersPanel({ canManage }: { canManage: boolean }) {
           </label>
           <label className="text-sm">
             <span className="text-neutral-400">Password (optional)</span>
-            <input
+            <Input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="keys-only member if blank"
-              className="mt-1 w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm"
+              className="mt-1"
             />
           </label>
-          <button
-            type="submit"
-            disabled={create.isPending}
-            className="cursor-pointer justify-self-start rounded bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:cursor-not-allowed disabled:text-neutral-500"
-          >
+          <Button type="submit" disabled={create.isPending} className="justify-self-start">
             {create.isPending ? "Inviting…" : "Create member"}
-          </button>
+          </Button>
           {create.isError && (
             <p className="text-sm text-red-400" role="alert">
               {create.error.message}

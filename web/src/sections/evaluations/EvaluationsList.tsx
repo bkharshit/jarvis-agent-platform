@@ -6,6 +6,10 @@ import {
   useDeleteEvalDataset,
   useEvalDatasets,
 } from "@/api/queries/evaluations";
+import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Field } from "@/components/ui/Field";
+import { Input } from "@/components/ui/Input";
 import { toast } from "@/stores/toast";
 
 // Evaluations list (S11, ADR 0017 §6): the tenant's datasets. Creation
@@ -25,7 +29,7 @@ function CreateDatasetForm({
 
   return (
     <form
-      className="mt-4 rounded border border-neutral-800 bg-neutral-900 p-4"
+      className="mt-4 rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-4 shadow-sm"
       onSubmit={(event) => {
         event.preventDefault();
         create.mutate(
@@ -44,43 +48,38 @@ function CreateDatasetForm({
         );
       }}
     >
-      <label className="block text-sm text-neutral-300" htmlFor="dataset-name">
-        Dataset name
-      </label>
-      <input
-        id="dataset-name"
-        required
-        value={name}
-        onChange={(event) => setName(event.target.value)}
-        placeholder="smoke-dataset"
-        className="mt-1 w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-sm text-neutral-100"
-      />
-      <label className="mt-3 block text-sm text-neutral-300" htmlFor="dataset-first-input">
-        First case input
-      </label>
-      <input
-        id="dataset-first-input"
-        required
-        value={firstInput}
-        onChange={(event) => setFirstInput(event.target.value)}
-        placeholder="what to ask the agent…"
-        className="mt-1 w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-sm text-neutral-100"
-      />
+      <Field label="Dataset name" htmlFor="dataset-name" className="text-sm">
+        <Input
+          id="dataset-name"
+          required
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="smoke-dataset"
+        />
+      </Field>
+      <Field
+        label="First case input"
+        htmlFor="dataset-first-input"
+        className="mt-3 text-sm"
+      >
+        <Input
+          id="dataset-first-input"
+          required
+          value={firstInput}
+          onChange={(event) => setFirstInput(event.target.value)}
+          placeholder="what to ask the agent…"
+        />
+      </Field>
       <div className="mt-3 flex gap-2">
-        <button
+        <Button
           type="submit"
           disabled={create.isPending || !name.trim() || !firstInput.trim()}
-          className="cursor-pointer rounded bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:opacity-50"
         >
           {create.isPending ? "Creating…" : "Create dataset"}
-        </button>
-        <button
-          type="button"
-          onClick={onCancelled}
-          className="cursor-pointer rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800"
-        >
+        </Button>
+        <Button variant="secondary" onClick={onCancelled}>
           Cancel
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -98,7 +97,7 @@ export function EvaluationsList() {
   if (isError) {
     return (
       <div className="px-6 py-10">
-        <p className="text-sm text-red-400">{error.message}</p>
+        <p role="alert" className="text-sm text-red-400">{error.message}</p>
       </div>
     );
   }
@@ -107,16 +106,10 @@ export function EvaluationsList() {
     <div className="mx-auto max-w-4xl px-6 py-8">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Evaluations</h1>
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="cursor-pointer rounded bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white"
-        >
-          New dataset
-        </button>
+        <Button onClick={() => setCreating(true)}>New dataset</Button>
       </div>
       <p className="mt-1 text-sm text-neutral-400">
-        Test-case datasets scored against your agents' published versions.
+        Test-case datasets scored against your agents&apos; published versions.
       </p>
 
       {creating && (
@@ -130,9 +123,10 @@ export function EvaluationsList() {
       )}
 
       {datasets.length === 0 ? (
-        <p className="mt-10 text-sm text-neutral-400">
-          No datasets yet. Create one to get started.
-        </p>
+        <EmptyState
+          title="No datasets yet"
+          description="Create one to get started."
+        />
       ) : (
         <table className="mt-6 w-full text-left text-sm">
           <thead className="text-neutral-400">
@@ -159,18 +153,19 @@ export function EvaluationsList() {
                   {dataset.scorers.map((scorer) => scorer.name).join(", ")}
                 </td>
                 <td className="py-2 pr-4 text-right">
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => {
                       if (!window.confirm(`Delete dataset "${dataset.name}"?`)) return;
                       deleteDataset.mutate(dataset.id, {
                         onError: (err) => toast("error", err.message),
                       });
                     }}
-                    className="cursor-pointer text-xs text-red-400 hover:text-red-300"
+                    className="text-red-400 hover:bg-rose-950/40 hover:text-red-300"
                   >
                     Delete
-                  </button>
+                  </Button>
                 </td>
               </tr>
             ))}

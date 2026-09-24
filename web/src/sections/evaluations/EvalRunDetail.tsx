@@ -1,6 +1,9 @@
 import { Link, useParams } from "react-router";
 
 import { useEvalRun, type Score } from "@/api/queries/evaluations";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
 
 // Eval-run detail (S11, ADR 0017 §6, D49): status is a backend DERIVED
 // fact (no column) and results are scored LAZILY on the first completed
@@ -13,21 +16,17 @@ function ScoreChips({ scores }: { scores: Score[] }) {
   return (
     <div className="flex flex-wrap gap-1">
       {scores.map((score) => {
-        const passed =
+        const variant =
           score.passed === true
-            ? "bg-green-900/60 text-green-300"
+            ? "success"
             : score.passed === false
-              ? "bg-red-900/60 text-red-300"
-              : "bg-neutral-800 text-neutral-400";
+              ? "danger"
+              : "neutral";
         return (
-          <span
-            key={score.scorer}
-            title={score.detail ?? undefined}
-            className={`rounded px-2 py-0.5 font-mono text-xs ${passed}`}
-          >
+          <Badge key={score.scorer} variant={variant} title={score.detail ?? undefined} className="font-mono">
             {score.scorer}: {score.passed === null ? "no verdict" : score.passed ? "pass" : "fail"}
             {score.score != null ? ` (${score.score})` : ""}
-          </span>
+          </Badge>
         );
       })}
     </div>
@@ -51,33 +50,36 @@ export function EvalRunDetail() {
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-8">
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="sm"
+        className="self-start px-0 text-xs hover:bg-transparent"
         onClick={() => window.history.back()}
-        className="text-xs text-neutral-400 hover:text-neutral-200"
       >
         ← Back
-      </button>
+      </Button>
       <h1 className="mt-2 flex items-center gap-3 text-xl font-semibold text-neutral-100">
         Eval run
-        <span className="rounded bg-neutral-800 px-2 py-0.5 text-sm text-neutral-300">{run.status}</span>
+        <Badge variant="neutral">{run.status}</Badge>
       </h1>
-      <dl className="mt-3 rounded border border-neutral-800 bg-neutral-900 p-4 text-sm">
-        <div className="flex gap-2">
-          <dt className="w-36 shrink-0 text-neutral-400">Run id</dt>
-          <dd className="font-mono text-xs text-neutral-200">{run.id}</dd>
-        </div>
-        <div className="mt-1 flex gap-2">
-          <dt className="w-36 shrink-0 text-neutral-400">Agent / version</dt>
-          <dd className="font-mono text-xs text-neutral-200">
-            {run.agent_id} @ {run.agent_version_id.slice(0, 8)}
-          </dd>
-        </div>
-        <div className="mt-1 flex gap-2">
-          <dt className="w-36 shrink-0 text-neutral-400">Dataset (snapshot)</dt>
-          <dd className="font-mono text-xs text-neutral-200">{run.dataset_id}</dd>
-        </div>
-      </dl>
+      <Card className="mt-3 p-4 text-sm">
+        <dl>
+          <div className="flex gap-2">
+            <dt className="w-36 shrink-0 text-neutral-400">Run id</dt>
+            <dd className="font-mono text-xs text-neutral-200">{run.id}</dd>
+          </div>
+          <div className="mt-1 flex gap-2">
+            <dt className="w-36 shrink-0 text-neutral-400">Agent / version</dt>
+            <dd className="font-mono text-xs text-neutral-200">
+              {run.agent_id} @ {run.agent_version_id.slice(0, 8)}
+            </dd>
+          </div>
+          <div className="mt-1 flex gap-2">
+            <dt className="w-36 shrink-0 text-neutral-400">Dataset (snapshot)</dt>
+            <dd className="font-mono text-xs text-neutral-200">{run.dataset_id}</dd>
+          </div>
+        </dl>
+      </Card>
 
       <h2 className="mt-6 text-sm font-medium text-neutral-300">Per-case results</h2>
       {run.results.length === 0 ? (
@@ -85,7 +87,10 @@ export function EvalRunDetail() {
       ) : (
         <ul className="mt-2 flex flex-col gap-2">
           {run.results.map((result) => (
-            <li key={result.id} className="rounded border border-neutral-800 bg-neutral-900 p-4">
+            <li
+              key={result.id}
+              className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-4 shadow-sm transition-all hover:border-neutral-700/80"
+            >
               <div className="flex items-center justify-between">
                 <span className="font-mono text-xs text-neutral-300">{result.case_id}</span>
                 <Link

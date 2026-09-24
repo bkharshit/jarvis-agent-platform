@@ -1,9 +1,8 @@
 import type { ReactNode } from "react";
+import { Navigate, useParams } from "react-router";
 
-import { AgentEditor } from "@/sections/agents/AgentEditor";
-import { AgentDetailPage } from "@/sections/agents/AgentDetailPage";
+import { AgentStudio } from "@/sections/agents/AgentStudio";
 import { AgentsList } from "@/sections/agents/AgentsList";
-import { RunConsole } from "@/sections/agents/RunConsole";
 import { ExecutionsList } from "@/sections/executions/ExecutionsList";
 import { ExecutionDetailPage } from "@/sections/executions/ExecutionDetail";
 import { ConversationsList } from "@/sections/conversations/ConversationsList";
@@ -14,7 +13,6 @@ import { PluginsPage } from "@/sections/plugins/PluginsPage";
 import { SettingsPage } from "@/sections/settings/SettingsPage";
 import { WorkflowsList } from "@/sections/workflows/WorkflowsList";
 import { WorkflowEditorPage } from "@/sections/workflows/WorkflowEditor";
-import { WorkflowRunConsole } from "@/sections/workflows/WorkflowRunConsole";
 import { EvalCompare } from "@/sections/evaluations/EvalCompare";
 import { EvalDatasetDetail } from "@/sections/evaluations/EvalDatasetDetail";
 import { EvalRunDetail } from "@/sections/evaluations/EvalRunDetail";
@@ -51,15 +49,22 @@ function gated(sectionKey: SectionKey, element?: ReactNode) {
   );
 }
 
+// The Studio absorbed the separate editor and run pages — old deep links
+// redirect to the unified screen.
+function AgentStudioRedirect() {
+  const { agentId } = useParams();
+  return <Navigate to={`/agents/${agentId ?? ""}`} replace />;
+}
+
 // Route table — one route per IA section; nested detail routes attach under
 // their section as the screens land (agents/:id, executions/:id, …).
 export function sectionRoutes() {
   return [
     { path: "/agents", element: gated("agents", <AgentsList />) },
-    { path: "/agents/new", element: gated("agents", <AgentEditor />) },
-    { path: "/agents/:agentId", element: gated("agents", <AgentDetailPage />) },
-    { path: "/agents/:agentId/run", element: gated("agents", <RunConsole />) },
-    { path: "/agents/:agentId/edit", element: gated("agents", <AgentEditor />) },
+    { path: "/agents/new", element: gated("agents", <AgentStudio />) },
+    { path: "/agents/:agentId", element: gated("agents", <AgentStudio />) },
+    { path: "/agents/:agentId/run", element: gated("agents", <AgentStudioRedirect />) },
+    { path: "/agents/:agentId/edit", element: gated("agents", <AgentStudioRedirect />) },
     { path: "/executions", element: gated("executions", <ExecutionsList />) },
     { path: "/executions/:runId", element: gated("executions", <ExecutionDetailPage />) },
     { path: "/conversations", element: gated("conversations", <ConversationsList />) },
@@ -71,7 +76,7 @@ export function sectionRoutes() {
     { path: "/models", element: gated("models", <ModelsPage />) },
     { path: "/workflows", element: gated("workflows", <WorkflowsList />) },
     { path: "/workflows/new", element: gated("workflows", <WorkflowEditorPage />) },
-    { path: "/workflows/:workflowId/run", element: gated("workflows", <WorkflowRunConsole />) },
+    { path: "/workflows/:workflowId/run", element: gated("workflows", <WorkflowEditorPage initialRunOpen />) },
     { path: "/workflows/:workflowId", element: gated("workflows", <WorkflowEditorPage />) },
     { path: "/knowledge", element: gated("knowledge", <KnowledgePage />) },
     {

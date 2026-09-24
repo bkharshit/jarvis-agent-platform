@@ -33,13 +33,13 @@ export function ObservabilityPage() {
       </p>
 
       {traces.length === 0 ? (
-        <p className="mt-10 text-sm text-neutral-400">
+        <p className="py-16 text-center text-sm text-neutral-500">
           No traces yet. Run an agent to produce spans.
         </p>
       ) : (
         <table className="mt-6 w-full text-left text-sm">
           <thead className="text-neutral-400">
-            <tr className="border-b border-neutral-800">
+            <tr className="border-b border-neutral-800/80">
               <th className="py-2 pr-4 font-medium">Trace</th>
               <th className="py-2 pr-4 font-medium">Runs</th>
               <th className="py-2 pr-4 font-medium">Spans</th>
@@ -50,7 +50,7 @@ export function ObservabilityPage() {
           </thead>
           <tbody>
             {traces.map((trace) => (
-              <tr key={trace.trace_id} className="border-b border-neutral-900">
+              <tr key={trace.trace_id} className="border-b border-neutral-800/50 transition-colors hover:bg-neutral-900/40">
                 <td className="py-2 pr-4">
                   <Link
                     to={`/observability/${trace.trace_id}`}
@@ -67,7 +67,7 @@ export function ObservabilityPage() {
                 <td className="py-2 pr-4">
                   <span
                     className={
-                      trace.statuses.includes("error") ? "text-red-400" : "text-emerald-400"
+                      trace.statuses.includes("error") ? "text-rose-400" : "text-emerald-400"
                     }
                   >
                     {trace.statuses.join(", ")}

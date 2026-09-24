@@ -1,3 +1,5 @@
+import { Badge } from "@/components/ui/Badge";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { SectionGate } from "@/capabilities/SectionGate";
 import { pluginListing, type StrategyInfo } from "@/capabilities/detail";
 import { useCapabilities } from "@/capabilities/useCapabilities";
@@ -34,23 +36,21 @@ function StrategiesInner() {
       </p>
 
       {listing.strategies.length === 0 ? (
-        <p className="mt-10 text-sm text-neutral-400">No strategies registered.</p>
+        <EmptyState title="No strategies registered." />
       ) : (
         <ul className="mt-6 flex flex-col gap-2">
           {listing.strategies.map((info) => (
             <li
               key={info.name}
-              className="rounded border border-neutral-800 bg-neutral-900 p-4"
+              className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-4 transition-all hover:border-neutral-700/80"
             >
               <div className="flex items-center gap-2">
                 <h2 className="font-mono text-sm text-neutral-100">{info.name}</h2>
-                <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300">
+                <Badge variant="neutral" className="font-mono">
                   {originBadge(info.origin)}
-                </span>
+                </Badge>
                 {info.error && (
-                  <span className="rounded bg-red-900/60 px-2 py-0.5 text-xs text-red-200">
-                    failed
-                  </span>
+                  <Badge variant="danger" className="font-mono">failed</Badge>
                 )}
               </div>
               <p className="mt-1 text-sm text-neutral-400">{statusLine(info)}</p>
@@ -66,9 +66,9 @@ function StrategiesInner() {
             {listing.failed.map((info) => (
               <li
                 key={info.name}
-                className="rounded border border-red-900/50 bg-neutral-900 p-4"
+                className="rounded-xl border border-rose-900/50 bg-rose-950/20 p-4"
               >
-                <h3 className="font-mono text-sm text-red-200">{info.name}</h3>
+                <h3 className="font-mono text-sm text-rose-200">{info.name}</h3>
                 <p className="mt-1 font-mono text-xs text-neutral-400">{info.error}</p>
               </li>
             ))}
@@ -89,7 +89,7 @@ function StrategiesInner() {
 
       <section className="mt-8">
         <h2 className="text-sm font-medium text-neutral-300">Allow-list</h2>
-        <div className="mt-2 rounded border border-neutral-800 bg-neutral-900 p-4 text-sm">
+        <div className="mt-2 rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-4 text-sm">
           {listing.allowlist.length === 0 ? (
             <p className="text-neutral-400">
               Empty — no plugins load. Nothing loads unless it is named here.

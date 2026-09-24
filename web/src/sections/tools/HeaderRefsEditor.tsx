@@ -2,6 +2,8 @@ import { useState } from "react";
 
 import type { CredentialRef } from "@/api/queries/mcp";
 import type { CredentialOut } from "@/api/queries/settings";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
 
 // Header/env refs editor (ADR 0013): a controlled repeater over the
 // config's credential refs. Values are REFERENCES only — an env-var name
@@ -19,8 +21,8 @@ export function headerRefsComplete(refs: HeaderRefs): boolean {
   );
 }
 
-const inputClass =
-  "w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm text-neutral-100";
+const selectClass =
+  "mt-1 w-full cursor-pointer rounded-md border border-neutral-800 bg-neutral-900/70 px-3 py-1.5 text-sm text-neutral-100 transition-colors focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
 
 interface HeaderRefsEditorProps {
   value: HeaderRefs;
@@ -62,12 +64,12 @@ export function HeaderRefsEditor({
         <div key={index} className="grid grid-cols-[1fr_auto_1.2fr_auto] items-end gap-2">
           <label className="text-xs">
             <span className="text-neutral-400">Header</span>
-            <input
+            <Input
               value={header}
               aria-label={`Header name ${index + 1}`}
               onChange={(e) => setAt(index, e.target.value, ref)}
               placeholder="Authorization"
-              className={`mt-1 ${inputClass}`}
+              className="mt-1"
             />
           </label>
           <label className="text-xs">
@@ -84,7 +86,7 @@ export function HeaderRefsEditor({
                     : { type: "env", env_var: "" },
                 )
               }
-              className={`mt-1 ${inputClass}`}
+              className={selectClass}
             >
               <option value="env">Environment variable</option>
               {allowStored && <option value="stored">Stored credential</option>}
@@ -93,12 +95,12 @@ export function HeaderRefsEditor({
           {ref.type === "env" ? (
             <label className="text-xs">
               <span className="text-neutral-400">Env var name</span>
-              <input
+              <Input
                 value={ref.env_var}
                 aria-label={`Env variable for header ${index + 1}`}
                 onChange={(e) => setAt(index, header, { type: "env", env_var: e.target.value })}
                 placeholder="WEBZ_MCP_TOKEN"
-                className={`mt-1 font-mono ${inputClass}`}
+                className="mt-1 font-mono"
               />
             </label>
           ) : (
@@ -108,7 +110,7 @@ export function HeaderRefsEditor({
                 aria-label={`Credential for header ${index + 1}`}
                 value={ref.credential_id}
                 onChange={(e) => setAt(index, header, { type: "stored", credential_id: e.target.value })}
-                className={`mt-1 ${inputClass}`}
+                className={selectClass}
               >
                 <option value="">Pick a credential…</option>
                 {credentials
@@ -121,8 +123,9 @@ export function HeaderRefsEditor({
               </select>
             </label>
           )}
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="sm"
             aria-label={`Remove header ${index + 1}`}
             onClick={() => {
               const next: HeaderRefs = {};
@@ -131,38 +134,39 @@ export function HeaderRefsEditor({
               });
               onChange(next);
             }}
-            className="cursor-pointer pb-1.5 text-xs text-red-400 hover:text-red-300"
+            className="self-end pb-1.5 text-xs text-red-400 hover:bg-rose-950/40 hover:text-red-300"
           >
             Remove
-          </button>
+          </Button>
         </div>
       ))}
 
       {allowStored && entries.some(([, ref]) => ref.type === "stored") && (
-        <div className="flex flex-col gap-1 rounded border border-neutral-800 p-2">
+        <div className="flex flex-col gap-1 rounded-xl border border-neutral-800/80 bg-neutral-950 p-2">
           {credentialDraft === null ? (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setCredentialDraft({ name: "", secret: "" })}
-              className="cursor-pointer self-start text-xs text-neutral-400 hover:text-neutral-200"
+              className="self-start text-xs"
             >
               ＋ New credential
-            </button>
+            </Button>
           ) : (
             <div className="flex items-end gap-2">
               <label className="text-xs">
                 <span className="text-neutral-400">Credential name</span>
-                <input
+                <Input
                   value={credentialDraft.name}
                   aria-label="New credential name"
                   onChange={(e) => setCredentialDraft({ ...credentialDraft, name: e.target.value })}
                   placeholder="webz-key"
-                  className={`mt-1 ${inputClass}`}
+                  className="mt-1"
                 />
               </label>
               <label className="text-xs">
                 <span className="text-neutral-400">Secret (sent once)</span>
-                <input
+                <Input
                   type="password"
                   value={credentialDraft.secret}
                   aria-label="New credential secret"
@@ -170,24 +174,24 @@ export function HeaderRefsEditor({
                     setCredentialDraft({ ...credentialDraft, secret: e.target.value })
                   }
                   placeholder="Bearer sk-…"
-                  className={`mt-1 ${inputClass}`}
+                  className="mt-1"
                 />
               </label>
-              <button
-                type="button"
+              <Button
+                size="sm"
                 disabled={creatingCredential}
                 onClick={() => onInlineCreate(credentialDraft.name.trim(), credentialDraft.secret)}
-                className="cursor-pointer rounded bg-neutral-100 px-2 py-1 text-xs font-medium text-neutral-900 disabled:cursor-not-allowed disabled:text-neutral-500"
               >
                 {creatingCredential ? "Saving…" : "Save credential"}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setCredentialDraft(null)}
-                className="cursor-pointer pb-1 text-xs text-neutral-400 hover:text-neutral-200"
+                className="text-xs"
               >
                 Cancel
-              </button>
+              </Button>
             </div>
           )}
           {createError !== null && (
@@ -205,13 +209,14 @@ export function HeaderRefsEditor({
         </p>
       )}
 
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={() => onChange({ ...value, "": { type: "env", env_var: "" } })}
-        className="cursor-pointer self-start text-xs text-neutral-400 hover:text-neutral-200"
+        className="self-start text-xs"
       >
         ＋ Add header
-      </button>
+      </Button>
     </div>
   );
 }

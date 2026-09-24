@@ -4,6 +4,8 @@ import { settingsFacts } from "@/capabilities/detail";
 import { useCapabilities } from "@/capabilities/useCapabilities";
 
 import { LoginScreen } from "@/auth/LoginScreen";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
 import { ApiKeysPanel } from "./ApiKeysPanel";
 import { CredentialsPanel } from "./CredentialsPanel";
 import { MembersPanel } from "./MembersPanel";
@@ -26,7 +28,7 @@ function WhoamiHeader() {
   const isAnonymous = whoami.mode === "anonymous";
 
   return (
-    <div className="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <Card className="p-4">
       <div className="flex items-start justify-between">
         <div>
           <p className="text-sm text-neutral-100">
@@ -47,17 +49,16 @@ function WhoamiHeader() {
           </p>
         </div>
         {!isAnonymous && (
-          <button
-            type="button"
+          <Button
+            variant="secondary"
             disabled={logout.isPending}
             onClick={() => logout.mutate()}
-            className="cursor-pointer rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:text-neutral-600"
           >
             Sign out
-          </button>
+          </Button>
         )}
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -87,14 +88,14 @@ function SettingsInner() {
       </p>
 
       {facts.authMode === "anonymous" && (
-        <p className="mt-4 rounded border border-neutral-800 bg-neutral-900 p-4 text-sm text-neutral-400" role="note">
+        <Card className="mt-4 p-4 text-sm text-neutral-400" role="note">
           Single-user local mode — this backend runs{" "}
           <code className="font-mono">JARVIS_AUTH_MODE=anonymous</code>, so every
           request acts on the default tenant without signing in. Member
           management, API keys, and credentials require a real principal; run{" "}
           <code className="font-mono">JARVIS_AUTH_MODE=required</code> and use the
           CLI bootstrap commands to create one.
-        </p>
+        </Card>
       )}
 
       <div className="mt-6">

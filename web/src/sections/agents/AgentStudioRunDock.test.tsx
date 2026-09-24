@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "@/test/render";
 import { useRunConsoleStore } from "@/stores/runConsole";
 
-import { RunConsole } from "./RunConsole";
+import { RunDock } from "./RunDock";
 
 // The SSE layer is stubbed at fetch with a hand-built ReadableStream
 // (decision 12) — msw is not involved in streaming.
@@ -63,7 +63,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("<RunConsole/>", () => {
+describe("<RunDock/>", () => {
   it("streams a run to the final message and shows usage", async () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve(
@@ -77,7 +77,7 @@ describe("<RunConsole/>", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const user = userEvent.setup();
-    renderWithProviders(<RunConsole />, {
+    renderWithProviders(<RunDock />, {
       initialEntries: ["/agents/agent-1/run"],
       path: "/agents/:agentId/run",
     });
@@ -100,7 +100,7 @@ describe("<RunConsole/>", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const user = userEvent.setup();
-    renderWithProviders(<RunConsole />, {
+    renderWithProviders(<RunDock />, {
       initialEntries: ["/agents/agent-1/run"],
       path: "/agents/:agentId/run",
     });
@@ -127,7 +127,7 @@ describe("<RunConsole/>", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const user = userEvent.setup();
-    renderWithProviders(<RunConsole />, {
+    renderWithProviders(<RunDock />, {
       initialEntries: ["/agents/agent-1/run"],
       path: "/agents/:agentId/run",
     });
@@ -180,7 +180,7 @@ describe("<RunConsole/>", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const user = userEvent.setup();
-    renderWithProviders(<RunConsole />, {
+    renderWithProviders(<RunDock />, {
       initialEntries: ["/agents/agent-1/run"],
       path: "/agents/:agentId/run",
     });
@@ -236,7 +236,7 @@ describe("<RunConsole/>", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const user = userEvent.setup();
-    renderWithProviders(<RunConsole />, {
+    renderWithProviders(<RunDock />, {
       initialEntries: ["/agents/agent-1/run"],
       path: "/agents/:agentId/run",
     });
@@ -303,7 +303,7 @@ describe("<RunConsole/>", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const user = userEvent.setup();
-    renderWithProviders(<RunConsole />, {
+    renderWithProviders(<RunDock />, {
       initialEntries: ["/agents/agent-1/run"],
       path: "/agents/:agentId/run",
     });

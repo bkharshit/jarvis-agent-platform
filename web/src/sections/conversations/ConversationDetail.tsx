@@ -2,6 +2,7 @@ import { Link, useParams } from "react-router";
 
 import { useConversationMessages } from "@/api/queries/conversations";
 import { contentToText } from "@/components/messageContent";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { SectionGate } from "@/capabilities/SectionGate";
 
 // Per-session transcript from the real conversations endpoint. A 404 (no
@@ -34,11 +35,11 @@ function ConversationDetailInner() {
       <p className="mt-1 font-mono text-xs text-neutral-400">agent {data.agent_id}</p>
 
       {data.messages.length === 0 ? (
-        <p className="mt-10 text-sm text-neutral-400">This conversation has no messages.</p>
+        <EmptyState title="This conversation has no messages." />
       ) : (
         <ul className="mt-6 flex flex-col gap-2">
           {data.messages.map((m, i) => (
-            <li key={i} className="rounded bg-neutral-900 p-3 text-sm">
+            <li key={i} className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-3 text-sm">
               <span className="text-xs text-neutral-400">
                 {m.role}
                 {m.role === "tool" && m.name ? ` · ${m.name}` : ""}

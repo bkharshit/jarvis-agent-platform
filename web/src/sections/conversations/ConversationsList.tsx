@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 
 import { useExecutions } from "@/api/queries/executions";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { SectionGate } from "@/capabilities/SectionGate";
 
 import { groupSessions } from "./groupSessions";
@@ -31,9 +32,10 @@ function ConversationsListInner() {
       </p>
 
       {sessions.length === 0 ? (
-        <p className="mt-10 text-sm text-neutral-400">
-          No sessions yet. Run an agent with a session id and it appears here.
-        </p>
+        <EmptyState
+          title="No sessions yet"
+          description="Run an agent with a session id and it appears here."
+        />
       ) : (
         <>
           {total > sessions.length && (
@@ -44,7 +46,7 @@ function ConversationsListInner() {
           )}
           <table className="mt-6 w-full text-left text-sm">
             <thead className="text-neutral-400">
-              <tr className="border-b border-neutral-800">
+              <tr className="border-b border-neutral-800/80">
                 <th className="py-2 pr-4 font-medium">Agent</th>
                 <th className="py-2 pr-4 font-medium">Session</th>
                 <th className="py-2 pr-4 font-medium">Runs</th>
@@ -53,7 +55,7 @@ function ConversationsListInner() {
             </thead>
             <tbody>
               {sessions.map((s) => (
-                <tr key={`${s.agent_id}/${s.session_id}`} className="border-b border-neutral-900">
+                <tr key={`${s.agent_id}/${s.session_id}`} className="border-b border-neutral-800/50 transition-colors hover:bg-neutral-900/40">
                   <td className="py-2 pr-4 font-mono text-xs text-neutral-300">
                     {s.agent_id.slice(0, 12)}…
                   </td>

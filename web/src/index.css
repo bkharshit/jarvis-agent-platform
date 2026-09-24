@@ -1,1 +1,122 @@
 @import "tailwindcss";
+
+@theme {
+  --color-surface-0: #0d0f12;
+
+  --animate-overlay-in: overlay-in 120ms ease-out;
+  --animate-panel-in-right: panel-in-right 160ms ease-out;
+  --animate-panel-in-left: panel-in-left 160ms ease-out;
+  --animate-panel-in-scale: panel-in-scale 160ms ease-out;
+
+  @keyframes overlay-in {
+    from {
+      opacity: 0;
+    }
+  }
+
+  @keyframes panel-in-right {
+    from {
+      transform: translateX(16px);
+      opacity: 0;
+    }
+  }
+
+  @keyframes panel-in-left {
+    from {
+      transform: translateX(-16px);
+      opacity: 0;
+    }
+  }
+
+  @keyframes panel-in-scale {
+    from {
+      transform: scale(0.97);
+      opacity: 0;
+    }
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-[#0d0f12] text-neutral-100 antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  ::selection {
+    background: rgb(99 102 241 / 0.35);
+    color: rgb(224 231 255);
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(99 102 241 / 0.6);
+    outline-offset: 1px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* xyflow canvas — dark glass treatment (the canvas bg stays xyflow's own
+   transparent pane; the editor draws the surface behind it) */
+.react-flow__edge-path {
+  stroke: rgb(82 82 91);
+  stroke-width: 1.5px;
+}
+
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:focus .react-flow__edge-path {
+  stroke: #6366f1;
+}
+
+.react-flow__handle {
+  width: 7px;
+  height: 7px;
+  background: #71717a;
+  border: none;
+}
+
+.react-flow__handle:hover {
+  background: #6366f1;
+}
+
+.react-flow__controls {
+  overflow: hidden;
+  border-radius: 0.75rem;
+  border: 1px solid rgb(38 38 38 / 0.8);
+  background: rgb(23 23 23 / 0.7);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+}
+
+.react-flow__controls-button {
+  background: transparent;
+  border-bottom: 1px solid rgb(38 38 38 / 0.6);
+  color: #d4d4d8;
+}
+
+.react-flow__controls-button:hover {
+  background: rgb(63 63 70 / 0.4);
+}
+
+.react-flow__controls-button svg {
+  fill: currentColor;
+}
+
+.react-flow__minimap {
+  overflow: hidden;
+  border-radius: 0.75rem;
+  border: 1px solid rgb(38 38 38 / 0.8);
+  background: rgb(23 23 23 / 0.7);
+  backdrop-filter: blur(8px);
+}
+
+.react-flow__minimap-mask {
+  fill: rgb(13 15 18 / 0.7);
+}

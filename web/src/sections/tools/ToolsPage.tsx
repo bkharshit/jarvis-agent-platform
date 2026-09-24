@@ -1,10 +1,16 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
+import { Plus, Wrench } from "lucide-react";
 
 import { useCreateMcpServer, useDeleteMcpServer, useMcpServers, useProbeMcpServer, useUpdateMcpServer } from "@/api/queries/mcp";
 import type { McpServer } from "@/api/queries/mcp";
 import { useCreateCredential, useCredentials } from "@/api/queries/settings";
 import type { CredentialOut } from "@/api/queries/settings";
+import { PageHeader } from "@/components/catalog/PageHeader";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Input } from "@/components/ui/Input";
 import { builtinToolsFull, mcpGate, settingsFacts } from "@/capabilities/detail";
 import { SectionGate } from "@/capabilities/SectionGate";
 import { useCapabilities } from "@/capabilities/useCapabilities";
@@ -19,9 +25,6 @@ import { RotateCredentialButton } from "./RotateCredentialButton";
 // block. Nothing about the builtin set is hardcoded here. The MCP panel
 // (S4) lists the tenant's servers live from the listing route; the
 // capability gate only decides panel-vs-coming-soon.
-
-const probeCard =
-  "rounded border border-neutral-800 bg-neutral-900 p-3";
 
 function McpTools({ serverId }: { serverId: string }) {
   const probe = useProbeMcpServer(serverId);
@@ -39,7 +42,10 @@ function McpTools({ serverId }: { serverId: string }) {
   return (
     <ul className="mt-2 flex flex-col gap-2">
       {tools.map((tool) => (
-        <li key={tool.name} className={probeCard}>
+        <li
+          key={tool.name}
+          className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-3"
+        >
           <h4 className="font-mono text-xs text-neutral-100">{tool.name}</h4>
           <p className="mt-1 text-xs text-neutral-400">{tool.description}</p>
           {Object.keys(tool.parameters ?? {}).length > 0 && (
@@ -47,7 +53,7 @@ function McpTools({ serverId }: { serverId: string }) {
               <summary className="cursor-pointer text-xs text-neutral-500">
                 Parameter schema
               </summary>
-              <pre className="mt-1 max-h-60 overflow-auto rounded bg-neutral-950 p-2 font-mono text-xs text-neutral-300">
+              <pre className="mt-1 max-h-60 overflow-auto rounded-lg bg-neutral-950 p-2 font-mono text-xs text-neutral-300">
                 {JSON.stringify(tool.parameters, null, 2)}
               </pre>
             </details>
@@ -107,7 +113,7 @@ function EditRefsForm({
   return (
     <form
       onSubmit={submit}
-      className="mt-3 rounded border border-neutral-800 bg-neutral-950 p-3"
+      className="mt-3 rounded-xl border border-neutral-800/80 bg-neutral-950 p-3"
     >
       <p className="mb-2 text-xs text-neutral-500">
         {server.config.type === "http"
@@ -141,20 +147,12 @@ function EditRefsForm({
         createError={createCredential.isError ? createCredential.error.message : null}
       />
       <div className="mt-3 flex items-center gap-3">
-        <button
-          type="submit"
-          disabled={!dirty || update.isPending}
-          className="cursor-pointer rounded bg-neutral-100 px-3 py-1.5 text-xs font-medium text-neutral-900 hover:bg-white disabled:cursor-not-allowed disabled:text-neutral-500"
-        >
+        <Button type="submit" size="sm" disabled={!dirty || update.isPending}>
           {update.isPending ? "Saving…" : "Save refs"}
-        </button>
-        <button
-          type="button"
-          onClick={onClose}
-          className="cursor-pointer rounded border border-neutral-700 px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-900"
-        >
+        </Button>
+        <Button variant="secondary" size="sm" onClick={onClose}>
           Cancel
-        </button>
+        </Button>
       </div>
       {update.isError && (
         <p className="mt-2 text-xs text-red-400" role="alert">
@@ -191,54 +189,47 @@ function McpServerRow({
     credentials.find((c) => c.id === id)?.name ?? id;
 
   return (
-    <li className="rounded border border-neutral-800 bg-neutral-900 p-4">
+    <li className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-4 transition-all hover:border-neutral-700/80">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <h3 className="font-mono text-sm text-neutral-100">{server.name}</h3>
           <p className="mt-1 flex items-center gap-2 text-xs text-neutral-400">
-            <span className="rounded border border-neutral-700 px-1.5 py-0.5 font-mono text-neutral-300">
-              {server.config.type}
-            </span>
-            <span className={server.enabled ? "text-green-400" : "text-neutral-500"}>
-              {server.enabled ? "enabled" : "disabled"}
-            </span>
+            <Badge variant="neutral" className="font-mono">{server.config.type}</Badge>
+            {server.enabled ? (
+              <Badge variant="success" dot>enabled</Badge>
+            ) : (
+              <span className="text-neutral-500">disabled</span>
+            )}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-3 text-xs">
-          <button
-            type="button"
-            onClick={() => setShowTools((v) => !v)}
-            className="cursor-pointer text-neutral-400 hover:text-neutral-200"
-          >
+          <Button variant="ghost" size="sm" onClick={() => setShowTools((v) => !v)}>
             {showTools ? "Hide tools" : "View tools"}
-          </button>
+          </Button>
           {canManage && (
             <>
-              <button
-                type="button"
-                onClick={() => setEditing((v) => !v)}
-                className="cursor-pointer text-neutral-400 hover:text-neutral-200"
-              >
+              <Button variant="ghost" size="sm" onClick={() => setEditing((v) => !v)}>
                 {editing
                   ? "Hide editor"
                   : server.config.type === "http"
                     ? "Edit headers"
                     : "Edit env"}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() =>
                   update.mutate(
                     { serverId: server.id, body: { enabled: !server.enabled } },
                     { onError },
                   )
                 }
-                className="cursor-pointer text-neutral-400 hover:text-neutral-200"
               >
                 {server.enabled ? "Disable" : "Enable"}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 disabled={remove.isPending}
                 onClick={() => {
                   // Snapshots keep the binding: the next run fails resolution
@@ -251,10 +242,10 @@ function McpServerRow({
                     return;
                   remove.mutate(server.id, { onError });
                 }}
-                className="cursor-pointer text-red-400 hover:text-red-300 disabled:cursor-not-allowed disabled:text-neutral-600"
+                className="text-red-400 hover:bg-rose-950/40 hover:text-red-300"
               >
                 Remove
-              </button>
+              </Button>
             </>
           )}
         </div>
@@ -286,9 +277,6 @@ function McpServerRow({
     </li>
   );
 }
-
-const inputClass =
-  "w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm text-neutral-100";
 
 function AddServerForm({ allowStored }: { allowStored: boolean }) {
   const create = useCreateMcpServer();
@@ -341,28 +329,24 @@ function AddServerForm({ allowStored }: { allowStored: boolean }) {
 
   if (!show) {
     return (
-      <button
-        type="button"
-        onClick={() => setShow(true)}
-        className="cursor-pointer rounded bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white"
-      >
+      <Button size="sm" icon={<Plus aria-hidden />} onClick={() => setShow(true)}>
         Add server
-      </button>
+      </Button>
     );
   }
 
   return (
     <form
       onSubmit={submit}
-      className="mt-4 grid max-w-md grid-cols-2 gap-3 rounded border border-neutral-800 bg-neutral-900 p-4"
+      className="mt-4 grid max-w-md grid-cols-2 gap-3 rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-4"
     >
       <label className="text-sm">
         <span className="text-neutral-400">Name (slug)</span>
-        <input
+        <Input
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="fixtures"
-          className={`mt-1 ${inputClass}`}
+          className="mt-1"
         />
       </label>
       <label className="text-sm">
@@ -370,7 +354,7 @@ function AddServerForm({ allowStored }: { allowStored: boolean }) {
         <select
           value={transport}
           onChange={(e) => setTransport(e.target.value as "stdio" | "http")}
-          className={`mt-1 ${inputClass}`}
+          className="mt-1 w-full cursor-pointer rounded-md border border-neutral-800 bg-neutral-900/70 px-3 py-1.5 text-sm text-neutral-100 transition-colors focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
         >
           <option value="stdio">stdio</option>
           <option value="http">http</option>
@@ -380,31 +364,31 @@ function AddServerForm({ allowStored }: { allowStored: boolean }) {
         <>
           <label className="text-sm">
             <span className="text-neutral-400">Command</span>
-            <input
+            <Input
               value={command}
               onChange={(e) => setCommand(e.target.value)}
               placeholder="uvx"
-              className={`mt-1 ${inputClass}`}
+              className="mt-1"
             />
           </label>
           <label className="text-sm">
             <span className="text-neutral-400">Arguments (comma-separated)</span>
-            <input
+            <Input
               value={args}
               onChange={(e) => setArgs(e.target.value)}
               placeholder="mcp-server-time, --local"
-              className={`mt-1 ${inputClass}`}
+              className="mt-1"
             />
           </label>
         </>
       ) : (
         <label className="col-span-2 text-sm">
           <span className="text-neutral-400">URL</span>
-          <input
+          <Input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="https://…"
-            className={`mt-1 ${inputClass}`}
+            className="mt-1"
           />
         </label>
       )}
@@ -443,20 +427,17 @@ function AddServerForm({ allowStored }: { allowStored: boolean }) {
           </div>
         </div>
       )}
-      <button
-        type="submit"
-        disabled={create.isPending}
-        className="cursor-pointer justify-self-start rounded bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:cursor-not-allowed disabled:text-neutral-500"
-      >
+      <Button type="submit" size="sm" className="justify-self-start" disabled={create.isPending}>
         {create.isPending ? "Adding…" : "Create server"}
-      </button>
-      <button
-        type="button"
+      </Button>
+      <Button
+        variant="secondary"
+        size="sm"
+        className="justify-self-start"
         onClick={() => setShow(false)}
-        className="cursor-pointer justify-self-start rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-950"
       >
         Cancel
-      </button>
+      </Button>
       {create.isError && (
         <p className="col-span-2 text-sm text-red-400" role="alert">
           {create.error.message}
@@ -467,8 +448,8 @@ function AddServerForm({ allowStored }: { allowStored: boolean }) {
 }
 
 /** MCP server management (S4): admin/owner writes server-side; a member's
- * 403 is shown verbatim if it ever comes back (rule 6 — never pre-gated
- * beyond the whoami-driven hiding of the mutating controls). */
+ *  403 is shown verbatim if it ever comes back (rule 6 — never pre-gated
+ *  beyond the whoami-driven hiding of the mutating controls). */
 function McpPanel() {
   const { data: whoami } = useWhoami();
   const { data: capabilities } = useCapabilities();
@@ -507,7 +488,11 @@ function McpPanel() {
       ) : isError ? (
         <p className="mt-4 text-sm text-red-400" role="alert">{error.message}</p>
       ) : servers.length === 0 ? (
-        <p className="mt-4 text-sm text-neutral-400">No MCP servers configured.</p>
+        <EmptyState
+          icon={<Wrench className="h-6 w-6" />}
+          title="No MCP servers configured"
+          description="Add a server — agents bind discovered tools by name, and every tool requires approval by default."
+        />
       ) : (
         <ul className="mt-4 flex flex-col gap-2">
           {servers.map((server) => (
@@ -529,28 +514,64 @@ function ToolsInner() {
   const { data: capabilities } = useCapabilities();
   const tools = builtinToolsFull(capabilities);
   const mcp = mcpGate(capabilities);
+  const [search, setSearch] = useState("");
+
+  const needle = search.trim().toLowerCase();
+  const visible =
+    needle === ""
+      ? tools
+      : tools.filter(
+          (tool) =>
+            tool.name.toLowerCase().includes(needle) ||
+            tool.description.toLowerCase().includes(needle),
+        );
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-8">
-      <h1 className="text-xl font-semibold">Tools</h1>
-      <p className="mt-1 text-sm text-neutral-400">
-        Builtin registry from the backend — agents bind these by name.
-      </p>
+      <PageHeader
+        title="Tools"
+        description="Builtin registry from the backend — agents bind these by name."
+        search={{
+          value: search,
+          onChange: setSearch,
+          placeholder: "Search tools…",
+        }}
+      />
 
       {tools.length === 0 ? (
-        <p className="mt-10 text-sm text-neutral-400">No tools registered.</p>
+        <EmptyState
+          icon={<Wrench className="h-6 w-6" />}
+          title="No tools registered."
+          description="The backend reports an empty builtin registry."
+        />
+      ) : visible.length === 0 ? (
+        <EmptyState
+          icon={<Wrench className="h-6 w-6" />}
+          title="No tools match"
+          description="Nothing matches this search — try a different term."
+        />
       ) : (
         <ul className="mt-6 flex flex-col gap-2">
-          {tools.map((tool) => (
-            <li key={tool.name} className="rounded border border-neutral-800 bg-neutral-900 p-4">
-              <h2 className="font-mono text-sm text-neutral-100">{tool.name}</h2>
+          {visible.map((tool) => (
+            <li
+              key={tool.name}
+              className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-4 transition-all hover:border-neutral-700/80"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <h2 className="font-mono text-sm text-neutral-100">{tool.name}</h2>
+                {Object.keys(tool.parameters ?? {}).length > 0 && (
+                  <Badge variant="neutral">
+                    {Object.keys(tool.parameters ?? {}).length} params
+                  </Badge>
+                )}
+              </div>
               <p className="mt-1 text-sm text-neutral-400">{tool.description}</p>
               {Object.keys(tool.parameters ?? {}).length > 0 && (
                 <details className="mt-2">
                   <summary className="cursor-pointer text-xs text-neutral-500">
                     Parameter schema
                   </summary>
-                  <pre className="mt-2 max-h-60 overflow-auto rounded bg-neutral-950 p-2 font-mono text-xs text-neutral-300">
+                  <pre className="mt-2 max-h-60 overflow-auto rounded-lg bg-neutral-950 p-2 font-mono text-xs text-neutral-300">
                     {JSON.stringify(tool.parameters, null, 2)}
                   </pre>
                 </details>
@@ -563,7 +584,7 @@ function ToolsInner() {
       {mcp.enabled ? (
         <McpPanel />
       ) : (
-        <p className="mt-8 rounded border border-neutral-800 p-4 text-sm text-neutral-400">
+        <p className="mt-8 rounded-xl border border-neutral-800/80 p-4 text-sm text-neutral-400">
           MCP tools are not enabled yet
           {mcp.stage ? ` — they arrive in stage ${mcp.stage}` : ""}. This page
           reflects the backend's own gate.

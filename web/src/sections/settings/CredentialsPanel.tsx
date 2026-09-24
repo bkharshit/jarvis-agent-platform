@@ -7,6 +7,9 @@ import {
   useRevokeCredential,
   useUpdateCredential,
 } from "@/api/queries/settings";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
 import { toast } from "@/stores/toast";
 
 // BYOK credentials (S2, ADR 0006) — write-only through the API: the secret
@@ -74,18 +77,14 @@ export function CredentialsPanel({
           </p>
         </div>
         {canManage && (
-          <button
-            type="button"
-            onClick={() => setShowForm((v) => !v)}
-            className="cursor-pointer rounded bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white"
-          >
+          <Button onClick={() => setShowForm((v) => !v)}>
             {showForm ? "Cancel" : "Add credential"}
-          </button>
+          </Button>
         )}
       </div>
 
       {!storageAvailable && (
-        <p className="mt-4 rounded border border-neutral-800 p-4 text-sm text-neutral-400">
+        <p className="mt-4 rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-4 text-sm text-neutral-400">
           BYOK storage is not configured on this backend (no master key in the
           environment) — the API returns 503 for these operations. See{" "}
           <code className="font-mono">JARVIS_CREDENTIALS_MASTER_KEY_ENV</code> in the runbook.
@@ -93,47 +92,46 @@ export function CredentialsPanel({
       )}
 
       {showForm && (
-        <form onSubmit={submit} className="mt-4 grid max-w-md grid-cols-2 gap-3 rounded border border-neutral-800 bg-neutral-900 p-4">
+        <form
+          onSubmit={submit}
+          className="mt-4 grid max-w-md grid-cols-2 gap-3 rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-4 shadow-sm"
+        >
           <label className="text-sm">
             <span className="text-neutral-400">Name</span>
-            <input
+            <Input
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="mt-1 w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm"
+              className="mt-1"
             />
           </label>
           <label className="text-sm">
             <span className="text-neutral-400">Provider</span>
-            <input
+            <Input
               required
               value={provider}
               onChange={(e) => setProvider(e.target.value)}
               placeholder="openai_compatible"
-              className="mt-1 w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm"
+              className="mt-1"
             />
           </label>
           <label className="col-span-2 text-sm">
             <span className="text-neutral-400">Secret</span>
-            <input
+            <Input
               required
               type="password"
               value={secret}
               onChange={(e) => setSecret(e.target.value)}
               placeholder="sk-…"
-              className="mt-1 w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm"
+              className="mt-1"
             />
           </label>
           <p className="col-span-2 text-xs text-neutral-500">
             Sent once, encrypted server-side (AES-GCM), never returned or logged.
           </p>
-          <button
-            type="submit"
-            disabled={create.isPending}
-            className="cursor-pointer justify-self-start rounded bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:cursor-not-allowed disabled:text-neutral-500"
-          >
+          <Button type="submit" disabled={create.isPending} className="justify-self-start">
             {create.isPending ? "Saving…" : "Save credential"}
-          </button>
+          </Button>
           {create.isError && (
             <p className="text-sm text-red-400" role="alert">
               {create.error.message}
@@ -170,9 +168,9 @@ export function CredentialsPanel({
                 </td>
                 <td className="py-2 pr-4">
                   {credential.revoked_at ? (
-                    <span className="text-red-400">revoked</span>
+                    <Badge variant="danger">revoked</Badge>
                   ) : (
-                    <span className="text-green-500">active</span>
+                    <Badge variant="success" dot>active</Badge>
                   )}
                 </td>
                 <td className="py-2 pr-4 text-right">
@@ -184,48 +182,53 @@ export function CredentialsPanel({
                       }}
                       className="inline-flex items-center gap-2"
                     >
-                      <input
+                      <Input
                         required
                         type="password"
                         value={replacement}
                         onChange={(e) => setReplacement(e.target.value)}
                         placeholder="new secret"
-                        className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm"
+                        className="w-44"
                       />
-                      <button
+                      <Button
                         type="submit"
+                        variant="ghost"
+                        size="sm"
                         disabled={update.isPending}
-                        className="cursor-pointer text-neutral-300 hover:text-neutral-100"
+                        className="text-sm"
                       >
                         save
-                      </button>
-                      <button
-                        type="button"
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={() => {
                           setReplacing(null);
                           setReplacement("");
                         }}
-                        className="cursor-pointer text-neutral-500 hover:text-neutral-300"
+                        className="text-sm text-neutral-500"
                       >
                         cancel
-                      </button>
+                      </Button>
                     </form>
                   ) : (
                     canManage &&
                     !credential.revoked_at && (
                       <>
-                        <button
-                          type="button"
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           onClick={() => {
                             setReplacing(credential.id);
                             setReplacement("");
                           }}
-                          className="cursor-pointer text-neutral-400 hover:text-neutral-200"
+                          className="text-sm"
                         >
                           replace secret
-                        </button>
-                        <button
-                          type="button"
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           disabled={revoke.isPending}
                           onClick={() => {
                             if (!window.confirm(`Revoke credential "${credential.name}"? Agents bound to it will fail runs with a model error.`))
@@ -234,10 +237,10 @@ export function CredentialsPanel({
                               onError: (err) => toast("error", err.message),
                             });
                           }}
-                          className="ml-3 cursor-pointer text-red-400 hover:text-red-300 disabled:cursor-not-allowed disabled:text-neutral-600"
+                          className="ml-2 text-sm text-red-400 hover:bg-rose-950/40 hover:text-red-300"
                         >
                           revoke
-                        </button>
+                        </Button>
                       </>
                     )
                   )}

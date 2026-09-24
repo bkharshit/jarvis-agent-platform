@@ -12,6 +12,7 @@ import {
 import { contentToText } from "@/components/messageContent";
 import { EventTimeline } from "@/components/EventTimeline";
 import { PauseCard } from "@/components/PauseCard";
+import { Button } from "@/components/ui/Button";
 import { SectionGate } from "@/capabilities/SectionGate";
 import { llmTraceEnabled } from "@/capabilities/detail";
 import { useCapabilities } from "@/capabilities/useCapabilities";
@@ -187,14 +188,14 @@ function ExecutionDetailInner() {
     <div className="mx-auto max-w-4xl px-6 py-8">
       <div className="flex items-center justify-between">
         <h1 className="font-mono text-lg font-semibold">{run.run_id}</h1>
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={() => setShowReplay((v) => !v)}
-          className="cursor-pointer rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-900"
           aria-pressed={showReplay}
         >
           {showReplay ? "Hide replay" : "Replay events"}
-        </button>
+        </Button>
       </div>
 
       <div className="mt-4 flex flex-col gap-1.5">
@@ -262,15 +263,15 @@ function ExecutionDetailInner() {
             <p className="text-sm text-neutral-400">Loading pause…</p>
           )}
           <div className="mt-2 flex items-center gap-3">
-            <button
-              type="button"
+            <Button
+              variant="danger"
+              size="sm"
               data-testid="cancel-run"
               disabled={acting}
               onClick={() => void cancel()}
-              className="cursor-pointer rounded border border-red-800 px-3 py-1.5 text-sm text-red-300 hover:bg-red-950 disabled:cursor-not-allowed disabled:text-neutral-600"
             >
               Cancel run
-            </button>
+            </Button>
             {actionError !== null && (
               <p className="text-sm text-red-400" role="alert">{actionError}</p>
             )}
@@ -287,7 +288,7 @@ function ExecutionDetailInner() {
         ) : (
           <ul className="mt-2 flex flex-col gap-2">
             {messages.map((m, i) => (
-              <li key={i} className="rounded bg-neutral-900 p-3 text-sm">
+              <li key={i} className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-3 text-sm">
                 <span className="text-xs text-neutral-400">{m.role}</span>
                 <p className="mt-1 whitespace-pre-wrap text-neutral-200">
                   {contentToText(m.content)}
@@ -307,8 +308,10 @@ function ExecutionDetailInner() {
             {tool_executions.map((t) => (
               <li
                 key={t.tool_call_id}
-                className={`rounded border p-3 text-sm ${
-                  t.is_error ? "border-red-900 bg-red-950/40" : "border-neutral-800 bg-neutral-900"
+                className={`rounded-xl border p-3 text-sm ${
+                  t.is_error
+                    ? "border-rose-900/70 bg-rose-950/40"
+                    : "border-neutral-800/80 bg-neutral-900/50"
                 }`}
               >
                 <div className="flex items-center justify-between">
@@ -317,8 +320,8 @@ function ExecutionDetailInner() {
                 </div>
                 {/* output is top-level on the API payload (D17) */}
                 <pre
-                  className={`mt-2 max-h-60 overflow-auto whitespace-pre-wrap rounded p-2 font-mono text-xs ${
-                    t.is_error ? "text-red-200" : "text-neutral-300"
+                  className={`mt-2 max-h-60 overflow-auto whitespace-pre-wrap rounded-lg border border-neutral-800/80 bg-neutral-950 p-2 font-mono text-xs ${
+                    t.is_error ? "text-rose-200" : "text-neutral-300"
                   }`}
                 >
                   {t.output}
@@ -342,7 +345,7 @@ function ExecutionDetailInner() {
               return (
                 <li
                   key={child.run_id}
-                  className="rounded border border-neutral-800 bg-neutral-900 p-3 text-sm"
+                  className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-3 text-sm transition-all hover:border-neutral-700/80"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <Link
@@ -406,7 +409,7 @@ function LlmTraceSection({ runId, status }: { runId: string; status: string }) {
         <ul className="mt-2 flex flex-col gap-2">
           {data!.entries.map((entry, i) => (
             <li key={i}>
-              <details className="rounded bg-neutral-900 p-3">
+              <details className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-3">
                 <summary className="cursor-pointer text-xs text-neutral-400">
                   iteration {entry.iteration} · {entry.provider}/{entry.model} ·{" "}
                   {entry.method}
@@ -415,13 +418,13 @@ function LlmTraceSection({ runId, status }: { runId: string; status: string }) {
                 <div className="mt-2 flex flex-col gap-2">
                   <div>
                     <p className="text-xs text-neutral-500">Request</p>
-                    <pre className="mt-1 max-h-96 overflow-auto rounded bg-neutral-950 p-2 font-mono text-xs text-neutral-300">
+                    <pre className="mt-1 max-h-96 overflow-auto rounded-lg border border-neutral-800/80 bg-neutral-950 p-2 font-mono text-xs text-neutral-300">
                       {JSON.stringify(entry.request, null, 2)}
                     </pre>
                   </div>
                   <div>
                     <p className="text-xs text-neutral-500">Response</p>
-                    <pre className="mt-1 max-h-96 overflow-auto rounded bg-neutral-950 p-2 font-mono text-xs text-neutral-300">
+                    <pre className="mt-1 max-h-96 overflow-auto rounded-lg border border-neutral-800/80 bg-neutral-950 p-2 font-mono text-xs text-neutral-300">
                       {JSON.stringify(entry.response, null, 2)}
                     </pre>
                   </div>

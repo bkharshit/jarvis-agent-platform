@@ -62,4 +62,25 @@ describe("<AgentsList/>", () => {
       await screen.findByText("agent has executions; cancel or purge them first"),
     ).toBeInTheDocument();
   });
+
+  it("filters rows by the search box (name, case-insensitive)", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AgentsList />, { initialEntries: ["/agents"] });
+
+    await screen.findByRole("link", { name: "Research agent" });
+    await user.type(screen.getByLabelText("Search"), "research");
+    expect(screen.getByRole("link", { name: "Research agent" })).toBeInTheDocument();
+  });
+
+  it("switches between grid and table views", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AgentsList />, { initialEntries: ["/agents"] });
+
+    await screen.findByRole("link", { name: "Research agent" });
+    await user.click(screen.getByRole("button", { name: "Table view" }));
+    expect(screen.getByRole("table")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Grid view" }));
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
 });

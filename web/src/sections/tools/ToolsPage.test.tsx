@@ -60,6 +60,20 @@ describe("<ToolsPage/>", () => {
     expect(await screen.findByText("No tools registered.")).toBeInTheDocument();
   });
 
+  it("filters the registry by the search box (name, case-insensitive)", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ToolsPage />, { initialEntries: ["/tools"] });
+
+    await screen.findByText("calculator");
+    await user.type(screen.getByLabelText("Search"), "calc");
+    expect(screen.getByText("calculator")).toBeInTheDocument();
+    expect(screen.queryByText("current_time")).not.toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText("Search"));
+    await user.type(screen.getByLabelText("Search"), "no-such-tool");
+    expect(await screen.findByText("No tools match")).toBeInTheDocument();
+  });
+
   it("shows the coming-soon copy while the backend's MCP gate is closed", async () => {
     renderWithProviders(<ToolsPage />, {
       initialEntries: ["/tools"],

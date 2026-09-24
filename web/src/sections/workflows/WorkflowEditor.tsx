@@ -9,8 +9,12 @@ import {
   type WorkflowDefinition,
 } from "@/api/queries/workflows";
 import { SectionGate } from "@/capabilities/SectionGate";
+import { Button } from "@/components/ui/Button";
+import { Drawer } from "@/components/ui/Drawer";
+import { Input } from "@/components/ui/Input";
 import { hashDefinition, definitionToGraph, graphToPayload, type CanvasGraph } from "./graphState";
 import { WorkflowCanvas } from "./WorkflowCanvas";
+import { WorkflowRunDock } from "./WorkflowRunDock";
 
 // Workflow editor (S6): the canvas plus draft-save. Saves go through the
 // server hash — before every PATCH the definition is re-fetched and hashed;
@@ -18,7 +22,7 @@ import { WorkflowCanvas } from "./WorkflowCanvas";
 // a silent clobber. Create publishes v1; PATCH publishes the next version
 // (both re-pin agent nodes server-side, D42).
 
-function EditorInner() {
+function EditorInner({ initialRunOpen = false }: { initialRunOpen?: boolean }) {
   const { workflowId } = useParams();
   const navigate = useNavigate();
   const isNew = workflowId === undefined;
@@ -32,6 +36,8 @@ function EditorInner() {
   const [serverHash, setServerHash] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  /** Test-run slide-over — the /run URL opens the editor with it out. */
+  const [runOpen, setRunOpen] = useState(initialRunOpen);
 
   const createWorkflow = useCreateWorkflow();
   const updateWorkflow = useUpdateWorkflow(workflowId ?? "");
@@ -107,57 +113,57 @@ function EditorInner() {
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">{isNew ? "New workflow" : "Edit workflow"}</h1>
         <div className="flex items-center gap-3">
-          <Link to="/workflows" className="text-sm text-neutral-400 underline">
+          <Link to="/workflows" className="text-sm text-neutral-400 underline-offset-2 hover:underline">
             All workflows
           </Link>
           {!isNew && (
-            <Link
-              to={`/workflows/${workflowId}/run`}
-              className="text-sm text-neutral-200 underline"
+            <Button
+              variant="secondary"
+              size="sm"
               data-testid="run-link"
+              onClick={() => setRunOpen(true)}
             >
-              Run
-            </Link>
+              Test run
+            </Button>
           )}
         </div>
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
-        <input
+        <Input
           aria-label="Workflow name"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="workflow name"
-          className="w-64 rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100"
+          className="w-64"
         />
-        <input
+        <Input
           aria-label="Workflow description"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="description (optional)"
-          className="w-72 rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100"
+          className="w-72"
         />
         <label className="flex items-center gap-2 text-xs text-neutral-400">
           max node executions
-          <input
+          <Input
             type="number"
             min={1}
             max={128}
             aria-label="Max node executions"
             value={maxNodeExecutions}
             onChange={(e) => setMaxNodeExecutions(Number(e.target.value))}
-            className="w-20 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100"
+            className="w-20"
           />
         </label>
-        <button
+        <Button
           type="button"
           data-testid="save-workflow"
           onClick={() => void save()}
           disabled={saving}
-          className="cursor-pointer rounded bg-neutral-100 px-4 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:cursor-not-allowed disabled:text-neutral-500"
         >
           {saving ? "Saving…" : isNew ? "Create & publish" : "Save & publish"}
-        </button>
+        </Button>
       </div>
 
       {saveError !== null && (
@@ -169,14 +175,26 @@ function EditorInner() {
       <div className="mt-4">
         <WorkflowCanvas graph={graph} onChange={setGraph} />
       </div>
+
+      {!isNew && (
+        <Drawer
+          open={runOpen}
+          onClose={() => setRunOpen(false)}
+          title="Test run"
+          modal={false}
+          widthClassName="w-[480px]"
+        >
+          <WorkflowRunDock workflowId={workflowId!} />
+        </Drawer>
+      )}
     </div>
   );
 }
 
-export function WorkflowEditorPage() {
+export function WorkflowEditorPage({ initialRunOpen = false }: { initialRunOpen?: boolean }) {
   return (
     <SectionGate sectionKey="workflows">
-      <EditorInner />
+      <EditorInner initialRunOpen={initialRunOpen} />
     </SectionGate>
   );
 }

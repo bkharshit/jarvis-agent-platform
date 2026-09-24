@@ -74,4 +74,20 @@ describe("<WorkflowsList/>", () => {
       expect(screen.getByText(/workflow has executions/)).toBeInTheDocument(),
     );
   });
+
+  it("filters rows by the search box", async () => {
+    const user = userEvent.setup();
+    server.use(http.get("/v1/workflows", () => HttpResponse.json({ items: [workflowFixture] })));
+    renderWithProviders(<WorkflowsList />, { capabilities: LIVE, initialEntries: ["/workflows"] });
+
+    await screen.findByRole("link", { name: "Research chain" });
+    await user.type(screen.getByLabelText("Search"), "research");
+    expect(screen.getByRole("link", { name: "Research chain" })).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText("Search"));
+    await user.type(screen.getByLabelText("Search"), "no-such-workflow");
+    expect(
+      await screen.findByText("No workflows match"),
+    ).toBeInTheDocument();
+  });
 });

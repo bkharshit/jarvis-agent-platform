@@ -18,9 +18,9 @@ export function ComingSoon({ sectionKey, capability }: ComingSoonProps) {
       <p className="mt-3 text-sm text-neutral-400">
         {capability.summary ?? "This section is not implemented yet."}
       </p>
-      <p className="mt-6 inline-block rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1 text-xs text-neutral-400">
+      <p className="mt-6 inline-flex items-center gap-1.5 rounded-full border border-indigo-500/20 bg-indigo-500/10 px-3 py-1 text-xs text-indigo-300">
         Coming soon — enabled by stage{" "}
-        <span className="font-mono text-neutral-200">{capability.stage ?? "TBD"}</span>
+        <span className="font-mono text-indigo-200">{capability.stage ?? "TBD"}</span>
       </p>
     </div>
   );

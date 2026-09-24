@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { ComingSoon } from "@/capabilities/ComingSoon";
 import type { SectionKey } from "@/capabilities/sectionRegistry";
 import { useCapabilities } from "@/capabilities/useCapabilities";
+import { Button } from "@/components/ui/Button";
 
 // Route guard: every section route renders from the capabilities payload.
 // Loading and error are honest full-screen states — the shell never renders
@@ -10,7 +11,7 @@ import { useCapabilities } from "@/capabilities/useCapabilities";
 
 function FullScreen({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-neutral-950 text-neutral-400">
+    <div className="flex min-h-screen items-center justify-center bg-[#0d0f12] text-neutral-400">
       {children}
     </div>
   );
@@ -31,18 +32,18 @@ export function SectionGate({
   if (isError) {
     return (
       <FullScreen>
-        <div className="text-center">
+        <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-8 text-center shadow-lg">
           <p className="text-neutral-200">Cannot reach the JARVIS backend.</p>
-          <p className="mt-1 text-xs">
+          <p className="mt-1 text-xs text-neutral-500">
             Start it with <code className="font-mono">uv run jarvis serve</code>, then retry.
           </p>
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            className="mt-4"
             onClick={() => void refetch()}
-            className="mt-4 rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
           >
             Retry
-          </button>
+          </Button>
         </div>
       </FullScreen>
     );

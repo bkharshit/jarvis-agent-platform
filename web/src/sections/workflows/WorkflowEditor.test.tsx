@@ -266,4 +266,18 @@ describe("<WorkflowEditorPage/>", () => {
       expect(screen.getByLabelText("Agent")).toHaveValue("agent-new"),
     );
   });
+
+  it("opens the config drawer on selection and closes it with Escape", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<WorkflowEditorPage />, { capabilities: LIVE });
+
+    // no selection → no drawer body
+    expect(screen.queryByTestId("node-panel")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "+ agent" }));
+    expect(await screen.findByTestId("node-panel-agent")).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByTestId("node-panel")).not.toBeInTheDocument();
+  });
 });

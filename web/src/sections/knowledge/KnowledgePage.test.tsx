@@ -56,6 +56,19 @@ describe("<KnowledgePage/>", () => {
     });
   });
 
+  it("filters datasets by the search box (name, case-insensitive)", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<KnowledgePage />);
+
+    await screen.findByRole("link", { name: "Product notes" });
+    await user.type(screen.getByLabelText("Search"), "product");
+    expect(screen.getByRole("link", { name: "Product notes" })).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText("Search"));
+    await user.type(screen.getByLabelText("Search"), "no-such-dataset");
+    expect(await screen.findByText("No datasets match")).toBeInTheDocument();
+  });
+
   it("relays the delete-while-referenced 409 in the toast", async () => {
     const user = userEvent.setup();
     server.use(

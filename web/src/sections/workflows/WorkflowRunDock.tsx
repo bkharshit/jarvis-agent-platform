@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router";
 
 import { client } from "@/api/client";
 import { connectWorkflowRunStream, type RunStreamHandle, type StreamStatus } from "@/api/sse";
 import { EventTimeline } from "@/components/EventTimeline";
 import { PauseCard } from "@/components/PauseCard";
-import { SectionGate } from "@/capabilities/SectionGate";
-import { flushPending, useRunConsoleStore, type WireEvent } from "@/stores/runConsole";
+import { Button } from "@/components/ui/Button";
+import { Textarea } from "@/components/ui/Textarea";
+import { useRunConsoleStore, type WireEvent } from "@/stores/runConsole";
 
-// Workflow run console (S6): the agent RunConsole's live-SSE shape against
+// Workflow run dock (S6 → UI modernization): the run console's live-SSE
+// body, extracted from the old standalone page so the editor hosts it in
+// the Test-run slide-over. The wiring is the agent RunDock's shape against
 // the workflow stream route (D41 — only the path differs). Node events
 // (D43) group into per-node sections through the shared reducer; a pause
 // INSIDE a node ends the segment like any pause and the same PauseCard
@@ -23,8 +25,7 @@ const STATUS_LABEL: Record<string, string> = {
   error: "Error",
 };
 
-function ConsoleInner() {
-  const { workflowId } = useParams();
+export function WorkflowRunDock({ workflowId }: { workflowId: string }) {
   const [input, setInput] = useState("");
   const [streamStatus, setStreamStatus] = useState<StreamStatus | null>(null);
   const [starting, setStarting] = useState(false);
@@ -62,7 +63,6 @@ function ConsoleInner() {
   }
 
   function connect() {
-    if (workflowId === undefined) return;
     handleRef.current?.abort();
     handleRef.current = connectWorkflowRunStream(workflowId, {
       body: { input: input },
@@ -118,48 +118,43 @@ function ConsoleInner() {
   const canResume = streamStatus?.status === "disconnected";
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-8">
-      <h1 className="text-xl font-semibold">Run workflow</h1>
-
-      <div className="mt-4 flex flex-col gap-3">
-        <textarea
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-3">
+        <Textarea
           aria-label="Run input"
           rows={3}
-          className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Workflow input (each agent node may template it with {{input}})"
         />
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
             onClick={startRun}
             disabled={runActive || input.trim() === ""}
-            className="cursor-pointer rounded bg-neutral-100 px-4 py-1.5 text-sm font-medium text-neutral-900 hover:bg-white disabled:cursor-not-allowed disabled:text-neutral-500"
           >
             {runActive ? "Running…" : "Run"}
-          </button>
+          </Button>
           {canResume && (
-            <button
-              type="button"
+            <Button
+              variant="secondary"
               onClick={connect}
-              className="cursor-pointer rounded border border-amber-700 px-4 py-1.5 text-sm text-amber-200 hover:bg-amber-950"
+              className="border-amber-700 text-amber-200 hover:bg-amber-950"
             >
               Resume
-            </button>
+            </Button>
           )}
           {runId !== null && (status === "running" || status === "awaiting_input") && (
-            <button
-              type="button"
+            <Button
+              variant="secondary"
               onClick={() => {
                 void client.POST("/v1/executions/{run_id}/cancel", {
                   params: { path: { run_id: runId } },
                 });
               }}
-              className="cursor-pointer rounded border border-red-800 px-4 py-1.5 text-sm text-red-300 hover:bg-red-950"
+              className="border-red-800 text-red-300 hover:bg-red-950"
             >
               Cancel
-            </button>
+            </Button>
           )}
           {streamStatusLabel && (
             <span className="text-xs text-neutral-400" aria-live="polite">
@@ -169,29 +164,31 @@ function ConsoleInner() {
         </div>
       </div>
 
-      <div className="mt-6">
-        <EventTimeline items={items} />
-      </div>
+      <EventTimeline items={items} />
 
       {status === "awaiting_input" && pause && (
-        <div className="mt-4">
-          <PauseCard
-            question={pause.question}
-            pendingCalls={pause.pendingCalls}
-            busy={answering}
-            onSubmit={(body) => void sendResume(body)}
-          />
-        </div>
+        <PauseCard
+          question={pause.question}
+          pendingCalls={pause.pendingCalls}
+          busy={answering}
+          onSubmit={(body) => void sendResume(body)}
+        />
       )}
 
       {status === "completed" && finalMessage !== null && (
-        <div className="mt-4 rounded border border-green-900 bg-green-950/40 p-4" data-testid="final-message">
+        <div
+          className="rounded-xl border border-green-900 bg-green-950/40 p-4"
+          data-testid="final-message"
+        >
           <p className="text-xs text-green-400">Final answer</p>
           <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-100">{finalMessage}</p>
         </div>
       )}
       {status === "failed" && runError !== null && (
-        <div className="mt-4 rounded border border-red-900 bg-red-950/40 p-4" data-testid="run-error">
+        <div
+          className="rounded-xl border border-red-900 bg-red-950/40 p-4"
+          data-testid="run-error"
+        >
           <p className="text-xs text-red-400">
             Run failed{runError.kind ? ` (${runError.kind})` : ""}
           </p>
@@ -199,7 +196,10 @@ function ConsoleInner() {
         </div>
       )}
       {status === "cancelled" && runError !== null && (
-        <div className="mt-4 rounded border border-amber-900 bg-amber-950/40 p-4" data-testid="run-cancelled">
+        <div
+          className="rounded-xl border border-amber-900 bg-amber-950/40 p-4"
+          data-testid="run-cancelled"
+        >
           <p className="text-xs text-amber-400">Run cancelled</p>
           <p className="mt-1 text-sm text-neutral-100">{runError.message}</p>
         </div>
@@ -207,14 +207,3 @@ function ConsoleInner() {
     </div>
   );
 }
-
-export function WorkflowRunConsole() {
-  return (
-    <SectionGate sectionKey="workflows">
-      <ConsoleInner />
-    </SectionGate>
-  );
-}
-
-// Re-export: replay folds through the exact same pure reducer.
-export { flushPending };

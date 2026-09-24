@@ -17,14 +17,15 @@ import {
 } from "@/capabilities/detail";
 import { useProbeMcpServer } from "@/api/queries/mcp";
 import { useCapabilities } from "@/capabilities/useCapabilities";
-import { SectionGate } from "@/capabilities/SectionGate";
 import { toSavePayload, useEditorStore } from "@/stores/editorStore";
 import type { CredentialKind } from "@/stores/editorStore";
 import { toast } from "@/stores/toast";
 
-// Full AgentDefinition editor. Strategy picker and tool bindings come from
-// the capabilities payload — never hardcoded (decision 8). Save omits
-// undefined AND null (PATCH null-injection hazard).
+// The Studio's Configure pane: the full AgentDefinition editor. Strategy
+// picker and tool bindings come from the capabilities payload — never
+// hardcoded (decision 8). Save omits undefined AND null (PATCH
+// null-injection hazard). The definition tab is gone — this editor IS the
+// definition.
 
 const inputClass =
   "w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none";
@@ -69,29 +70,33 @@ function FieldError({ message }: { message?: string }) {
   return <p className={errorClass}>{message}</p>;
 }
 
-function AgentEditorForm() {
+export function AgentConfigPane() {
   const navigate = useNavigate();
   const { agentId } = useParams();
   const { data: detail, isPending, isError, error } = useAgent(agentId);
 
   const draft = useEditorStore((s) => s.draft);
   const open = useEditorStore((s) => s.open);
-  const close = useEditorStore((s) => s.close);
   const update = useEditorStore((s) => s.update);
   const capabilities = useCapabilities();
   const [fieldErrorsMap, setFieldErrorsMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
+    const loadedAgentId = useEditorStore.getState().agentId;
     if (agentId === undefined) {
       // creating — seed once; a cached capabilities payload may already be
-      // present, and re-running open would wipe in-progress typing.
-      if (draft === null) open(null, modelDefaults(capabilities.data));
-    } else if (detail && draft === null) {
-      open(detail.definition); // editing
+      // present, and re-running open would wipe in-progress typing. A draft
+      // left over from editing another agent is stale — re-seed it.
+      if (draft === null || loadedAgentId !== null) {
+        open(null, modelDefaults(capabilities.data));
+      }
+    } else if (detail && (draft === null || loadedAgentId !== agentId)) {
+      // editing — re-seed when the route points at a DIFFERENT agent than
+      // the loaded draft (agent→agent switch), never on a refetch of the
+      // same agent: that would clobber in-progress edits.
+      open(detail.definition);
     }
   }, [agentId, detail, open, draft, capabilities.data]);
-
-  useEffect(() => close, [close]);
 
   const createAgent = useCreateAgent();
   const updateAgent = useUpdateAgent(agentId ?? "");
@@ -190,27 +195,23 @@ function AgentEditorForm() {
         toast("error", "save failed");
       }
     };
+    // The Studio stays put on save — the draft is the live definition.
     if (agentId === undefined) {
       createAgent.mutate(payload.body, {
-        onSuccess: () => navigate("/agents"),
+        onSuccess: () => toast("success", "Agent created"),
         onError,
       });
     } else {
       updateAgent.mutate(payload.body, {
-        onSuccess: () => navigate("/agents"),
+        onSuccess: () => toast("success", "Agent saved"),
         onError,
       });
     }
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8">
-      <h1 className="text-xl font-semibold">
-        {agentId === undefined ? "New agent" : `Edit: ${draft.name || "agent"}`}
-      </h1>
-
-      <form
-        className="mt-6 flex flex-col gap-5"
+    <form
+      className="flex flex-col gap-5"
         onSubmit={(e) => {
           e.preventDefault();
           save();
@@ -849,14 +850,5 @@ function AgentEditorForm() {
           </button>
         </div>
       </form>
-    </div>
-  );
-}
-
-export function AgentEditor() {
-  return (
-    <SectionGate sectionKey="agents">
-      <AgentEditorForm />
-    </SectionGate>
   );
 }
