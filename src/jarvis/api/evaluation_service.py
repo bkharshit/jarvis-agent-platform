@@ -76,7 +76,7 @@ async def create_eval_run(
             input=case.input,
             tenant_id=principal.tenant_id,
             principal=principal,
-            trace_id=str(uuid4()),
+            trace_id=uuid4().hex,  # D73: 32-hex = a valid OTel trace id
             deadline=deadline_from_now(settings.run_timeout_seconds),
             metadata={"eval": {"eval_run_id": eval_run_id, "case_id": case.id}},
             variables=dict(case.variables),

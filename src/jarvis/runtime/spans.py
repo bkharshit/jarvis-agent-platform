@@ -66,9 +66,10 @@ class SpanRecorder:
         self._sink = sink
         self.active = sink is not None
         self._run_id = run_id
-        # The trace_id IS the run's persisted trace_id (D73); an absent one
-        # (a direct runtime call outside the queue path) mints locally so the
-        # record stays a valid OTel trace id.
+        # The trace_id IS the run's persisted trace_id (D73 — every mint
+        # site produces 32 hex); an absent or pre-S7 one (legacy dash-UUID
+        # rows, a direct runtime call outside the queue path) mints locally
+        # so the record stays a valid OTel trace id.
         self._trace_id = trace_id if len(trace_id) == 32 else uuid.uuid4().hex
         self._tenant_id = tenant_id
         self._buffer: list[SpanRecord] = []

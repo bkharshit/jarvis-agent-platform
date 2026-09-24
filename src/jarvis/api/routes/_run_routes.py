@@ -67,7 +67,8 @@ def queue_message(
         input=req.input,
         session_id=req.session_id,
         user_id=req.user_id,
-        trace_id=str(uuid4()),
+        # D73: 32-hex so the id IS a valid OTel trace id verbatim (S7).
+        trace_id=uuid4().hex,
         metadata=metadata,
         variables=dict(req.variables),
         deadline=deadline_from_now(settings.run_timeout_seconds),

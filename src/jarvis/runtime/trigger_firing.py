@@ -109,7 +109,7 @@ class TriggerFireService:
             tenant_id=trigger.tenant_id,
             principal=Principal(tenant_id=trigger.tenant_id, mode="system"),
             session_id=None,
-            trace_id=str(uuid4()),
+            trace_id=uuid4().hex,  # D73: 32-hex = a valid OTel trace id
             deadline=deadline_from_now(self._run_timeout_seconds),
             metadata={
                 "trigger": {

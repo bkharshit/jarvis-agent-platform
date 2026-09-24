@@ -375,7 +375,7 @@ def run(
             agent_id=definition.id,
             agent_version_id=version.id,
             session_id=session,
-            trace_id=str(uuid4()),
+            trace_id=uuid4().hex,  # D73: 32-hex = a valid OTel trace id
             variables=vars_dict,
             deadline=deadline_from_now(settings.run_timeout_seconds),
         )
