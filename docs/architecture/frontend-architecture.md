@@ -164,18 +164,44 @@ web/
 │   └── stores/         # zustand slices (editor drafts, run console state)
 ```
 
-Routes at first ship:
+Routes at first ship (agents routes updated by the 2026-09-24 UI upgrade):
 
 | Route | Surface |
 |---|---|
 | `/agents` | list |
-| `/agents/:id` | detail — tabs: Definition · Versions · Runs · API access |
-| `/agents/:id/run` | run console (live SSE) |
+| `/agents/new`, `/agents/:id` | **AgentStudio** — unified config pane + run dock |
+| `/agents/:id/run`, `/agents/:id/edit` | redirect to `/agents/:id` |
 | `/executions`, `/executions/:id` | runs list (filters), detail + event replay |
 | `/conversations` | session browser + transcript |
-| `/tools` | builtin descriptors (partial: MCP coming-soon) |
+| `/tools` | builtin descriptors + MCP servers |
 | `/models` | read-only provider/model info |
-| `/workflows`, `/knowledge`, `/evaluations`, `/observability`, `/plugins`, `/triggers`, `/settings` | coming-soon panels |
+| `/workflows`, `/knowledge`, `/evaluations`, `/observability`, `/plugins`, `/triggers`, `/settings` | live sections (enabled per stage) |
+
+## UI system (2026-09-24 upgrade)
+
+The F1-era bespoke screens were rebuilt on a shared design system —
+shadcn-style primitives with cva variants over a fixed dark shell
+(`#0d0f12`):
+
+- `components/ui/` — Button, Badge, Card, Drawer, Modal, Tabs, Input,
+  Textarea, Field, EmptyState, Breadcrumbs; `lib/utils.ts` holds `cn()`
+  (clsx + tailwind-merge). New deps: lucide-react,
+  class-variance-authority, clsx, tailwind-merge.
+- `components/catalog/PageHeader` — one chrome for list surfaces: title,
+  search, grid/table view switcher, primary action.
+- `app/Nav` — grouped top-nav; disabled sections stay visible with their
+  enabling-stage badge; a live pill shows enabled/total sections from the
+  capabilities payload.
+- **AgentStudio** absorbs the separate AgentDetailPage, AgentEditor, and
+  RunConsole: `/agents/:id` is one screen with a config pane (the old
+  editor form, `AgentConfigPane`) and a **RunDock** — the run surface
+  shared by agents and workflows (`WorkflowRunDock`) over the same
+  `runConsole` store. The editor save semantics (omit-empty PATCH
+  discipline, draft store) are unchanged.
+
+The capability-gating rules, no-fake-functionality rule, and per-stage
+enablement contract are unchanged — the upgrade restyled the shell, it did
+not change what gates anything.
 
 ## Key UX surfaces (F1)
 
