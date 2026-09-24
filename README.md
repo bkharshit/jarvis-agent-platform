@@ -105,6 +105,9 @@ uv run jarvis doctor --ping-model
 | POST | `/triggers/{id}/rotate-secret` | Re-mint a webhook secret — plaintext returned exactly once, never in a GET |
 | POST | `/triggers/{id}/fire` | Fire now (202, run queued; 409 when disabled) — admin/owner |
 | POST | `/triggers/webhook/{id}` | UNAUTHENTICATED signed ingest: HMAC-SHA256 `X-Jarvis-Signature` over the raw body — 202 queued, 401 bad/missing signature, 404 absent-or-disabled, 413 oversized |
+| GET/POST/PATCH/DELETE | `/knowledge/datasets` | Knowledge datasets (S8/ADR 0020) — the embedding config is IMMUTABLE and dimension-pinned at create (any config key on PATCH is a 422); DELETE is 409 while agent version snapshots reference the dataset |
+| GET/POST | `/knowledge/datasets/{id}/documents` | List / synchronously ingest text documents — the POST blocks on chunk → batched embed → one-tx persist → 201 `ready`; embedder failure persists an `error` row and answers 502 `embedding_unavailable` |
+| GET/DELETE | `/knowledge/datasets/{id}/documents/{doc_id}` | Read / delete one ingested document |
 
 Every error has one envelope shape: `{"error": {"kind", "message", "details"}}`.
 
@@ -480,6 +483,55 @@ client-side, the secret shown once behind a dismiss banner, rotate
 re-mints it — and trigger-fired runs show a **Fired by** chip linking
 to the filtered executions list. A live walkthrough is in
 `docs/walkthrough-s13.md`.
+
+### Knowledge and RAG (S8, ADR 0020)
+
+Agents can know things. A **knowledge dataset** is a set of embedded
+text chunks (paragraph-aware chunking over pasted or client-side-read
+text documents — no multipart, no PDFs) stored in pgvector. An agent
+binds datasets in its definition and gets retrieval either way:
+
+- **The knowledge binding** (auto-injection): before each turn the
+  runtime retrieves top-k chunks for the user's input and injects them
+  as a system message (`Relevant knowledge base excerpts: …`) between
+  the summary and the history — mirrored in resume rebuilds, so a
+  resumed segment retrieves the same way.
+- **The `retriever__<dataset>` tool family** (model-directed): the
+  model calls retrieval through the ordinary tool loop, the result
+  rendered as `[doc] content` blocks.
+
+Both ride ONE retrieval service behind the runtime (`retrieve(config,
+query, tenant) → rendered context`), so hybrid retrieval / rerank /
+metadata filtering can land later without touching the agent runtime
+(D68). The dataset's embedding config (provider, model, base_url,
+credential, dimension) is **immutable and dimension-pinned** at create —
+"change the embedding model" means a new dataset; all datasets bound to
+one agent must share one embedding setup (a query embedding serves them
+all; mixed bindings are a save-time 422). Ingestion is synchronous and
+honest: the POST blocks on chunk → embed → persist; a dead embedder
+persists an `error` document row and answers 502, never a silent 201.
+Retrieval failure against a stale snapshot is a terminal `error_kind=
+"tool"` run failure (D38), and a dataset DELETE is 409-refused while
+agent version snapshots reference it.
+
+```bash
+# create a dataset (any OpenAI-compatible /v1/embeddings endpoint —
+# local Ollama serves it; ollama.com does NOT serve embeddings)
+curl -X POST localhost:8000/v1/knowledge/datasets -H 'content-type: application/json' -d '{
+  "name": "jarvis-notes",
+  "embedding_config": {"provider": "openai_compatible", "model": "qwen3-embedding:0.6b",
+    "base_url": "http://localhost:11434/v1", "dimension": 1024, "distance": "cosine"},
+  "chunk_config": {"chunk_chars": 800, "overlap_chars": 100}}'
+
+# ingest a text document — synchronous, 201 when ready
+curl -X POST localhost:8000/v1/knowledge/datasets/<id>/documents \
+  -H 'content-type: application/json' \
+  -d '{"name": "platform.md", "content": "JARVIS is an agent-runtime-first platform."}'
+```
+
+The web **Knowledge** section manages datasets and documents (paste or
+file-read ingest, status chips, error rows shown honestly); the agent
+editor has a knowledge multi-select + top-k picker.
 
 ### Queue-backed runs and distributed mode (S1, ADR 0008)
 

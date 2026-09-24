@@ -381,6 +381,22 @@ keyed by the already-persisted `trace_id`).
 
 ## S8 — RAG / knowledge
 
+> **SHIPPED (2026-09-23)** — all 9 build commits + web (commits
+> 9ea0e8b..9dbfaa4): pgvector store (migration 0014, dimension-free
+> column with write-time enforcement), `EmbeddingClient` port +
+> provider-layer adapters + deterministic mock, paragraph-aware chunker
+> + one retrieval service (D68), runtime injection via
+> `PromptContext.knowledge_context` mirrored in resume rebuilds
+> (failure = terminal `error_kind="tool"`), `retriever__<dataset>`
+> family (zero catch-site changes), `/v1/knowledge` routes (immutable
+> dimension-pinned embedding config, sync honest ingest, 409
+> delete-while-referenced), web Knowledge section + agent-editor
+> picker. Manual walkthrough at `docs/walkthrough-s8.md` — session
+> paused mid-§1 2026-09-24 (embeddings ride the LOCAL daemon, not
+> ollama.com); docs closure (README section + API rows) committed with
+> this note; docs-closure commit with session findings still owed
+> after the joint session.
+
 > **Planning committed 2026-09-18** — `docs/adr/0020-knowledge-rag.md`
 > (D63–D70 in decisions.md), commit sequence in
 > `docs/implementation-plan-s8.md`. No S8 code exists. Scope
