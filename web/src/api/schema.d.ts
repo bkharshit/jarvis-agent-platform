@@ -973,6 +973,11 @@ export interface components {
             system_prompt: string;
             /** User Prompt Template */
             user_prompt_template?: string | null;
+            /**
+             * Parallel Tool Calls
+             * @default false
+             */
+            parallel_tool_calls: boolean;
             /** Tools */
             tools?: components["schemas"]["ToolBinding"][];
             strategy: components["schemas"]["StrategyConfig"];
@@ -1059,6 +1064,8 @@ export interface components {
             output_schema?: {
                 [key: string]: unknown;
             } | null;
+            /** Parallel Tool Calls */
+            parallel_tool_calls?: boolean | null;
         };
         /**
          * AgentVersion

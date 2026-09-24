@@ -15,6 +15,7 @@ export const agentFixture = {
   memory: { enabled: false, max_messages: 20, strategy: "window" as const },
   max_iterations: 8,
   temperature: 0.7,
+  parallel_tool_calls: false,
   created_at: "2026-09-04T12:00:00Z",
   updated_at: "2026-09-04T12:00:00Z",
 };

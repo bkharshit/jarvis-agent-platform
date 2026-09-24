@@ -3216,6 +3216,11 @@
             ],
             "title": "User Prompt Template"
           },
+          "parallel_tool_calls": {
+            "type": "boolean",
+            "title": "Parallel Tool Calls",
+            "default": false
+          },
           "tools": {
             "items": {
               "$ref": "#/components/schemas/ToolBinding"
@@ -3501,6 +3506,17 @@
               }
             ],
             "title": "Output Schema"
+          },
+          "parallel_tool_calls": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parallel Tool Calls"
           }
         },
         "additionalProperties": false,

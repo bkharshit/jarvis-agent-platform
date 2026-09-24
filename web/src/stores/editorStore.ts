@@ -44,6 +44,9 @@ export interface AgentDraft {
   max_iterations: number;
   temperature: number;
   output_schema: string; // JSON text; "" = unset
+  // S9 (D78): the multi-tool-call batch opt-in — honored only when the
+  // provider also declares parallel_tool_calls.
+  parallel_tool_calls: boolean;
   // S8 (D66): the knowledge binding — datasets by ID (never the name) and
   // the top_k knob; empty datasets = no binding (omitted from the payload).
   knowledge: { datasets: string[]; top_k: number };
@@ -99,6 +102,7 @@ function draftFromDefinition(definition: AgentDefinition): AgentDraft {
     },
     max_iterations: definition.max_iterations,
     temperature: definition.temperature,
+    parallel_tool_calls: definition.parallel_tool_calls ?? false,
     output_schema:
       definition.output_schema === undefined || definition.output_schema === null
         ? ""
@@ -136,6 +140,7 @@ function draftForCreate(defaults?: ModelDefaultsInput | null): AgentDraft {
     memory: { enabled: false, max_messages: 20, strategy: "window" },
     max_iterations: 8,
     temperature: 0.7,
+    parallel_tool_calls: false,
     output_schema: null,
     knowledge: null,
   });
@@ -244,6 +249,8 @@ export function toSavePayload(draft: AgentDraft): SavePayload {
     },
     max_iterations: draft.max_iterations,
     temperature: draft.temperature,
+    // S9 (D78): always sent — a checkbox has no "unset".
+    parallel_tool_calls: draft.parallel_tool_calls,
     ...(outputSchema.value !== undefined
       ? { output_schema: outputSchema.value as Record<string, unknown> }
       : {}),

@@ -79,6 +79,20 @@ describe("<AgentEditor/> creating", () => {
     expect("base_url" in raw.model).toBe(false);
   });
 
+  it("toggles parallel tool calls into the save body (S9)", async () => {
+    const user = userEvent.setup();
+    const posted = capturePost();
+    posted.capture();
+
+    renderWithProviders(<AgentEditor />, { initialEntries: ["/agents/new"] });
+    await user.type(await screen.findByLabelText("Name"), "Parallel agent");
+    await user.click(screen.getByTestId("parallel-tool-calls"));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(posted.state.body).not.toBeNull());
+    expect(posted.state.body?.parallel_tool_calls).toBe(true);
+  });
+
   it("surfaces 422 field errors inline", async () => {
     server.use(
       http.post("/v1/agents", () =>

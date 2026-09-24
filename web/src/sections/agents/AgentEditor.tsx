@@ -802,6 +802,23 @@ function AgentEditorForm() {
           </div>
         </div>
 
+        {/* S9 (D78): the batch opt-in — the provider must also declare the
+            capability, otherwise the batch stays sequential. */}
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            data-testid="parallel-tool-calls"
+            checked={draft.parallel_tool_calls}
+            onChange={(e) => update({ parallel_tool_calls: e.target.checked })}
+          />
+          <span>
+            Run tool calls in parallel
+            <span className="ml-2 text-xs text-neutral-500">
+              when the model provider supports it; batch results still apply in call order
+            </span>
+          </span>
+        </label>
+
         <div>
           <label htmlFor="agent-output-schema" className={labelClass}>
             Output schema (JSON, optional)

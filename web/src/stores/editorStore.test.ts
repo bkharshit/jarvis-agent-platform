@@ -117,6 +117,19 @@ describe("toSavePayload", () => {
     expect(error).toBeUndefined();
     expect(body.memory?.strategy).toBe("summarize");
   });
+
+  it("round-trips the parallel_tool_calls opt-in (S9) — always in the payload", () => {
+    // default seed is off; the payload always carries the flag (a
+    // checkbox has no "unset").
+    expect(draftForCreate().parallel_tool_calls).toBe(false);
+    const off = toSavePayload({ ...draftForCreate(), name: "a" });
+    expect(off.error).toBeUndefined();
+    expect(off.body.parallel_tool_calls).toBe(false);
+    // a parallel definition drafts its own flag
+    const draft = draftFromDefinition({ ...agentFixture, parallel_tool_calls: true });
+    expect(draft.parallel_tool_calls).toBe(true);
+    expect(toSavePayload(draft).body.parallel_tool_calls).toBe(true);
+  });
 });
 
 describe("editor store", () => {
