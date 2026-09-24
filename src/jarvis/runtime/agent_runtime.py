@@ -46,6 +46,7 @@ from jarvis.models.errors import ModelAbortedError, ModelError
 from jarvis.ports.model import ModelClient, ModelProviderFactory
 from jarvis.ports.queue import ResumeRequest
 from jarvis.ports.repository import ConversationRepo, ExecutionRepo, KnowledgeRepo
+from jarvis.ports.spans import SpanSink
 from jarvis.ports.strategy import (
     AskHumanStep,
     FinishStep,
@@ -59,6 +60,7 @@ from jarvis.runtime.knowledge.retrieval import KnowledgeRetrieval
 from jarvis.runtime.limits import RunLimits
 from jarvis.runtime.llm_trace import LlmTraceBuffer, TracedModelClient
 from jarvis.runtime.memory import ConversationMemory, MemoryView
+from jarvis.runtime.spans import SpanRecorder, TracingModelClient, status_for_run
 from jarvis.tools.knowledge.provider import (
     RetrieverToolProvider,
     is_retriever_binding,
@@ -153,6 +155,9 @@ class AgentRuntime:
         knowledge_repo: KnowledgeRepo | None = None,
         trace_llm: bool = False,
         trace_buffer: LlmTraceBuffer | None = None,
+        # S7 (ADR 0021 §1, D71): spans cross the runtime ONLY as this port —
+        # None keeps the runtime byte-identical (the golden gates).
+        span_sink: SpanSink | None = None,
     ) -> None:
         self._strategies = strategies
         self._tools = tools
@@ -170,6 +175,7 @@ class AgentRuntime:
         self._knowledge_repo = knowledge_repo
         self._trace_llm = trace_llm
         self.trace_buffer = trace_buffer
+        self._span_sink = span_sink
         self._live_tokens: dict[str, ExecutionContext] = {}
 
     @property
@@ -197,6 +203,16 @@ class AgentRuntime:
 
     # --- public API ---------------------------------------------------------
 
+    def _recorder(self, ctx: ExecutionContext) -> SpanRecorder:
+        """One run's span buffer (S7, D74) — no sink means a no-op recorder
+        and a byte-identical runtime."""
+        return SpanRecorder(
+            self._span_sink,
+            run_id=ctx.run_id,
+            trace_id=ctx.trace_id,
+            tenant_id=ctx.tenant_id,
+        )
+
     async def run(
         self,
         version: AgentVersion,
@@ -210,6 +226,10 @@ class AgentRuntime:
         started_at = datetime.now(UTC)
         self._live_tokens[ctx.run_id] = ctx
         sink = sink or await self._bus.get_or_create(ctx.run_id)
+        # S7 (D74): the run's spans — a run-local recorder (the runtime runs
+        # segments concurrently), flushed at the very end so even a
+        # terminal-persistence failure leaves the segment force-closed.
+        spans = self._recorder(ctx)
 
         if self._executions is not None:
             # A RUNNING row exists from the first event — /executions/{id}/cancel
@@ -243,6 +263,7 @@ class AgentRuntime:
                     session_id=ctx.session_id,
                     input=input,
                 ),
+                spans=spans,
             )
             result = await self._after_loop(ctx, sink, outcome, started_at, input)
         except ExecutionCancelled as exc:
@@ -283,6 +304,12 @@ class AgentRuntime:
             # finish) — finish_run would stamp finished_at and clear the
             # pause deadline (S10).
             await self._executions.finish_run(result)
+        # S7 (D74): the flush force-closes anything still open (the segment
+        # span on an exception path, a paused iteration) with the run's own
+        # final status — the safety net IS the correct closer here.
+        await spans.flush(
+            pending_status=status_for_run(result.status), pending_message=result.error
+        )
         return result
 
     # --- segment (S6 commit 4: the fresh-run body, extracted) ----------------
@@ -294,6 +321,7 @@ class AgentRuntime:
         ctx: ExecutionContext,
         sink: InProcessEventSink,
         started: RunStarted | None = None,
+        spans: SpanRecorder | None = None,  # S7: the caller's run-local recorder
     ) -> LoopOutcome:
         """One segment of a run: model/tooling resolution (D28/D38), memory,
         prompt build, and the loop. Extracted from `run()` (S6, ADR 0015
@@ -302,6 +330,18 @@ class AgentRuntime:
         — a workflow run has exactly ONE run.started, emitted by its caller
         (D41). Raises on model/tooling failure; callers hold the try."""
         agent = version.snapshot
+        # S7 (D74): the segment span opens here (this call IS one segment);
+        # the workflow runtime reaches this seam without a recorder, so one
+        # is minted when absent. Closed from the outcome below; an exception
+        # leaves it open for the caller's flush to close with the run's final
+        # status.
+        spans = spans or self._recorder(ctx)
+        spans.start(
+            "run.segment",
+            "run.segment",
+            slot="segment",
+            attributes=_segment_attrs(version.snapshot, ctx, entry="fresh"),
+        )
         # Inside the segment: credential resolution is IO (S2) and can fail —
         # the failure must become a persisted terminal `model` state (D5),
         # never an escape past the runtime (which the worker would treat as
@@ -309,6 +349,8 @@ class AgentRuntime:
         client = await self._models.resolve(agent.model, principal=ctx.principal)
         if self._trace_llm:
             client = TracedModelClient(client, ctx, buffer=self.llm_trace_buffer)
+        if spans.active:
+            client = TracingModelClient(client, spans)
         # S4 (D38): MCP toolset resolution is the same seam, third
         # application — its failure is a persisted terminal `tool` state
         # naming the server, before any token is spent.
@@ -319,7 +361,7 @@ class AgentRuntime:
             # segment, before the first prompt build; the rendered context
             # rides as a system message. Failure → RetrieverResolutionError
             # → run()'s catch → terminal "tool" (no new catch site, D67).
-            knowledge_context = await self._retrieve_knowledge(agent, ctx, input)
+            knowledge_context = await self._retrieve_knowledge(agent, ctx, input, spans=spans)
 
             messages = self._prompt_engine.build(
                 PromptContext(
@@ -348,9 +390,21 @@ class AgentRuntime:
                     memory_view.conversation_id, user_message, ctx.run_id
                 )
 
-            return await self._loop(
-                ctx, agent, client, sink, messages, memory_view.conversation_id, tooling=tooling
+            outcome = await self._loop(
+                ctx,
+                agent,
+                client,
+                sink,
+                messages,
+                memory_view.conversation_id,
+                tooling=tooling,
+                spans=spans,
             )
+            # S7 (D74): the segment closes from the outcome; an exception
+            # above left it open for run()'s flush to close with the run's
+            # final status.
+            _close_segment_span(spans, outcome)
+            return outcome
         finally:
             # S4 (D38): the segment's MCP connections close with the
             # segment — completed, failed, cancelled, or paused alike.
@@ -446,7 +500,9 @@ class AgentRuntime:
         entry: str = "fresh",  # "fresh" | "answer" | "batch" — resumed-segment entries (S10)
         pending_calls: list[ToolCall] | None = None,  # the resumed batch (approval)
         refusals: set[str] | None = None,  # call ids the human declined
+        spans: SpanRecorder | None = None,  # S7 (D74): the run's recorder
     ) -> LoopOutcome:
+        spans = spans or SpanRecorder(None, run_id=ctx.run_id, trace_id=ctx.trace_id)
         # S3 (D36): StrategyConfig.params flow verbatim through ctx.metadata —
         # the frozen step() Protocol takes no config argument, so the
         # orchestrator prepares the ctx (same pattern as output_schema).
@@ -466,11 +522,21 @@ class AgentRuntime:
         while True:
             ctx.iteration = iteration
             ctx.check_limits()  # deadline / cancellation -> ExecutionCancelled
+            # S7 (D74): one `iteration` span per loop pass — tool spans
+            # parent to it; it closes at the iteration's natural end
+            # (_iteration_done), at a pause, or (via the flush safety net)
+            # with the run's final status.
+            iter_span = spans.start(
+                "iteration", "iteration", slot="iteration", attributes={"iteration": iteration}
+            )
             if self._limits is not None:
                 # platform-level budget (ADR 0004): the orchestrator owns limits;
                 # the per-agent max_iterations cap is enforced at the loop bottom
                 reason = self._limits.exceeded(ctx)
                 if reason is not None:
+                    spans.end_slot(
+                        "iteration", status="error", status_message=f"run limit exceeded: {reason}"
+                    )
                     return LoopOutcome(
                         kind="failed",
                         error=f"run limit exceeded: {reason}",
@@ -491,7 +557,7 @@ class AgentRuntime:
                 entry = "fresh"
             else:
                 if entry != "answer":
-                    await sink.append(
+                    started_cursor = await sink.append(
                         IterationStarted(
                             event_id=_uuid(),
                             run_id=ctx.run_id,
@@ -499,6 +565,9 @@ class AgentRuntime:
                             iteration=iteration,
                         )
                     )
+                    if iter_span is not None:
+                        # the span names the exact replay position (D74)
+                        iter_span.attributes["jarvis.event.cursor"] = started_cursor
                 # entry == "answer": the strategy is re-invoked inside the
                 # paused iteration (its IterationStarted is already in the
                 # log) — the human's answer is already in `messages`.
@@ -513,6 +582,11 @@ class AgentRuntime:
                     raise
                 except Exception as exc:  # noqa: BLE001 — D36: a broken plugin
                     # is a persisted terminal strategy failure, never a crash.
+                    spans.end_slot(
+                        "iteration",
+                        status="error",
+                        status_message=f"strategy {agent.strategy.type!r} raised {exc}",
+                    )
                     return LoopOutcome(
                         kind="failed",
                         error=f"strategy {agent.strategy.type!r} raised "
@@ -544,7 +618,7 @@ class AgentRuntime:
                                     iterations=iteration + 1,
                                 )
                             repair_attempted = True
-                            await self._iteration_done(sink, ctx, iteration)
+                            await self._iteration_done(sink, ctx, iteration, spans=spans)
                             messages.append(
                                 Message(
                                     role="developer",
@@ -558,7 +632,7 @@ class AgentRuntime:
                             await self._save_message(ctx, messages[-1])
                             iteration += 1
                             continue
-                    await self._iteration_done(sink, ctx, iteration)
+                    await self._iteration_done(sink, ctx, iteration, spans=spans)
                     return LoopOutcome(
                         kind="completed", final_message=final_text, iterations=iteration + 1
                     )
@@ -575,11 +649,12 @@ class AgentRuntime:
                             await self._conversations.append_message(
                                 conversation_id, answer, ctx.run_id
                             )
-                        await self._iteration_done(sink, ctx, iteration)
+                        await self._iteration_done(sink, ctx, iteration, spans=spans)
                         iteration += 1
                         continue
                     # S10 (ADR 0010 §3.2): the strategy wants a human answer. The
                     # assistant message is already persisted; pause the run.
+                    spans.end_slot("iteration", status="ok", attributes={"paused": True})
                     return await self._pause(
                         sink,
                         ctx,
@@ -616,6 +691,7 @@ class AgentRuntime:
                         # the ungated remainder still executes.
                         auto_refusals = {call.id for call in gated}
                     else:
+                        spans.end_slot("iteration", status="ok", attributes={"paused": True})
                         return await self._pause(
                             sink,
                             ctx,
@@ -661,7 +737,7 @@ class AgentRuntime:
                             conversation_id, tool_message, ctx.run_id
                         )
                     continue
-                await sink.append(
+                tool_cursor = await sink.append(
                     ToolCallStarted(
                         event_id=_uuid(),
                         run_id=ctx.run_id,
@@ -670,19 +746,47 @@ class AgentRuntime:
                         name=call.name,
                     )
                 )
+                # S7 (D74): one `tool.call` span per executed call, tied to
+                # the started event's cursor. Declined calls never reach
+                # here — they get no span, matching the no-tool-row fact.
+                tool_span = spans.start(
+                    "tool.call",
+                    "tool.call",
+                    parent=iter_span,
+                    attributes={
+                        "tool": call.name,
+                        "tool_call_id": call.id,
+                        "jarvis.event.cursor": tool_cursor,
+                    },
+                )
                 binding = bindings.get(call.name)
-                result = await segment_tooling.tool_runtime.execute(
-                    call,
-                    ToolContext(
-                        run_id=ctx.run_id,
-                        agent_id=agent.id,
-                        session_id=ctx.session_id,
-                        user_id=ctx.user_id,
-                        variables=ctx.variables,
-                        config=dict(binding.config) if binding else {},
-                        cancel=ctx.cancel,
-                        tenant_id=ctx.tenant_id,
-                    ),
+                try:
+                    result = await segment_tooling.tool_runtime.execute(
+                        call,
+                        ToolContext(
+                            run_id=ctx.run_id,
+                            agent_id=agent.id,
+                            session_id=ctx.session_id,
+                            user_id=ctx.user_id,
+                            variables=ctx.variables,
+                            config=dict(binding.config) if binding else {},
+                            cancel=ctx.cancel,
+                            tenant_id=ctx.tenant_id,
+                        ),
+                    )
+                except Exception as exc:
+                    spans.end(
+                        tool_span, status="error", status_message=f"{type(exc).__name__}: {exc}"
+                    )
+                    raise
+                spans.end(
+                    tool_span,
+                    status="error" if result.is_error else "ok",
+                    status_message=result.output if result.is_error else None,
+                    attributes={
+                        "latency_ms": result.latency_ms,
+                        "kind": result.metadata.get("kind"),
+                    },
                 )
                 _fold_usage(ctx, result)
                 if result.metadata.get("kind") == "handoff" and not result.is_error:
@@ -733,7 +837,7 @@ class AgentRuntime:
                     )
                 )
 
-            await self._iteration_done(sink, ctx, iteration)
+            await self._iteration_done(sink, ctx, iteration, spans=spans)
             if handoff is not None:
                 # S14 (D56): the batch is fully persisted — the predecessor
                 # ends with the ORDINARY run.completed terminal, its
@@ -831,6 +935,7 @@ class AgentRuntime:
         started_at = datetime.now(UTC)
         run_input = ""
         self._live_tokens[run_id] = ctx
+        spans = self._recorder(ctx)  # S7 (D74): the resumed segment records too
         try:
             if self._executions is not None:
                 row = await self._executions.get(run_id)
@@ -843,9 +948,11 @@ class AgentRuntime:
             client = await self._models.resolve(agent.model, principal=ctx.principal)
             if self._trace_llm:
                 client = TracedModelClient(client, ctx, buffer=self.llm_trace_buffer)
+            if spans.active:
+                client = TracingModelClient(client, spans)
             tooling = await self._resolve_tooling(agent, ctx)  # S4 (D38): re-resolve per segment
             result = await self._resume_segment(
-                run_input, ctx, sink, client, agent, started_at, resume, tooling
+                run_input, ctx, sink, client, agent, started_at, resume, tooling, spans=spans
             )
         except ExecutionCancelled as exc:
             result = await self._terminal_cancelled(ctx, sink, exc, started_at, run_input)
@@ -880,6 +987,10 @@ class AgentRuntime:
         if self._executions is not None and result.status != "awaiting_input":
             # mirror run(): a paused result already wrote its awaiting_input row
             await self._executions.finish_run(result)
+        # S7 (D74): the same flush discipline as run().
+        await spans.flush(
+            pending_status=status_for_run(result.status), pending_message=result.error
+        )
         return result
 
     async def _resume_segment(
@@ -892,11 +1003,20 @@ class AgentRuntime:
         started_at: datetime,
         resume: ResumeRequest,
         tooling: McpTooling,
+        spans: SpanRecorder | None = None,
     ) -> RunResult:
+        spans = spans or self._recorder(ctx)
+        spans.start(
+            "run.segment",
+            "run.segment",
+            slot="segment",
+            attributes=_segment_attrs(agent, ctx, entry="resume"),
+        )
         try:
             outcome = await self._resume_loop(
-                ctx, sink, client, agent, resume, tooling, run_input=run_input
+                ctx, sink, client, agent, resume, tooling, run_input=run_input, spans=spans
             )
+            _close_segment_span(spans, outcome)
             return await self._after_loop(ctx, sink, outcome, started_at, run_input)
         finally:
             # S4 (D38): the resumed segment's MCP connections close with the
@@ -924,6 +1044,13 @@ class AgentRuntime:
         agent = version.snapshot
         ctx.temperature = agent.temperature
         self._live_tokens[run_id] = ctx
+        spans = self._recorder(ctx)  # S7 (D74)
+        spans.start(
+            "run.segment",
+            "run.segment",
+            slot="segment",
+            attributes=_segment_attrs(agent, ctx, entry="resume"),
+        )
         if self._executions is not None:
             row = await self._executions.get(run_id)
             if row is not None:
@@ -931,11 +1058,15 @@ class AgentRuntime:
         client = await self._models.resolve(agent.model, principal=ctx.principal)
         if self._trace_llm:
             client = TracedModelClient(client, ctx, buffer=self.llm_trace_buffer)
+        if spans.active:
+            client = TracingModelClient(client, spans)
         tooling = await self._resolve_tooling(agent, ctx)  # S4 (D38): re-resolve per segment
         try:
-            return await self._resume_loop(
-                ctx, sink, client, agent, resume, tooling, open_iteration
+            outcome = await self._resume_loop(
+                ctx, sink, client, agent, resume, tooling, open_iteration, spans=spans
             )
+            _close_segment_span(spans, outcome)
+            return outcome
         finally:
             # S4 (D38): the resumed segment's MCP connections close with the
             # segment; a later resume re-resolves and reconnects.
@@ -951,6 +1082,7 @@ class AgentRuntime:
         tooling: McpTooling,
         open_iteration: int | None = None,
         run_input: str = "",
+        spans: SpanRecorder | None = None,  # S7 (D74)
     ) -> LoopOutcome:
         """The resumed segment's loop entry: counter re-seed from the durable
         log, message rebuild, batch/answer entry decision, then the loop.
@@ -978,7 +1110,7 @@ class AgentRuntime:
 
         # S8 (D66): the resumed segment retrieves against the run's
         # ORIGINAL input (the row carries it) — same per-segment contract.
-        knowledge_context = await self._retrieve_knowledge(agent, ctx, None)
+        knowledge_context = await self._retrieve_knowledge(agent, ctx, None, spans=spans)
 
         conversation_id = await self._resume_conversation(ctx, agent)
         messages = await self._rebuild_messages(
@@ -1039,11 +1171,16 @@ class AgentRuntime:
             entry=entry,
             pending_calls=pending_calls,
             refusals=refusals,
+            spans=spans,
         )
         return outcome
 
     async def _retrieve_knowledge(
-        self, agent: AgentDefinition, ctx: ExecutionContext, query: str | None
+        self,
+        agent: AgentDefinition,
+        ctx: ExecutionContext,
+        query: str | None,
+        spans: SpanRecorder | None = None,
     ) -> str | None:
         """The D66 knowledge injection: the binding's datasets resolve
         tenant-scoped ONCE per segment, the query embeds, the rendered
@@ -1055,35 +1192,59 @@ class AgentRuntime:
         binding = agent.knowledge
         if binding is None:
             return None
-        if self._retrieval is None or self._knowledge_repo is None:
-            raise RetrieverResolutionError(
-                ", ".join(binding.datasets), "no knowledge retrieval is wired into this runtime"
+        # S7 (D74): one `knowledge.retrieve` span per segment — resolution,
+        # embed, search, and render are one retrieval.
+        retrieve_span = (
+            spans.start(
+                "knowledge.retrieve",
+                "knowledge.retrieve",
+                attributes={"datasets": ",".join(binding.datasets), "top_k": binding.top_k},
             )
-        if query is None:
-            # A resumed segment retrieves against the run's ORIGINAL input
-            # (the row carries it) — same per-segment contract.
-            row = await self._executions.get(ctx.run_id) if self._executions is not None else None
-            query = row.input if row is not None else ""
-        datasets: list[KnowledgeDataset] = []
-        for dataset_id in binding.datasets:
-            dataset = await self._knowledge_repo.get_dataset(
-                dataset_id, tenant_id=ctx.tenant_id or ""
-            )
-            if dataset is None:
-                # D29: a foreign (or deleted) dataset reads as absent — the
-                # binding names an unrunnable resource, honestly terminal.
-                raise RetrieverResolutionError(
-                    f"retriever__{dataset_id}", "dataset not found in this tenant"
-                )
-            datasets.append(dataset)
-        return await self._retrieval.retrieve(
-            datasets,
-            query,
-            tenant_id=ctx.tenant_id or "",
-            principal=ctx.principal,
-            top_k=binding.top_k,
-            min_score=binding.min_score,
+            if spans is not None
+            else None
         )
+        try:
+            if self._retrieval is None or self._knowledge_repo is None:
+                raise RetrieverResolutionError(
+                    ", ".join(binding.datasets),
+                    "no knowledge retrieval is wired into this runtime",
+                )
+            if query is None:
+                # A resumed segment retrieves against the run's ORIGINAL
+                # input (the row carries it) — same per-segment contract.
+                row = (
+                    await self._executions.get(ctx.run_id) if self._executions is not None else None
+                )
+                query = row.input if row is not None else ""
+            datasets: list[KnowledgeDataset] = []
+            for dataset_id in binding.datasets:
+                dataset = await self._knowledge_repo.get_dataset(
+                    dataset_id, tenant_id=ctx.tenant_id or ""
+                )
+                if dataset is None:
+                    # D29: a foreign (or deleted) dataset reads as absent — the
+                    # binding names an unrunnable resource, honestly terminal.
+                    raise RetrieverResolutionError(
+                        f"retriever__{dataset_id}", "dataset not found in this tenant"
+                    )
+                datasets.append(dataset)
+            context = await self._retrieval.retrieve(
+                datasets,
+                query,
+                tenant_id=ctx.tenant_id or "",
+                principal=ctx.principal,
+                top_k=binding.top_k,
+                min_score=binding.min_score,
+            )
+            if spans is not None:
+                spans.end(retrieve_span, attributes={"chars": len(context)})
+            return context
+        except Exception as exc:
+            if spans is not None:
+                spans.end(
+                    retrieve_span, status="error", status_message=f"{type(exc).__name__}: {exc}"
+                )
+            raise
 
     async def _resume_conversation(
         self, ctx: ExecutionContext, agent: AgentDefinition
@@ -1177,8 +1338,15 @@ class AgentRuntime:
             await self._executions.save_message(ctx.run_id, message)
 
     async def _iteration_done(
-        self, sink: InProcessEventSink, ctx: ExecutionContext, iteration: int
+        self,
+        sink: InProcessEventSink,
+        ctx: ExecutionContext,
+        iteration: int,
+        spans: SpanRecorder | None = None,
     ) -> None:
+        # S7 (D74): the natural iteration end closes the iteration span.
+        if spans is not None:
+            spans.end_slot("iteration", status="ok")
         await sink.append(
             IterationCompleted(
                 event_id=_uuid(),
@@ -1474,6 +1642,51 @@ def _merged_close(*closes: Callable[[], Awaitable[None]]) -> Callable[[], Awaita
             raise errors[0]
 
     return _close
+
+
+def _segment_attrs(agent: AgentDefinition, ctx: ExecutionContext, *, entry: str) -> dict[str, Any]:
+    """The run.segment span's open attributes (S7, ADR 0021 §3) — identity
+    and provenance the run already carries; None values drop out."""
+    trigger = ctx.metadata.get("trigger")
+    attrs: dict[str, Any] = {
+        "agent_id": ctx.agent_id,
+        "agent_version_id": ctx.agent_version_id,
+        "entry": entry,
+        "parent_run_id": ctx.parent_run_id,
+        "session_id": ctx.session_id,
+        "tenant_id": ctx.tenant_id,
+    }
+    if isinstance(trigger, dict):
+        attrs["trigger_id"] = trigger.get("trigger_id")
+        attrs["trigger_kind"] = trigger.get("kind")
+        attrs["trigger_name"] = trigger.get("name")
+    return attrs
+
+
+def _close_segment_span(spans: SpanRecorder, outcome: LoopOutcome) -> None:
+    """Close the segment slot from the loop's outcome (S7, D74): a failure
+    is an error span naming the kind, a pause closes ok with `paused`, and
+    a completion (or a handoff — the predecessor ended ordinarily) closes
+    ok. An exception path leaves the slot open on purpose — run()'s flush
+    closes it with the run's own final status."""
+    if outcome.kind == "failed":
+        spans.end_slot(
+            "segment",
+            status="error",
+            status_message=outcome.error,
+            attributes={"error_kind": outcome.error_kind},
+        )
+    elif outcome.kind == "paused":
+        spans.end_slot(
+            "segment",
+            status="ok",
+            attributes={
+                "paused": True,
+                "pause_reason": outcome.pause.reason if outcome.pause else None,
+            },
+        )
+    else:  # completed | handoff
+        spans.end_slot("segment", status="ok")
 
 
 def _uuid() -> str:
