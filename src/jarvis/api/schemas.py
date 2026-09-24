@@ -72,6 +72,9 @@ class AgentUpsertRequest(_Model):
     max_iterations: int | None = Field(default=None, ge=1, le=32)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     output_schema: dict[str, Any] | None = None
+    # S9 (D78): additive optional — falls back to the definition default
+    # (False) when unset, exactly like the rest.
+    parallel_tool_calls: bool | None = None
 
     @field_validator("name")
     @classmethod

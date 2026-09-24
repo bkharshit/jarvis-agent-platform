@@ -111,6 +111,11 @@ class AgentDefinition(_Model):
     model: ModelRef
     system_prompt: str = ""
     user_prompt_template: str | None = None
+    # S9 (D78): a multi-tool-call batch runs concurrently — but only when
+    # the resolved provider also declares `parallel_tool_calls` (the same
+    # definition × capability combination as structured_mode). Additive and
+    # default-off: every existing snapshot stays valid and sequential.
+    parallel_tool_calls: bool = False
     tools: list[ToolBinding] = Field(default_factory=list)
     strategy: StrategyConfig
     memory: MemoryConfig = Field(default_factory=MemoryConfig)

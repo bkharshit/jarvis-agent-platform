@@ -958,6 +958,21 @@ the code.
   waterfall) replace the placeholder, msw fixtures + gen-api regen in
   the same web commit.
 
+- **D78 (2026-09-24, S9) — Parallel tool calls: the per-agent opt-in sits
+  BEHIND the provider capability.** `AgentDefinition.parallel_tool_calls`
+  (default False — additive, every existing snapshot stays sequential) is
+  only honored when the resolved provider's
+  `ModelCapabilities.parallel_tool_calls` is also true: the same
+  definition × capability combination as `structured_mode`. The batch
+  gathers `tool_runtime.execute` with `return_exceptions=True` — a failing
+  sibling must NOT cancel the others mid-flight (D6: cancellation is
+  cooperative, no asyncio-cancel hazards); the first failure in call order
+  re-raises after the batch drains. Ordering stays deterministic on both
+  paths: declined frames first in call order, started frames + spans for
+  the whole batch up front, then messages / tool-execution rows /
+  completed frames replay in call order. Sequential remains the default
+  and shares the same helpers.
+
 ## 4. Explicit deferrals (decided *not* to build in Phase 1)
 
 Redis/queues · plugins & marketplace · multi-tenancy/auth · RAG · workflow

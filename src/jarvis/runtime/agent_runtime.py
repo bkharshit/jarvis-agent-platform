@@ -11,6 +11,7 @@ task, so both modes produce identical event sequences."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -40,6 +41,7 @@ from jarvis.domain.events import (
 from jarvis.domain.execution import ExecutionCancelled, ExecutionContext, RunResult
 from jarvis.domain.knowledge import KnowledgeDataset
 from jarvis.domain.message import Message, ToolCall, Usage
+from jarvis.domain.spans import SpanRecord
 from jarvis.domain.tools import ToolContext, ToolDescriptor, ToolResult
 from jarvis.events.bus import InProcessEventBus, InProcessEventSink
 from jarvis.models.errors import ModelAbortedError, ModelError
@@ -701,22 +703,45 @@ class AgentRuntime:
                 calls = step.tool_calls
                 batch_refusals = None
 
-            for call in calls:
-                refusal_copy: str | None = None
-                if batch_refusals and call.id in batch_refusals:
-                    # S10/ADR 0011 §3: the human declined this call — the
-                    # declined event records the *decision* (no
-                    # started/completed; it never ran), the refusal tool
-                    # message closes it in the model's context. Ungated
-                    # calls in the batch still execute.
-                    refusal_copy = _USER_DECLINE_COPY
-                elif auto_refusals and call.id in auto_refusals:
-                    # S14 (D55): the child's non-interactivity declined it —
-                    # same decision event, the child's refusal copy.
-                    refusal_copy = _AUTO_DECLINE_COPY
-                if refusal_copy is not None:
-                    await sink.append(
-                        ToolCallDeclined(
+            executable = [
+                call
+                for call in calls
+                if not (
+                    (batch_refusals and call.id in batch_refusals)
+                    or (auto_refusals and call.id in auto_refusals)
+                )
+            ]
+            # S9 (D78): a multi-call batch runs concurrently only when the
+            # agent opted in AND the resolved provider declares the
+            # capability (the same definition × capability combination as
+            # structured_mode). The sequential path below stays the default.
+            if (
+                agent.parallel_tool_calls
+                and client.capabilities.parallel_tool_calls
+                and len(executable) > 1
+            ):
+                # Declined frames first, in call order — no started/completed
+                # for a call that never ran (the no-tool-row fact, S14).
+                for call in calls:
+                    refusal_copy: str | None = (
+                        _USER_DECLINE_COPY
+                        if batch_refusals and call.id in batch_refusals
+                        else _AUTO_DECLINE_COPY
+                        if auto_refusals and call.id in auto_refusals
+                        else None
+                    )
+                    if refusal_copy is None:
+                        continue
+                    await self._decline_tool_call(
+                        ctx, sink, call, refusal_copy, messages, conversation_id
+                    )
+                # Started frames + spans for the whole batch up front; the
+                # heavy awaits gather; the finishing work (messages, rows,
+                # completed frames) replays in call order.
+                started: list[tuple[ToolCall, SpanRecord | None]] = []
+                for call in executable:
+                    tool_cursor = await sink.append(
+                        ToolCallStarted(
                             event_id=_uuid(),
                             run_id=ctx.run_id,
                             created_at=_now(),
@@ -724,119 +749,92 @@ class AgentRuntime:
                             name=call.name,
                         )
                     )
-                    tool_message = Message(
-                        role="tool",
-                        content=refusal_copy,
-                        tool_call_id=call.id,
-                        name=call.name,
-                    )
-                    messages.append(tool_message)
-                    await self._save_message(ctx, tool_message)
-                    if conversation_id and self._conversations is not None:
-                        await self._conversations.append_message(
-                            conversation_id, tool_message, ctx.run_id
+                    started.append(
+                        (
+                            call,
+                            spans.start(
+                                "tool.call",
+                                "tool.call",
+                                parent=iter_span,
+                                attributes={
+                                    "tool": call.name,
+                                    "tool_call_id": call.id,
+                                    "jarvis.event.cursor": tool_cursor,
+                                },
+                            ),
                         )
-                    continue
-                tool_cursor = await sink.append(
-                    ToolCallStarted(
-                        event_id=_uuid(),
-                        run_id=ctx.run_id,
-                        created_at=_now(),
-                        tool_call_id=call.id,
-                        name=call.name,
                     )
+                # return_exceptions=True — a failing sibling must not cancel
+                # the others mid-flight (D6: cancellation is cooperative, no
+                # asyncio-cancel hazards). The first failure in call order
+                # re-raises below, after the batch drains: the sequential
+                # stop-at-first-failure semantics, minus the cancel.
+                outcomes = await asyncio.gather(
+                    *(
+                        self._execute_tool_call(
+                            ctx, agent, bindings, segment_tooling, call, spans, tool_span
+                        )
+                        for call, tool_span in started
+                    ),
+                    return_exceptions=True,
                 )
-                # S7 (D74): one `tool.call` span per executed call, tied to
-                # the started event's cursor. Declined calls never reach
-                # here — they get no span, matching the no-tool-row fact.
-                tool_span = spans.start(
-                    "tool.call",
-                    "tool.call",
-                    parent=iter_span,
-                    attributes={
-                        "tool": call.name,
-                        "tool_call_id": call.id,
-                        "jarvis.event.cursor": tool_cursor,
-                    },
-                )
-                binding = bindings.get(call.name)
-                try:
-                    result = await segment_tooling.tool_runtime.execute(
-                        call,
-                        ToolContext(
+                for (call, _tool_span), outcome in zip(started, outcomes, strict=True):
+                    if isinstance(outcome, BaseException):
+                        raise outcome
+                    handoff = (
+                        await self._finish_tool_call(
+                            ctx, agent, sink, call, outcome, messages, conversation_id
+                        )
+                    ) or handoff
+            else:
+                for call in calls:
+                    refusal_copy = None
+                    if batch_refusals and call.id in batch_refusals:
+                        # S10/ADR 0011 §3: the human declined this call — the
+                        # declined event records the *decision* (no
+                        # started/completed; it never ran), the refusal tool
+                        # message closes it in the model's context. Ungated
+                        # calls in the batch still execute.
+                        refusal_copy = _USER_DECLINE_COPY
+                    elif auto_refusals and call.id in auto_refusals:
+                        # S14 (D55): the child's non-interactivity declined it —
+                        # same decision event, the child's refusal copy.
+                        refusal_copy = _AUTO_DECLINE_COPY
+                    if refusal_copy is not None:
+                        await self._decline_tool_call(
+                            ctx, sink, call, refusal_copy, messages, conversation_id
+                        )
+                        continue
+                    tool_cursor = await sink.append(
+                        ToolCallStarted(
+                            event_id=_uuid(),
                             run_id=ctx.run_id,
-                            agent_id=agent.id,
-                            session_id=ctx.session_id,
-                            user_id=ctx.user_id,
-                            variables=ctx.variables,
-                            config=dict(binding.config) if binding else {},
-                            cancel=ctx.cancel,
-                            tenant_id=ctx.tenant_id,
-                            trace_id=ctx.trace_id,
-                        ),
+                            created_at=_now(),
+                            tool_call_id=call.id,
+                            name=call.name,
+                        )
                     )
-                except Exception as exc:
-                    spans.end(
-                        tool_span, status="error", status_message=f"{type(exc).__name__}: {exc}"
+                    # S7 (D74): one `tool.call` span per executed call, tied to
+                    # the started event's cursor. Declined calls never reach
+                    # here — they get no span, matching the no-tool-row fact.
+                    tool_span = spans.start(
+                        "tool.call",
+                        "tool.call",
+                        parent=iter_span,
+                        attributes={
+                            "tool": call.name,
+                            "tool_call_id": call.id,
+                            "jarvis.event.cursor": tool_cursor,
+                        },
                     )
-                    raise
-                spans.end(
-                    tool_span,
-                    status="error" if result.is_error else "ok",
-                    status_message=result.output if result.is_error else None,
-                    attributes={
-                        "latency_ms": result.latency_ms,
-                        "kind": result.metadata.get("kind"),
-                    },
-                )
-                _fold_usage(ctx, result)
-                if result.metadata.get("kind") == "handoff" and not result.is_error:
-                    # S14 (D56): a handoff tool reported a successor. Other
-                    # calls in the batch still execute and persist first; the
-                    # run terminates AFTER the batch (the check below).
-                    handoff = HandoffOutcome(
-                        successor_run_id=str(result.metadata.get("successor_run_id") or ""),
-                        agent_id=str(result.metadata.get("agent_id") or ""),
-                        agent_name=str(result.metadata.get("agent_name") or ""),
+                    result = await self._execute_tool_call(
+                        ctx, agent, bindings, segment_tooling, call, spans, tool_span
                     )
-                tool_message = Message(
-                    role="tool",
-                    content=result.output,
-                    tool_call_id=call.id,
-                    name=call.name,
-                )
-                messages.append(tool_message)
-                await self._save_message(ctx, tool_message)
-                if self._executions is not None:
-                    await self._executions.save_tool_execution(
-                        ctx.run_id, result, dict(call.arguments)
-                    )
-                if conversation_id and self._conversations is not None:
-                    await self._conversations.append_message(
-                        conversation_id, tool_message, ctx.run_id
-                    )
-                await sink.append(
-                    ToolCallCompleted(
-                        event_id=_uuid(),
-                        run_id=ctx.run_id,
-                        created_at=_now(),
-                        tool_call_id=call.id,
-                        name=call.name,
-                        output=result.output[:2000],
-                        is_error=result.is_error,
-                        latency_ms=result.latency_ms,
-                    )
-                    if not result.is_error
-                    else ToolCallFailed(
-                        event_id=_uuid(),
-                        run_id=ctx.run_id,
-                        created_at=_now(),
-                        tool_call_id=call.id,
-                        name=call.name,
-                        error=result.output,
-                        kind=result.metadata.get("kind", "internal"),
-                    )
-                )
+                    handoff = (
+                        await self._finish_tool_call(
+                            ctx, agent, sink, call, result, messages, conversation_id
+                        )
+                    ) or handoff
 
             await self._iteration_done(sink, ctx, iteration, spans=spans)
             if handoff is not None:
@@ -860,6 +858,150 @@ class AgentRuntime:
                     error_kind="max_iterations",
                     iterations=iteration,
                 )
+
+    # --- tool batch helpers (S9, D78) ---------------------------------------
+    # Shared by the sequential and parallel paths: the decline frames, the
+    # execute step (errors end the span, then re-raise — the callers' catch
+    # sites own the run-failure semantics), and the post-execution
+    # persistence.
+
+    async def _decline_tool_call(
+        self,
+        ctx: ExecutionContext,
+        sink: InProcessEventSink,
+        call: ToolCall,
+        refusal_copy: str,
+        messages: list[Message],
+        conversation_id: str | None,
+    ) -> None:
+        """S10 (ADR 0011 §3) / S14 (D55): a declined call records the
+        *decision* — a `ToolCallDeclined` event, no started/completed frames,
+        no tool-execution row; the refusal tool message closes it in the
+        model's context."""
+        await sink.append(
+            ToolCallDeclined(
+                event_id=_uuid(),
+                run_id=ctx.run_id,
+                created_at=_now(),
+                tool_call_id=call.id,
+                name=call.name,
+            )
+        )
+        tool_message = Message(
+            role="tool",
+            content=refusal_copy,
+            tool_call_id=call.id,
+            name=call.name,
+        )
+        messages.append(tool_message)
+        await self._save_message(ctx, tool_message)
+        if conversation_id and self._conversations is not None:
+            await self._conversations.append_message(conversation_id, tool_message, ctx.run_id)
+
+    async def _execute_tool_call(
+        self,
+        ctx: ExecutionContext,
+        agent: AgentDefinition,
+        bindings: dict[str, ToolBinding],
+        segment_tooling: McpTooling,
+        call: ToolCall,
+        spans: SpanRecorder,
+        tool_span: SpanRecord | None,
+    ) -> ToolResult:
+        """The execute step: build the ToolContext, run the tool, close its
+        span. Real exceptions end the span with the error, then re-raise."""
+        binding = bindings.get(call.name)
+        try:
+            result = await segment_tooling.tool_runtime.execute(
+                call,
+                ToolContext(
+                    run_id=ctx.run_id,
+                    agent_id=agent.id,
+                    session_id=ctx.session_id,
+                    user_id=ctx.user_id,
+                    variables=ctx.variables,
+                    config=dict(binding.config) if binding else {},
+                    cancel=ctx.cancel,
+                    tenant_id=ctx.tenant_id,
+                    trace_id=ctx.trace_id,
+                ),
+            )
+        except Exception as exc:
+            spans.end(tool_span, status="error", status_message=f"{type(exc).__name__}: {exc}")
+            raise
+        spans.end(
+            tool_span,
+            status="error" if result.is_error else "ok",
+            status_message=result.output if result.is_error else None,
+            attributes={
+                "latency_ms": result.latency_ms,
+                "kind": result.metadata.get("kind"),
+            },
+        )
+        return result
+
+    async def _finish_tool_call(
+        self,
+        ctx: ExecutionContext,
+        agent: AgentDefinition,
+        sink: InProcessEventSink,
+        call: ToolCall,
+        result: ToolResult,
+        messages: list[Message],
+        conversation_id: str | None,
+    ) -> HandoffOutcome | None:
+        """Post-execution persistence, in call order on both paths: usage
+        fold (D54), handoff capture (D56), the tool message (transcript +
+        conversations), the tool-execution row, and the completed/failed
+        frame. Returns a handoff outcome when the tool reported a
+        successor."""
+        _fold_usage(ctx, result)
+        if result.metadata.get("kind") == "handoff" and not result.is_error:
+            # S14 (D56): a handoff tool reported a successor. Other calls in
+            # the batch still execute and persist first; the run terminates
+            # AFTER the batch (the check in _loop).
+            handoff = HandoffOutcome(
+                successor_run_id=str(result.metadata.get("successor_run_id") or ""),
+                agent_id=str(result.metadata.get("agent_id") or ""),
+                agent_name=str(result.metadata.get("agent_name") or ""),
+            )
+        else:
+            handoff = None
+        tool_message = Message(
+            role="tool",
+            content=result.output,
+            tool_call_id=call.id,
+            name=call.name,
+        )
+        messages.append(tool_message)
+        await self._save_message(ctx, tool_message)
+        if self._executions is not None:
+            await self._executions.save_tool_execution(ctx.run_id, result, dict(call.arguments))
+        if conversation_id and self._conversations is not None:
+            await self._conversations.append_message(conversation_id, tool_message, ctx.run_id)
+        await sink.append(
+            ToolCallCompleted(
+                event_id=_uuid(),
+                run_id=ctx.run_id,
+                created_at=_now(),
+                tool_call_id=call.id,
+                name=call.name,
+                output=result.output[:2000],
+                is_error=result.is_error,
+                latency_ms=result.latency_ms,
+            )
+            if not result.is_error
+            else ToolCallFailed(
+                event_id=_uuid(),
+                run_id=ctx.run_id,
+                created_at=_now(),
+                tool_call_id=call.id,
+                name=call.name,
+                error=result.output,
+                kind=result.metadata.get("kind", "internal"),
+            )
+        )
+        return handoff
 
     # --- pause (S10, ADR 0010) ----------------------------------------------
 
