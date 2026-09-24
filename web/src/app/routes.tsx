@@ -22,6 +22,8 @@ import { EvaluationsList } from "@/sections/evaluations/EvaluationsList";
 import { TriggersPage } from "@/sections/triggers/TriggersPage";
 import KnowledgePage from "@/sections/knowledge/KnowledgePage";
 import KnowledgeDatasetDetail from "@/sections/knowledge/KnowledgeDatasetDetail";
+import { ObservabilityPage } from "@/sections/observability/ObservabilityPage";
+import { TraceDetailPage } from "@/sections/observability/TraceDetail";
 
 import { SectionGate } from "@/capabilities/SectionGate";
 import type { SectionKey } from "@/capabilities/sectionRegistry";
@@ -83,7 +85,11 @@ export function sectionRoutes() {
       element: gated("evaluations", <EvalDatasetDetail />),
     },
     { path: "/evaluations/runs/:runId", element: gated("evaluations", <EvalRunDetail />) },
-    { path: "/observability", element: gated("observability") },
+    { path: "/observability", element: gated("observability", <ObservabilityPage />) },
+    {
+      path: "/observability/:traceId",
+      element: gated("observability", <TraceDetailPage />),
+    },
     { path: "/plugins", element: gated("plugins", <PluginsPage />) },
     { path: "/triggers", element: gated("triggers", <TriggersPage />) },
     { path: "/settings", element: gated("settings", <SettingsPage />) },

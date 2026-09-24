@@ -57,6 +57,34 @@ export const triggerRunFixture = {
   metadata: { trigger: { trigger_id: "trg-1", kind: "cron", name: "nightly-digest", depth: 1 } },
 };
 
+/** S7 (ADR 0021): one run's spans — a segment, its iteration, and the
+ * llm/tool calls beneath it (a realistic waterfall shape). */
+export const traceSummaryFixture = {
+  trace_id: "b2f1c0d4a596778899aabbccddeeff00",
+  run_ids: ["run-abc-123"],
+  span_count: 4,
+  statuses: ["ok"],
+  kinds: ["iteration", "llm.call", "run.segment", "tool.call"],
+  started_at: "2026-09-04T13:00:00Z",
+  ended_at: "2026-09-04T13:00:02Z",
+};
+
+const _spanBase = {
+  trace_id: traceSummaryFixture.trace_id,
+  run_id: "run-abc-123",
+  tenant_id: "default",
+  status: "ok" as const,
+  status_message: null,
+  attributes: {},
+};
+
+export const spansFixture = [
+  { ..._spanBase, span_id: "aaaaaaaaaaaaaaaa", parent_span_id: null, name: "run.segment", kind: "run.segment" as const, started_at: "2026-09-04T13:00:00Z", ended_at: "2026-09-04T13:00:02Z", duration_ms: 2000 },
+  { ..._spanBase, span_id: "bbbbbbbbbbbbbbbb", parent_span_id: "aaaaaaaaaaaaaaaa", name: "iteration", kind: "iteration" as const, started_at: "2026-09-04T13:00:00.100Z", ended_at: "2026-09-04T13:00:01Z", duration_ms: 900 },
+  { ..._spanBase, span_id: "cccccccccccccccc", parent_span_id: "bbbbbbbbbbbbbbbb", name: "llm.call", kind: "llm.call" as const, started_at: "2026-09-04T13:00:00.150Z", ended_at: "2026-09-04T13:00:00.800Z", duration_ms: 650, attributes: { provider: "mock", model: "mock-agent" } },
+  { ..._spanBase, span_id: "dddddddddddddddd", parent_span_id: "bbbbbbbbbbbbbbbb", name: "calculator", kind: "tool.call" as const, started_at: "2026-09-04T13:00:00.850Z", ended_at: "2026-09-04T13:00:00.880Z", duration_ms: 30, attributes: { tool: "calculator" } },
+];
+
 /** S14 (ADR 0018 §7): a sub-agent child of runFixture — an ordinary row
  * linked by parent_run_id, carrying the delegation metadata. */
 export const subAgentRunFixture = {
@@ -433,6 +461,18 @@ export const handlers = [
       { status: 404 },
     );
   }),
+  // --- traces (S7, ADR 0021) -------------------------------------------------
+  http.get("/v1/traces", () => HttpResponse.json({ traces: [traceSummaryFixture] })),
+  http.get("/v1/traces/:trace_id", ({ params }) => {
+    const { trace_id } = params as { trace_id: string };
+    if (trace_id === traceSummaryFixture.trace_id) {
+      return HttpResponse.json({ trace_id, spans: spansFixture });
+    }
+    return HttpResponse.json(
+      { error: { kind: "not_found", message: `trace ${trace_id} not found` } },
+      { status: 404 },
+    );
+  }),
   http.get("/v1/conversations/:agent_id/:session_id/messages", ({ params }) => {
     const { agent_id, session_id } = params as { agent_id: string; session_id: string };
     if (agent_id === agentFixture.id && session_id === "session-7") {
@@ -537,7 +577,11 @@ export const handlers = [
         },
         knowledge: { enabled: false, stage: "S8", summary: "Datasets and retrieval" },
         evaluations: { enabled: true, summary: "Datasets, runs, and scores" },
-        observability: { enabled: false, stage: "S7", summary: "Traces and spans" },
+        observability: {
+          enabled: true,
+          summary: "Traces and spans",
+          detail: { spans: true, otel_export: false, service_name: "jarvis" },
+        },
         plugins: { enabled: false, stage: "S3", summary: "Strategy plugins" },
         triggers: {
           enabled: true,

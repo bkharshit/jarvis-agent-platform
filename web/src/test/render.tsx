@@ -75,7 +75,11 @@ export const TEST_CAPABILITIES: Capabilities = {
       },
     },
     evaluations: { enabled: true, summary: "Datasets, runs, and scores" },
-    observability: { enabled: false, stage: "S7", summary: "Traces and spans" },
+    observability: {
+      enabled: true,
+      summary: "Traces and spans",
+      detail: { spans: true, otel_export: false, service_name: "jarvis" },
+    },
     plugins: {
       enabled: true,
       summary: "Strategy plugins and discovery",

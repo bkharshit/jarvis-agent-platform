@@ -2384,6 +2384,91 @@
         }
       }
     },
+    "/v1/traces": {
+      "get": {
+        "tags": [
+          "traces"
+        ],
+        "summary": "List Traces",
+        "operationId": "list_traces_v1_traces_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TraceList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/traces/{trace_id}": {
+      "get": {
+        "tags": [
+          "traces"
+        ],
+        "summary": "Trace Detail",
+        "operationId": "trace_detail_v1_traces__trace_id__get",
+        "parameters": [
+          {
+            "name": "trace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Trace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TraceDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/workflows": {
       "post": {
         "tags": [
@@ -7003,6 +7088,131 @@
         "title": "SectionCapability",
         "description": "One IA section's enablement fact (F1). Disabled sections always carry\nthe `stage` that will enable them; `detail` carries derived facts\n(registries mirror registries \u2014 never hardcoded)."
       },
+      "SpanRecord": {
+        "properties": {
+          "span_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16}$",
+            "title": "Span Id"
+          },
+          "trace_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Trace Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id"
+          },
+          "parent_span_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{16}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Span Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "run.segment",
+              "iteration",
+              "llm.call",
+              "tool.call",
+              "knowledge.retrieve"
+            ],
+            "title": "Kind"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "ended_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Ended At"
+          },
+          "duration_ms": {
+            "type": "number",
+            "title": "Duration Ms",
+            "default": 0.0
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "error",
+              "cancelled"
+            ],
+            "title": "Status",
+            "default": "ok"
+          },
+          "status_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Message"
+          },
+          "attributes": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Attributes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "trace_id",
+          "run_id",
+          "name",
+          "kind"
+        ],
+        "title": "SpanRecord",
+        "description": "One finished span. `attributes` is open \u2014 spans carry event-cursor\nties (`jarvis.event.cursor`), run linkage (`parent_run_id`), and\nwhatever the seam already had in hand (tool name, usage, finish\nreason). Never secret material: credentials ride HTTP headers, never\nthe runtime's objects (ADR 0005/0006)."
+      },
       "StoredCredentialRef": {
         "properties": {
           "type": {
@@ -7667,6 +7877,102 @@
           "output"
         ],
         "title": "ToolResult"
+      },
+      "TraceDetail": {
+        "properties": {
+          "trace_id": {
+            "type": "string",
+            "title": "Trace Id"
+          },
+          "spans": {
+            "items": {
+              "$ref": "#/components/schemas/SpanRecord"
+            },
+            "type": "array",
+            "title": "Spans"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "trace_id",
+          "spans"
+        ],
+        "title": "TraceDetail",
+        "description": "One trace's spans for GET /v1/traces/{trace_id} \u2014 the waterfall's\ndata (chronological; parentage rides parent_span_id)."
+      },
+      "TraceList": {
+        "properties": {
+          "traces": {
+            "items": {
+              "$ref": "#/components/schemas/TraceSummary"
+            },
+            "type": "array",
+            "title": "Traces"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "traces"
+        ],
+        "title": "TraceList"
+      },
+      "TraceSummary": {
+        "properties": {
+          "trace_id": {
+            "type": "string",
+            "title": "Trace Id"
+          },
+          "run_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Run Ids"
+          },
+          "span_count": {
+            "type": "integer",
+            "title": "Span Count"
+          },
+          "statuses": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Statuses"
+          },
+          "kinds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Kinds"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "ended_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Ended At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "trace_id",
+          "run_ids",
+          "span_count",
+          "statuses",
+          "kinds",
+          "started_at",
+          "ended_at"
+        ],
+        "title": "TraceSummary",
+        "description": "One grouped trace for GET /v1/traces (S7, D77) \u2014 the spans table's\ngroup view, newest first, spans ordered chronologically in the detail."
       },
       "TriggerCreate": {
         "properties": {

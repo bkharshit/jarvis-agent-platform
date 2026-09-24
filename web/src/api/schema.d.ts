@@ -686,6 +686,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/traces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Traces */
+        get: operations["list_traces_v1_traces_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/traces/{trace_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Trace Detail */
+        get: operations["trace_detail_v1_traces__trace_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workflows": {
         parameters: {
             query?: never;
@@ -2499,6 +2533,60 @@ export interface components {
             } | null;
         };
         /**
+         * SpanRecord
+         * @description One finished span. `attributes` is open — spans carry event-cursor
+         *     ties (`jarvis.event.cursor`), run linkage (`parent_run_id`), and
+         *     whatever the seam already had in hand (tool name, usage, finish
+         *     reason). Never secret material: credentials ride HTTP headers, never
+         *     the runtime's objects (ADR 0005/0006).
+         */
+        SpanRecord: {
+            /** Span Id */
+            span_id?: string;
+            /** Trace Id */
+            trace_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Tenant Id */
+            tenant_id?: string | null;
+            /** Parent Span Id */
+            parent_span_id?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "run.segment" | "iteration" | "llm.call" | "tool.call" | "knowledge.retrieve";
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at?: string;
+            /**
+             * Ended At
+             * Format: date-time
+             */
+            ended_at?: string;
+            /**
+             * Duration Ms
+             * @default 0
+             */
+            duration_ms: number;
+            /**
+             * Status
+             * @default ok
+             * @enum {string}
+             */
+            status: "ok" | "error" | "cancelled";
+            /** Status Message */
+            status_message?: string | null;
+            /** Attributes */
+            attributes?: {
+                [key: string]: string | number | boolean | null;
+            };
+        };
+        /**
          * StoredCredentialRef
          * @description Credential reference: a stored (BYOK) credential id, tenant-scoped at
          *     resolution time (ADR 0006). An id alone is never authorization.
@@ -2801,6 +2889,49 @@ export interface components {
             metadata?: {
                 [key: string]: unknown;
             };
+        };
+        /**
+         * TraceDetail
+         * @description One trace's spans for GET /v1/traces/{trace_id} — the waterfall's
+         *     data (chronological; parentage rides parent_span_id).
+         */
+        TraceDetail: {
+            /** Trace Id */
+            trace_id: string;
+            /** Spans */
+            spans: components["schemas"]["SpanRecord"][];
+        };
+        /** TraceList */
+        TraceList: {
+            /** Traces */
+            traces: components["schemas"]["TraceSummary"][];
+        };
+        /**
+         * TraceSummary
+         * @description One grouped trace for GET /v1/traces (S7, D77) — the spans table's
+         *     group view, newest first, spans ordered chronologically in the detail.
+         */
+        TraceSummary: {
+            /** Trace Id */
+            trace_id: string;
+            /** Run Ids */
+            run_ids: string[];
+            /** Span Count */
+            span_count: number;
+            /** Statuses */
+            statuses: string[];
+            /** Kinds */
+            kinds: string[];
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * Ended At
+             * Format: date-time
+             */
+            ended_at: string;
         };
         /**
          * TriggerCreate
@@ -4832,6 +4963,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModelListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_traces_v1_traces_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TraceList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    trace_detail_v1_traces__trace_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TraceDetail"];
                 };
             };
             /** @description Validation Error */
