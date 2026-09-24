@@ -108,6 +108,8 @@ uv run jarvis doctor --ping-model
 | GET/POST/PATCH/DELETE | `/knowledge/datasets` | Knowledge datasets (S8/ADR 0020) — the embedding config is IMMUTABLE and dimension-pinned at create (any config key on PATCH is a 422); DELETE is 409 while agent version snapshots reference the dataset |
 | GET/POST | `/knowledge/datasets/{id}/documents` | List / synchronously ingest text documents — the POST blocks on chunk → batched embed → one-tx persist → 201 `ready`; embedder failure persists an `error` row and answers 502 `embedding_unavailable` |
 | GET/DELETE | `/knowledge/datasets/{id}/documents/{doc_id}` | Read / delete one ingested document |
+| GET | `/traces` | Trace list (S7/ADR 0021) — runs grouped by their 32-hex `trace_id` (newest first, with run_ids, statuses, span kinds) |
+| GET | `/traces/{trace_id}` | One trace's spans, chronological — the waterfall view's data |
 
 Every error has one envelope shape: `{"error": {"kind", "message", "details"}}`.
 
@@ -533,6 +535,36 @@ The web **Knowledge** section manages datasets and documents (paste or
 file-read ingest, status chips, error rows shown honestly); the agent
 editor has a knowledge multi-select + top-k picker.
 
+### Observability (S7, ADR 0021)
+
+Every run's work is recorded as **finished spans in Postgres, grouped
+by the run's own `trace_id`** — which is itself a valid W3C/OTel trace
+id (32 hex). Persistence is always on (the `JARVIS_SPANS_ENABLED`
+kill-switch); spans cover five kinds at the real seams: `run.segment`
+per segment, `iteration` per loop pass, `llm.call` per model invocation,
+`tool.call` per executed call, `knowledge.retrieve` per retrieval.
+Declined tool calls get no span (they never executed). Children
+(sub-agent delegations, handoff successors) and trigger-fired runs copy
+the parent's trace, and a webhook ingest carrying a W3C `traceparent`
+header joins the producer's trace — so one multi-agent conversation is
+ONE trace, and `GET /v1/traces/{trace_id}` returns the whole waterfall.
+
+```bash
+curl -s localhost:8000/v1/traces -H "Authorization: Bearer $KEY" | python3 -m json.tool | head -20
+# → [{"trace_id": "b2f1…", "run_ids": ["run-…"], "span_count": 4,
+#     "kinds": ["run.segment", "iteration", "llm.call", "tool.call"], "statuses": ["ok"]}]
+```
+
+Failure is recorded, not hidden: a dead model endpoint yields `error`
+spans naming where the run died (`llm.call` → `run.segment`), and the
+trace list colors accordingly. The optional **OTLP export** ships the
+same spans out (real OpenTelemetry SDK, but the runtime imports no
+`opentelemetry` anything — the SDK lives in one adapter) behind
+`JARVIS_OTEL_*` settings, OFF by default; a broken exporter endpoint is
+logged and swallowed — it never changes a run's outcome. The web
+**Observability** section renders the trace list and a depth-indented
+waterfall with durations and error/cancel status coloring.
+
 ### Queue-backed runs and distributed mode (S1, ADR 0008)
 
 Every API run is enqueued in Postgres and executed by a worker; the API
@@ -610,6 +642,11 @@ alongside it.
 | `JARVIS_AUTH_MODE` | `anonymous` | `anonymous` (fixed default tenant) or `required` (401 without credentials — S2/ADR 0009) |
 | `JARVIS_CREDENTIALS_MASTER_KEY` | `JARVIS_CREDENTIALS_MASTER_KEY` | *Name* of the env var holding the base64 32-byte BYOK master key (ADR 0006; unset → 503 `credentials_unavailable`) |
 | `JARVIS_LLM_TRACE` | `false` | Debug only: log every model request (messages incl. the system prompt + tool schemas) and response to the backend log, tagged with run id + iteration, and buffer them for the web — the execution detail page shows a per-iteration trace when on. In-memory only (embedded worker), lost on restart — nothing is stored |
+| `JARVIS_SPANS_ENABLED` | `true` | Persist run spans in Postgres (S7/ADR 0021) — the kill-switch for the always-on Postgres sink |
+| `JARVIS_OTEL_EXPORT_ENABLED` | `false` | Also export spans via OTLP (real OpenTelemetry SDK, one adapter — the runtime imports no `opentelemetry` anything). Export failures are logged and swallowed, never a run outcome |
+| `JARVIS_OTEL_ENDPOINT` | `http://localhost:4318/v1/traces` | OTLP/HTTP collector endpoint used when export is enabled |
+| `JARVIS_OTEL_SERVICE_NAME` | `jarvis` | `service.name` resource attribute on exported spans |
+| `JARVIS_OTEL_HEADERS_ENV` | *(empty)* | Name of an env var holding extra OTLP exporter headers in SDK format (`"api-key=secret,env=prod"` — comma-separated `k=v` pairs) |
 | `JARVIS_HOST` / `JARVIS_PORT` | `127.0.0.1` / `8000` | HTTP bind |
 
 ## Development

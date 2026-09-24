@@ -332,6 +332,18 @@ stripped at save (Dify lessons, `docs/reference/dify-map.md`).
 
 ## S7 — OTel tracing
 
+> **SHIPPED (2026-09-24)** — all 7 build commits + web observability:
+> spans domain/port + Postgres sink (always-on, `JARVIS_SPANS_ENABLED`
+> kill-switch); five span kinds at the real seams (declined calls get
+> no span); OTLP export behind `JARVIS_OTEL_*`, off by default, broken
+> exporter swallowed; one 32-hex trace per conversation (children/
+> successors copy the parent's trace; webhook `traceparent` one hop
+> in); `GET /v1/traces` + `/v1/traces/{trace_id}` + the Observability
+> section (trace list + depth-indented waterfall). Manual session
+> script at `docs/walkthrough-s7.md`; docs closure (README section +
+> API/config rows) committed with this note. Deferred (ADR 0021):
+> per-workflow-node spans, HTTP server spans, metric spans.
+
 > **Planning committed 2026-09-24** — `docs/adr/0021-otel-tracing.md`
 > (D71–D77 in decisions.md), commit sequence in
 > `docs/implementation-plan-s7.md`. No S7 code exists. Scope
