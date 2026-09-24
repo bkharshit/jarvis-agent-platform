@@ -15,6 +15,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -703,6 +704,36 @@ class KnowledgeChunkRow(Base):
     )
 
 
+class SpanRow(Base):
+    """One FINISHED span (S7, ADR 0021 §7, D77) — written on end only.
+    `run_id` is a loose reference (no FK, the D57 pattern); `trace_id`
+    is the run's persisted trace_id, the UI's grouping key and the OTel
+    trace id verbatim (D73). `attributes` is the open JSONB bag — event
+    cursors, usage, tool names, run linkage."""
+
+    __tablename__ = "spans"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("tenants.id"),
+        nullable=False,
+        default=DEFAULT_TENANT,
+    )
+    run_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    trace_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    span_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    parent_span_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    duration_ms: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    status_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attributes: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+
 __all__ = [
     "AgentExecutionRow",
     "AgentRow",
@@ -726,6 +757,7 @@ __all__ = [
     "RunCancelRow",
     "RunQueueRow",
     "SessionRow",
+    "SpanRow",
     "TenantRow",
     "ToolExecutionRow",
     "TRIGGER_KINDS",

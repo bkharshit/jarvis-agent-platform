@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import uuid4
@@ -58,6 +58,7 @@ from jarvis.domain.knowledge import (
 )
 from jarvis.domain.mcp import McpServer, McpServerConfig
 from jarvis.domain.message import Message, Usage
+from jarvis.domain.spans import SpanKind, SpanRecord, SpanStatus
 from jarvis.domain.tools import ToolResult
 from jarvis.domain.trigger import (
     CronConfig,
@@ -89,6 +90,7 @@ from jarvis.persistence.models import (
     RunCancelRow,
     RunQueueRow,
     SessionRow,
+    SpanRow,
     TenantRow,
     ToolExecutionRow,
     TriggerRow,
@@ -2769,9 +2771,149 @@ class SqlRunQueue:
             return list(rows)
 
 
+class SqlSpanRepo:
+    """Finished spans (S7, ADR 0021 §7, D77). WRITE side implements the
+    `SpanSink` port (batch INSERT, D74's flush discipline); the read side
+    serves the traces routes — tenant-scoped like every listing (D29: a
+    foreign trace reads as absent, never leaked). `run_id` is loose (no
+    FK, the D57 pattern)."""
+
+    def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
+        self._sessionmaker = sessionmaker
+
+    # --- SpanSink port (write) --------------------------------------------
+
+    async def export(self, spans: Sequence[SpanRecord]) -> None:
+        """One batch INSERT per flush (the port is batched by contract).
+        Tenancy rides each record (the runtime stamps `ctx.tenant_id`);
+        None falls to the default tenant (the unit-stub pattern)."""
+        if not spans:
+            return
+        async with self._sessionmaker() as session:
+            session.add_all(
+                SpanRow(
+                    id=str(uuid4()),
+                    tenant_id=span.tenant_id or DEFAULT_TENANT,
+                    run_id=span.run_id,
+                    trace_id=span.trace_id,
+                    span_id=span.span_id,
+                    parent_span_id=span.parent_span_id,
+                    name=span.name,
+                    kind=span.kind,
+                    started_at=span.started_at,
+                    ended_at=span.ended_at,
+                    duration_ms=span.duration_ms,
+                    status=span.status,
+                    status_message=span.status_message,
+                    attributes=dict(span.attributes),
+                )
+                for span in spans
+            )
+            await session.commit()
+
+    # --- traces routes (read, S7 commit 5) ----------------------------------
+
+    async def list_spans(self, run_id: str, *, tenant_id: str) -> list[SpanRecord]:
+        """One run's spans, chronological — the execution detail's span
+        view (a run and its children share trace_id; this is the per-run
+        slice)."""
+        async with self._sessionmaker() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(SpanRow)
+                        .where(SpanRow.tenant_id == tenant_id, SpanRow.run_id == run_id)
+                        .order_by(SpanRow.started_at, SpanRow.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return [self._record(row) for row in rows]
+
+    async def get_trace(self, trace_id: str, *, tenant_id: str) -> list[SpanRecord]:
+        """One trace's spans, chronological — the waterfall's data. The
+        trace_id IS the run's trace_id (D73), so a multi-agent
+        conversation's child runs land in the same listing."""
+        async with self._sessionmaker() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(SpanRow)
+                        .where(SpanRow.tenant_id == tenant_id, SpanRow.trace_id == trace_id)
+                        .order_by(SpanRow.started_at, SpanRow.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return [self._record(row) for row in rows]
+
+    async def list_traces(self, *, tenant_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        """Recent traces, newest first — grouped summaries for the list
+        route (D77): trace_id, run_ids, span count, statuses, first/last
+        timestamps. Result ids are data — order by a meaningful column,
+        never a random one (the S11 heap-order lesson)."""
+        async with self._sessionmaker() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(SpanRow)
+                        .where(SpanRow.tenant_id == tenant_id)
+                        .order_by(SpanRow.started_at.desc(), SpanRow.id)
+                        .limit(limit * 20)  # grouping bound; traces are small
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        grouped: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            entry = grouped.get(row.trace_id)
+            if entry is None:
+                entry = {
+                    "trace_id": row.trace_id,
+                    "run_ids": [],
+                    "span_count": 0,
+                    "statuses": set(),
+                    "kinds": set(),
+                    "started_at": row.started_at,
+                    "ended_at": row.ended_at,
+                }
+                grouped[row.trace_id] = entry
+            entry["span_count"] += 1
+            entry["statuses"].add(row.status)
+            entry["kinds"].add(row.kind)
+            if row.run_id not in entry["run_ids"]:
+                entry["run_ids"].append(row.run_id)
+            entry["ended_at"] = max(entry["ended_at"], row.ended_at)
+            entry["started_at"] = min(entry["started_at"], row.started_at)
+        # Cap the trace list AFTER grouping so a busy trace can't crowd
+        # others out of the window.
+        return list(grouped.values())[:limit]
+
+    def _record(self, row: SpanRow) -> SpanRecord:
+        return SpanRecord(
+            span_id=row.span_id,
+            trace_id=row.trace_id,
+            run_id=row.run_id,
+            tenant_id=row.tenant_id,
+            parent_span_id=row.parent_span_id,
+            name=row.name,
+            kind=cast(SpanKind, row.kind),
+            started_at=row.started_at,
+            ended_at=row.ended_at,
+            duration_ms=row.duration_ms,
+            status=cast(SpanStatus, row.status),
+            status_message=row.status_message,
+            attributes=dict(row.attributes),
+        )
+
+
 __all__ = [
     "SqlAgentRepo",
     "SqlKnowledgeRepo",
+    "SqlSpanRepo",
     "SqlTriggerRepo",
     "SqlWorkflowRepo",
     "SqlAuthRepo",
