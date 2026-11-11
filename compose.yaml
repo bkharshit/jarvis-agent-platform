@@ -18,5 +18,21 @@ services:
       timeout: 3s
       retries: 10
 
+  api:
+    # `docker compose up` = Postgres + the JARVIS API on :8000, migrated on
+    # start. Provider-less defaults use the zero-network mock provider; an
+    # agent can still pin any OpenAI-compatible model with its own
+    # credential_ref. The web app runs separately: cd web && npm run dev.
+    build: .
+    environment:
+      JARVIS_DATABASE_URL: postgresql+asyncpg://jarvis:jarvis@postgres:5432/jarvis
+      JARVIS_MODEL_PROVIDER: mock
+      JARVIS_MODEL_NAME: mock-small
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   jarvis-pgdata:

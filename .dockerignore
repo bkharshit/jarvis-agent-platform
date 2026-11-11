@@ -1,0 +1,17 @@
+# Never ship local secrets or caches into the image.
+.env
+**/.env
+.git
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.DS_Store
+local-tests
+test-results
+web
+docs
+.claude
+.github
