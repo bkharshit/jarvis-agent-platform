@@ -79,3 +79,21 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  container:
+    name: Container quickstart (docker compose up)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start the stack
+        run: docker compose up -d --build --wait --wait-timeout 240
+      - name: Smoke the API
+        run: |
+          curl -fsS localhost:8000/healthz
+          curl -fsS localhost:8000/v1/capabilities
+      - name: Stack logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

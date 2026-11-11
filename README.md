@@ -96,6 +96,10 @@ deltas, …) and exactly one terminal event. `uv run jarvis executions list`
 shows the persisted run. A mock agent must use
 `strategy.type: function_calling` — its canned reply is not ReAct-parseable.
 
+Docker only, no local Python: `docker compose up` builds the API image,
+migrates the schema, and serves the API on `:8000` with the mock provider
+as the default (CI builds and smoke-tests this stack on every push).
+
 For the web app, start the API and the dev server:
 
 ```bash
