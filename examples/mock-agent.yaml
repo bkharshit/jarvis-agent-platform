@@ -1,0 +1,25 @@
+# Zero-network demo agent — `jarvis agent create --file examples/mock-agent.yaml`
+#
+# provider: mock needs no API key and no network: the scripted
+# MockModelProvider streams a canned reply. It must use
+# strategy.type: function_calling — the mock's reply never contains a ReAct
+# `Action:`, so a react agent would run to its iteration cap and fail
+# gracefully. For a real model, see examples/research-agent.yaml.
+
+name: mock-agent
+description: Zero-network demo agent on the scripted mock provider.
+
+model:
+  provider: mock
+  model: mock-small
+
+system_prompt: You are a helpful assistant.
+
+strategy:
+  type: function_calling
+
+tools:
+  - name: calculator
+  - name: current_time
+
+max_iterations: 4
